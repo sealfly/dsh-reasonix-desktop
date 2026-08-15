@@ -1,0 +1,13 @@
+{
+  "name": "dsh-reasonix",
+  "productName": "DSH × Reasonix",
+  "version": "0.1.0",
+  "description": "Reasonix 前端 + DeepSeek Harness 后端桥接桌面端",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^37.0.0"
+  }
+}
