@@ -234,10 +234,12 @@ function historyEventsToSlice(events, tabId) {
 // ---------- 安全模式 ↔ DSH 权限映射 ----------
 // Reasonix ToolApprovalMode: ask | auto | yolo
 // DSH permissions: read-only | workspace-write | danger-full-access
-const MODE_TO_PERMISSION = { ask: 'workspace-write', auto: 'danger-full-access', yolo: 'danger-full-access' };
+const MODE_TO_PERMISSION = { ask: 'read-only', auto: 'workspace-write', yolo: 'danger-full-access' };
 const PERMISSION_TO_MODE = { 'read-only': 'ask', 'workspace-write': 'auto', 'danger-full-access': 'yolo' };
-// 新建会话时按当前模式选 agentPreset（DSH 权限由 preset 决定）
-const MODE_TO_PRESET = { ask: 'standard', auto: 'code', yolo: 'code' };
+// 新建会话统一使用 code preset（功能最全的编码 Agent）。
+// 权限三档（read-only/workspace-write/danger-full-access）独立由 /permission 命令控制，
+// 不与 agentPreset 绑定（preset 管工具集，permission 管沙箱权限，是两个维度）。
+const DEFAULT_PRESET = 'code';
 let currentMode = 'auto'; // 默认 workspace-write
 
 // ---------- DSH 工具函数 ----------
@@ -245,6 +247,17 @@ const rpc = (method, payload) => ipcRenderer.invoke('dsh:rpc', method, payload);
 const sessions = () => ipcRenderer.invoke('dsh:sessions');
 const history = (sid) => ipcRenderer.invoke('dsh:history', sid);
 const prompt = (sid, text) => ipcRenderer.invoke('dsh:prompt', sid, text);
+// 切换 DSH 权限：通过 commands/execute Typert 端点执行 /permission 命令。
+// 注意：不能用 session.prompt 发 /permission（那会当普通消息发给模型，不执行命令）。
+// 正确做法是 POST /api/commands/execute，payload 为 { args: { agentId, line } }。
+async function setDshPermission(sessionId, mode) {
+  const perm = MODE_TO_PERMISSION[mode];
+  if (!perm || !sessionId) return;
+  try {
+    await rpc('commands/execute', { args: { agentId: sessionId, line: '/permission ' + perm } });
+  } catch {}
+  currentMode = mode;
+}
 const createSession = (cwd, agentPreset) => ipcRenderer.invoke('dsh:create', cwd, agentPreset);
 const cancelSession = (sid) => ipcRenderer.invoke('dsh:cancel', sid);
 
@@ -371,7 +384,6 @@ function sessionToTabMeta(s, idx) {
     cancellable: !!s.running,
     mode: 'normal',
     collaborationMode: 'normal',
-    toolApprovalMode: 'ask',
     tokenMode: 'full',
     agentPreset: v.agentPreset || 'code',
     toolApprovalMode: v.permissions?.currentValue ? PERMISSION_TO_MODE[v.permissions.currentValue] || 'auto' : 'auto',
@@ -554,13 +566,13 @@ const appImpl = {
     if (!sid) {
       const tabs = await sessions();
       const existing = tabs.find((s) => s.cwd === workspaceRoot);
-      sid = existing ? existing.id : (await createSession(workspaceRoot, MODE_TO_PRESET[currentMode])).sessionId;
+      sid = existing ? existing.id : (await createSession(workspaceRoot, DEFAULT_PRESET)).sessionId;
     }
     try { const h = await history(sid); replayHistory(sid, h.events); } catch {}
     return sessionToTabMeta({ sessionId: sid, cwd: workspaceRoot, running: false, projections: {} }, 0);
   },
   OpenGlobalTab: async () => {
-    const res = await createSession(undefined, MODE_TO_PRESET[currentMode]);
+    const res = await createSession(undefined, DEFAULT_PRESET);
     return sessionToTabMeta({ sessionId: res.sessionId, cwd: undefined, running: false, projections: {} }, 0);
   },
   EnsureBlankTab: async () => ({}),
@@ -583,7 +595,7 @@ const appImpl = {
     const tabs = await sessions();
     const existing = tabs.find((s) => s.cwd === path);
     if (existing) return existing.id;
-    const res = await createSession(path, MODE_TO_PRESET[currentMode]);
+    const res = await createSession(path, DEFAULT_PRESET);
     return res.sessionId || '';
   },
   IsolatedWorktreeAvailability: async () => ({ available: true, repoRoot: '', branch: 'main', sourceDirty: false }),
@@ -781,10 +793,17 @@ const appImpl = {
 
   // ===== 安全模式（三档 ↔ DSH 权限） =====
   SetToolApprovalMode: async (mode) => {
-    if (mode in MODE_TO_PERMISSION) currentMode = mode;
+    if (!(mode in MODE_TO_PERMISSION)) return;
+    try {
+      const tabs = await sessions();
+      const t = tabs.find((x) => x.active) || tabs[0];
+      if (t) await setDshPermission(t.id, mode);
+      else currentMode = mode;
+    } catch { currentMode = mode; }
   },
   SetToolApprovalModeForTab: async (tabID, mode) => {
-    if (mode in MODE_TO_PERMISSION) currentMode = mode;
+    if (!(mode in MODE_TO_PERMISSION)) return;
+    await setDshPermission(tabID, mode);
   },
   ToolApprovalMode: async () => currentMode,
   ToolApprovalModeForTab: async () => currentMode,
@@ -1076,14 +1095,14 @@ const appImpl = {
   OpenWorkspaceInExternalOpenerForTab: async () => {},
 
   CreateIsolatedWorktree: async (workspaceRoot) => {
-    const res = await createSession(workspaceRoot, MODE_TO_PRESET[currentMode]);
+    const res = await createSession(workspaceRoot, DEFAULT_PRESET);
     const tab = sessionToTabMeta({ sessionId: res.sessionId, cwd: workspaceRoot, running: false, projections: {} }, 0);
     tab.isolatedWorktree = true;
     tab.gitBranch = 'reasonix/isolated-' + Date.now().toString(36);
     return tab;
   },
   CreateDeliveryWorktree: async (workspaceRoot) => {
-    const res = await createSession(workspaceRoot, MODE_TO_PRESET[currentMode]);
+    const res = await createSession(workspaceRoot, DEFAULT_PRESET);
     return sessionToTabMeta({ sessionId: res.sessionId, cwd: workspaceRoot, running: false, projections: {} }, 0);
   },
   ReloadRuntime: async () => {},
