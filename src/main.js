@@ -345,6 +345,25 @@ app.whenReady().then(async () => {
   ipcMain.handle('fs:read', async (_e, file) => {
     try { return fs.readFileSync(file, 'utf8'); } catch { return ''; }
   });
+
+  // 绝对路径版文件系统接口（preload 已拼好 cwd+相对路径，这里直接读绝对路径）
+  ipcMain.handle('fs:listAbs', async (_e, dir) => {
+    try {
+      const target = String(dir || '');
+      const pathMod = require('path');
+      const entries = fs.readdirSync(target, { withFileTypes: true });
+      return entries.map((ent) => ({
+        name: ent.name,
+        isDir: ent.isDirectory(),
+        // 返回相对路径（前端按相对路径拼 tree）
+        relPath: ent.name,
+      }));
+    } catch (e) { return { error: String(e && e.message || e) }; }
+  });
+  ipcMain.handle('fs:readAbs', async (_e, file) => {
+    try { return { ok: true, body: fs.readFileSync(file, 'utf8'), size: fs.statSync(file).size }; }
+    catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  });
   // 记忆（Memory）：跟着项目走，存 <cwd>/.dsh/memory.md
   // read 返回 { exists, body }；write 写入；返回 { ok } 或 { ok:false, error }
   ipcMain.handle('memory:read', async (_e, cwd) => {

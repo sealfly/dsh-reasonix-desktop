@@ -261,6 +261,17 @@ async function setDshPermission(sessionId, mode) {
 const createSession = (cwd, agentPreset) => ipcRenderer.invoke('dsh:create', cwd, agentPreset);
 const cancelSession = (sid) => ipcRenderer.invoke('dsh:cancel', sid);
 
+// 取某 tab 对应会话的工作区 cwd（文件系统根目录）
+async function cwdOfTab(tabID) {
+  try {
+    const tabs = await sessions();
+    const t = tabID ? tabs.find((x) => x.id === tabID) : (tabs.find((x) => x.active) || tabs[0]);
+    const c = (t && (t.workspaceRoot || t.cwd)) || '';
+    if (c) return c;
+  } catch {}
+  return 'C:/Users/ROG Zephyrus G16/Desktop/DSH';
+}
+
 // ---------- 记忆（Memory）：跟着项目走，存 <cwd>/.dsh/memory.md ----------
 // 格式：markdown，每条记忆 = 一个 "## <name>" 标题块，标题下是 body。
 // 解析成 Reasonix 的 MemoryFact[]，文档(docs)即 memory.md 本身。
@@ -709,8 +720,15 @@ const appImpl = {
     return (items || []).map((e) => ({ name: e.name, path: e.path, isDir: e.isDir, displayName: e.name, displayPath: e.path }));
   },
   ListDirForTab: async (tabID, rel) => {
-    const items = await ipcRenderer.invoke('fs:list', rel);
-    return (items || []).map((e) => ({ name: e.name, path: e.path, isDir: e.isDir, displayName: e.name, displayPath: e.path }));
+    const cwd = await cwdOfTab(tabID);
+    const dirAbs = cwd + '/' + String(rel || '').replace(/^\//, '');
+    const items = await ipcRenderer.invoke('fs:listAbs', dirAbs);
+    if (items && items.error) return [];
+    const relBase = String(rel || '').replace(/\/$/, '');
+    return (items || []).map((e) => {
+      const relPath = relBase ? relBase + '/' + e.name : e.name;
+      return { name: e.name, path: relPath, isDir: e.isDir, displayName: e.name, displayPath: relPath };
+    });
   },
   ReadFile: async (path) => {
     const body = await ipcRenderer.invoke('fs:read', path);
@@ -723,11 +741,16 @@ const appImpl = {
     };
   },
   ReadFileForTab: async (tabID, path) => {
-    const body = await ipcRenderer.invoke('fs:read', path);
+    const cwd = await cwdOfTab(tabID);
+    const fileAbs = cwd + '/' + String(path || '').replace(/^\//, '');
+    const r = await ipcRenderer.invoke('fs:readAbs', fileAbs);
+    if (!r || !r.ok) {
+      return { path, body: '', size: 0, truncated: false, binary: false, err: r && r.error };
+    }
     return {
       path,
-      body: body || '',
-      size: (body || '').length,
+      body: r.body || '',
+      size: r.size || (r.body || '').length,
       truncated: false,
       binary: false,
     };
@@ -1445,6 +1468,22 @@ const applyBranding = () => {
       badge.textContent = 'DS';
       parent.appendChild(badge);
     }
+  });
+
+  // 把设置中心导航里"快捷键"项的键盘图标（lucide-keyboard）换成 D 字鲸鱼图
+  document.querySelectorAll('.settings-center__navitem svg.lucide-keyboard').forEach((svg) => {
+    if (svg.dataset.branded) return;
+    svg.dataset.branded = '1';
+    const wrap = document.createElement('span');
+    wrap.className = 'dsr-nav-icon';
+    wrap.style.cssText = 'display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;flex:none;';
+    const img = document.createElement('img');
+    img.className = 'dsr-d-img';
+    img.src = D_LOGO;
+    img.alt = 'D';
+    img.style.cssText = 'width:17px;height:17px;object-fit:contain;filter:none;';
+    wrap.appendChild(img);
+    svg.replaceWith(wrap);
   });
 };
 
