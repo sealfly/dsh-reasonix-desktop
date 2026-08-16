@@ -1485,6 +1485,22 @@ const applyBranding = () => {
     wrap.appendChild(img);
     svg.replaceWith(wrap);
   });
+
+  // 把侧边栏底部快捷栏（回收站/自动化/设置）的图标也换成 D 字鲸鱼图
+  document.querySelectorAll('.sidebar__utility-button svg.lucide').forEach((svg) => {
+    if (svg.dataset.branded) return;
+    svg.dataset.branded = '1';
+    const wrap = document.createElement('span');
+    wrap.className = 'dsr-utility-icon';
+    wrap.style.cssText = 'display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;flex:none;';
+    const img = document.createElement('img');
+    img.className = 'dsr-d-img';
+    img.src = D_LOGO;
+    img.alt = 'D';
+    img.style.cssText = 'width:16px;height:16px;object-fit:contain;filter:none;';
+    wrap.appendChild(img);
+    svg.replaceWith(wrap);
+  });
 };
 
 // 启动品牌覆盖

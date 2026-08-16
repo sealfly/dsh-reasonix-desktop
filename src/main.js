@@ -257,7 +257,8 @@ app.whenReady().then(async () => {
     return dsh.rpc('session.create', payload);
   });
   ipcMain.handle('dsh:pickFolder', async () => {
-    const r = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'], title: '选择项目父目录' });
+    // 无边框窗口传 win 作父窗口可能导致原生对话框挂起；改为独立对话框（不传 win）更稳
+    const r = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'], title: '选择项目父目录' });
     return r.canceled ? null : r.filePaths[0];
   });
   ipcMain.handle('dsh:createFolder', async (_e, target) => {
