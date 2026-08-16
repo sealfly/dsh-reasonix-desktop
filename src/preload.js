@@ -1497,6 +1497,10 @@ window.dsh = {
     return ipcRenderer.invoke('dsh:rpc', 'session.create', payload);
   },
   cancel: (sid) => ipcRenderer.invoke('dsh:rpc', 'session.cancel', { sessionId: sid }),
+  // DSH 更新/配置控制：读配置、改配置、手动更新
+  getConfig: () => ipcRenderer.invoke('dsh:config'),
+  setConfig: (patch) => ipcRenderer.invoke('dsh:config:set', patch),
+  updateDsh: () => ipcRenderer.invoke('dsh:update'),
 };
 
 // 保留 __dsh 调试句柄（向后兼容），并让 __dsh.rpc 也走通用透传
@@ -1504,6 +1508,9 @@ window.__dsh = {
   rpc: (method, payload) => ipcRenderer.invoke('dsh:rpc', method, payload ?? {}),
   sessions, history, prompt, createSession, cancelSession,
   catalog: () => ipcRenderer.invoke('dsh:catalog'),
+  getConfig: () => ipcRenderer.invoke('dsh:config'),
+  setConfig: (patch) => ipcRenderer.invoke('dsh:config:set', patch),
+  updateDsh: () => ipcRenderer.invoke('dsh:update'),
   onEvent: window.dsh.onEvent,
   calcCost, DEEPSEEK_OFFICIAL_PRICES, RELAY_PRICES, RELAY_PROVIDERS,
   loadPrices, savePrices, fetchOfficialPrices,

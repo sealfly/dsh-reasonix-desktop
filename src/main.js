@@ -98,24 +98,74 @@ function findNode() {
   return null;
 }
 
+// ---------- DSH 配置（自动更新 / 手动指定版本 / 手动指定路径） ----------
+// 配置文件放在 userData 目录（不随安装包覆盖），记录用户对 DSH 的偏好。
+const DSH_CONFIG_FILE = () => path.join(app.getPath('userData'), 'dsh-config.json');
+
+function loadDshConfig() {
+  try {
+    const raw = fs.readFileSync(DSH_CONFIG_FILE(), 'utf8');
+    const cfg = JSON.parse(raw);
+    return {
+      autoUpdate: cfg.autoUpdate !== false, // 默认 true（自动更新）
+      pinnedVersion: typeof cfg.pinnedVersion === 'string' ? cfg.pinnedVersion : '',
+      dshPath: typeof cfg.dshPath === 'string' ? cfg.dshPath : '',
+    };
+  } catch {
+    return { autoUpdate: true, pinnedVersion: '', dshPath: '' };
+  }
+}
+function saveDshConfig(cfg) {
+  try {
+    fs.mkdirSync(app.getPath('userData'), { recursive: true });
+    fs.writeFileSync(DSH_CONFIG_FILE(), JSON.stringify(cfg, null, 2), 'utf8');
+    return { ok: true };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+}
+
 async function ensureDsh() {
-  if (await checkPort()) return true;
+  if (await checkPort()) return true; // 已有 DSH 实例在跑，直接复用（不独占、不重复拉起）
+  const cfg = loadDshConfig();
   const node = findNode();
   if (!node) { console.log('[DSH] 未找到 Node.js，请先安装 Node.js'); return false; }
+
+  // 1) 用户手动指定了 DSH 可执行文件路径 → 直接用，不装不更新
+  if (cfg.dshPath) {
+    console.log('[DSH] 使用手动指定的 DSH:', cfg.dshPath);
+    try {
+      const child = spawn(cfg.dshPath, ['web'], { detached: true, stdio: 'ignore', windowsHide: true, shell: true });
+      child.unref();
+    } catch (e) { console.log('[DSH] 指定 DSH 启动失败:', e.message); }
+    for (let i = 0; i < 180; i++) {
+      if (await checkPort()) { console.log('[DSH] 服务已就绪'); return true; }
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+    console.log('[DSH] 指定 DSH 180s 内未就绪');
+    return false;
+  }
+
+  // 2) 计算要用的 DSH 包规格：锁版本 or 最新 or 本地已有
+  let pkg = '@deepseek-ai/dsh';
+  if (cfg.pinnedVersion) {
+    pkg = '@deepseek-ai/dsh@' + cfg.pinnedVersion;
+    console.log('[DSH] 使用手动锁定的 DSH 版本:', cfg.pinnedVersion);
+  } else if (cfg.autoUpdate) {
+    pkg = '@deepseek-ai/dsh@latest';
+    console.log('[DSH] 自动更新开启：每次启动使用 DSH 最新版');
+  } else {
+    console.log('[DSH] 自动更新关闭：使用本地已安装的 DSH');
+  }
   console.log('[DSH] 启动 dsh web 服务...');
   try {
-    // 用 npx 拉起 DSH（首次会下载 @deepseek-ai/dsh）
-    const child = spawn(node, ['-e', 'require("child_process").spawn("npx.cmd",["-y","@deepseek-ai/dsh","web"],{stdio:"inherit",shell:true})'], {
+    const child = spawn(node, ['-e', 'require("child_process").spawn("npx.cmd",["-y",' + JSON.stringify(pkg) + ',"web"],{stdio:"inherit",shell:true})'], {
       detached: true, stdio: 'ignore', windowsHide: true,
     });
     child.unref();
-    // 也尝试直接 npx
-    const child2 = spawn('npx.cmd', ['-y', '@deepseek-ai/dsh', 'web'], {
+    const child2 = spawn('npx.cmd', ['-y', pkg, 'web'], {
       detached: true, stdio: 'ignore', windowsHide: true, shell: true,
     });
     child2.unref();
   } catch (e) { console.log('[DSH] npx 启动失败:', e.message); }
-  // 轮询就绪（最长 180s，npx 首次下载较慢）
   for (let i = 0; i < 180; i++) {
     if (await checkPort()) { console.log('[DSH] 服务已就绪'); return true; }
     await new Promise((r) => setTimeout(r, 1000));
@@ -383,5 +433,37 @@ app.whenReady().then(async () => {
     return b ? b.trim().split('\n').filter(Boolean) : [];
   });
   ipcMain.handle('dsh:cancel', (_e, sid) => dsh.rpc('session.cancel', { sessionId: sid }));
+
+  // ---------- DSH 更新/配置控制（用户可手动指定、手动更新、关闭自动更新） ----------
+  ipcMain.handle('dsh:config', () => loadDshConfig());
+  ipcMain.handle('dsh:config:set', (_e, patch) => {
+    const cur = loadDshConfig();
+    const next = { ...cur };
+    if (patch && typeof patch === 'object') {
+      if (typeof patch.autoUpdate === 'boolean') next.autoUpdate = patch.autoUpdate;
+      if (typeof patch.pinnedVersion === 'string') next.pinnedVersion = patch.pinnedVersion.trim();
+      if (typeof patch.dshPath === 'string') next.dshPath = patch.dshPath.trim();
+    }
+    const r = saveDshConfig(next);
+    return { ok: r.ok, config: next, error: r.error };
+  });
+  // 手动更新 DSH：强制重装 @latest 并重启服务
+  ipcMain.handle('dsh:update', async () => {
+    try {
+      const node = findNode();
+      if (!node) return { ok: false, error: '未找到 Node.js' };
+      // 杀掉现有 DSH 进程（由 npx 拉起的），再强制拉最新
+      execSync('taskkill /F /IM node.exe /FI "WINDOWTITLE eq dsh" 2>nul', { stdio: 'ignore', windowsHide: true });
+      const child = spawn(node, ['-e', 'require("child_process").spawn("npx.cmd",["-y","@deepseek-ai/dsh@latest","web"],{stdio:"inherit",shell:true})'], {
+        detached: true, stdio: 'ignore', windowsHide: true,
+      });
+      child.unref();
+      for (let i = 0; i < 60; i++) {
+        if (await checkPort()) return { ok: true, message: 'DSH 已更新并重启' };
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+      return { ok: false, error: 'DSH 更新后 60s 内未就绪' };
+    } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  });
 });
 app.on('window-all-closed', () => app.quit());
