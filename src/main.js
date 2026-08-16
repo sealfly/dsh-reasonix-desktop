@@ -2,9 +2,16 @@
 const { app, BrowserWindow, ipcMain, Menu, dialog } = require('electron');
 const fs = require('fs');
 const path = require('path');
+const net = require('net');
+const { spawn, execSync } = require('child_process');
 const { DshClient } = require('./dsh-client');
 
-const REASONIX_DIST = path.join(__dirname, '..', '..', 'reasonix-reference', 'desktop', 'frontend', 'dist', 'index.html');
+// reasonix 前端 dist 路径：打包后随 app 一起分发（renderer/dist），开发模式用 reasonix-reference
+const REASONIX_DIST = (() => {
+  const bundled = path.join(__dirname, '..', 'renderer', 'dist', 'index.html');
+  if (fs.existsSync(bundled)) return bundled;
+  return path.join(__dirname, '..', '..', 'reasonix-reference', 'desktop', 'frontend', 'dist', 'index.html');
+})();
 let win = null;
 let dsh = null;
 
@@ -67,7 +74,58 @@ function dshEventToWire(frame) {
   }
 }
 
-app.whenReady().then(() => {
+// ---------- DSH 服务自动启动 ----------
+function checkPort(port = 3080, ms = 600) {
+  return new Promise((resolve) => {
+    const sock = net.connect({ host: '127.0.0.1', port }, () => { sock.destroy(); resolve(true); });
+    sock.on('error', () => resolve(false));
+    sock.setTimeout(ms, () => { sock.destroy(); resolve(false); });
+  });
+}
+
+// 找到可用的 node（Electron 内没有系统 node，需找 PATH 里的）
+function findNode() {
+  const candidates = [
+    process.env.NODE_EXE, // 安装脚本注入
+    'node',
+    'C:\\Program Files\\nodejs\\node.exe',
+    'C:\\Users\\' + (process.env.USERNAME || '') + '\\AppData\\Local\\Programs\\nodejs\\node.exe',
+  ];
+  for (const c of candidates) {
+    if (!c) continue;
+    try { execSync('"' + c + '" --version', { stdio: 'ignore', windowsHide: true }); return c; } catch {}
+  }
+  return null;
+}
+
+async function ensureDsh() {
+  if (await checkPort()) return true;
+  const node = findNode();
+  if (!node) { console.log('[DSH] 未找到 Node.js，请先安装 Node.js'); return false; }
+  console.log('[DSH] 启动 dsh web 服务...');
+  try {
+    // 用 npx 拉起 DSH（首次会下载 @deepseek-ai/dsh）
+    const child = spawn(node, ['-e', 'require("child_process").spawn("npx.cmd",["-y","@deepseek-ai/dsh","web"],{stdio:"inherit",shell:true})'], {
+      detached: true, stdio: 'ignore', windowsHide: true,
+    });
+    child.unref();
+    // 也尝试直接 npx
+    const child2 = spawn('npx.cmd', ['-y', '@deepseek-ai/dsh', 'web'], {
+      detached: true, stdio: 'ignore', windowsHide: true, shell: true,
+    });
+    child2.unref();
+  } catch (e) { console.log('[DSH] npx 启动失败:', e.message); }
+  // 轮询就绪（最长 180s，npx 首次下载较慢）
+  for (let i = 0; i < 180; i++) {
+    if (await checkPort()) { console.log('[DSH] 服务已就绪'); return true; }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  console.log('[DSH] 服务 180s 内未就绪');
+  return false;
+}
+
+app.whenReady().then(async () => {
+  await ensureDsh();
   dsh = new DshClient(3080);
   dsh.subscribe((frame) => {
     const wire = dshEventToWire(frame);

@@ -1,13 +1,60 @@
 {
   "name": "dsh-reasonix",
-  "productName": "DSH × Reasonix",
+  "productName": "DSH-Reasonix",
   "version": "0.1.0",
-  "description": "Reasonix 前端 + DeepSeek Harness 后端桥接桌面端",
+  "description": "Reasonix frontend + DeepSeek Harness backend bridge desktop",
   "main": "src/main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "dist": "electron-builder",
+    "dist:dir": "electron-builder --dir"
   },
   "devDependencies": {
-    "electron": "^37.0.0"
+    "electron": "^37.0.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.dsh.reasonix",
+    "productName": "DSH-Reasonix",
+    "files": [
+      "src/**/*",
+      "renderer/**/*",
+      "prices.json",
+      "install.ps1",
+      "start.bat",
+      "!**/*.map"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "DSH-Reasonix"
+    }
   }
 }
