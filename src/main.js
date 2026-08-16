@@ -127,18 +127,11 @@ async function ensureDsh() {
 app.whenReady().then(async () => {
   await ensureDsh();
   dsh = new DshClient(3080);
-  dsh.subscribe((frame) => {
-    const wire = dshEventToWire(frame);
-    if (wire && win && !win.isDestroyed()) {
-      win.webContents.send('dsh:event', wire);
-    }
-  });
-
   Menu.setApplicationMenu(null); // 去掉 File/Edit/View/Window/Help 菜单栏
 
   win = new BrowserWindow({
     width: 1480, height: 920,
-    title: 'DSH-Reasonix',
+    title: 'DSH-ReasonixUI',
     frame: false, // Reasonix 原版是无边框窗口，自带标题栏
     backgroundColor: '#111214',
     webPreferences: {
@@ -149,6 +142,30 @@ app.whenReady().then(async () => {
     },
   });
   win.loadFile(REASONIX_DIST);
+
+  // 全量订阅 events.mux 原始帧（不筛选），透传给渲染层做通用能力。
+  // 放在 win 创建之后，连接即推的 session/subscribed 等初始帧也能到达渲染层。
+  dsh.subscribeRaw((frame) => {
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('dsh:raw-event', frame);
+    }
+  });
+  // 同时保留 Reasonix 需要的 WireEvent 转换通道
+  dsh.subscribe((frame) => {
+    const wire = dshEventToWire(frame);
+    if (wire && win && !win.isDestroyed()) {
+      win.webContents.send('dsh:event', wire);
+    }
+  });
+
+  win.on('closed', () => console.log('[WIN] closed'));
+  win.on('close', () => console.log('[WIN] close event'));
+  win.webContents.on('did-fail-load', (_e, code2, desc, url) => console.log('[WIN] did-fail-load', code2, desc, url));
+  win.webContents.on('render-process-gone', (_e, d) => console.log('[WIN] render-process-gone', JSON.stringify(d)));
+  win.once('ready-to-show', () => { console.log('[WIN] ready-to-show'); win.show(); });
+  // 固定窗口标题，防止 Reasonix 前端 <title>Reasonix</title> 覆盖
+  win.webContents.on('page-title-updated', (e) => e.preventDefault());
+  win.webContents.on('did-finish-load', () => { if (win && !win.isDestroyed()) win.setTitle('DSH-ReasonixUI'); });
 
   // 窗口控制（前端 bridge 调用 MinimiseMainWindow 等 → 这里执行）
   ipcMain.on('win:min', () => win && win.minimize());
@@ -171,8 +188,12 @@ app.whenReady().then(async () => {
 
 
 
-  // IPC：渲染层调用 DSH
+
+
+
+  // IPC：渲染层调用 DSH（通用透传，任意 method/payload，插件方法也可调）
   ipcMain.handle('dsh:rpc', (_e, method, payload) => dsh.rpc(method, payload));
+  ipcMain.handle('dsh:catalog', () => dsh.catalog());
   ipcMain.handle('dsh:sessions', async () => {
     const res = await dsh.rpc('session.list', {});
     return (res.items || []).map(sessionToTabMeta);
@@ -273,6 +294,27 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle('fs:read', async (_e, file) => {
     try { return fs.readFileSync(file, 'utf8'); } catch { return ''; }
+  });
+  // 记忆（Memory）：跟着项目走，存 <cwd>/.dsh/memory.md
+  // read 返回 { exists, body }；write 写入；返回 { ok } 或 { ok:false, error }
+  ipcMain.handle('memory:read', async (_e, cwd) => {
+    try {
+      const dir = String(cwd || '');
+      const file = require('path').join(dir, '.dsh', 'memory.md');
+      const exists = fs.existsSync(file);
+      return { exists, body: exists ? fs.readFileSync(file, 'utf8') : '', path: file };
+    } catch (e) { return { exists: false, body: '', path: '', error: String(e && e.message || e) }; }
+  });
+  ipcMain.handle('memory:write', async (_e, cwd, body) => {
+    try {
+      const dir = String(cwd || '');
+      const pathMod = require('path');
+      const dshDir = pathMod.join(dir, '.dsh');
+      const file = pathMod.join(dshDir, 'memory.md');
+      fs.mkdirSync(dshDir, { recursive: true });
+      fs.writeFileSync(file, String(body == null ? '' : body), 'utf8');
+      return { ok: true, path: file };
+    } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
   });
   // git 操作（改动栏）
   const { execSync } = require('child_process');

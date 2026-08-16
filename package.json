@@ -1,6 +1,6 @@
 {
-  "name": "dsh-reasonix",
-  "productName": "DSH-Reasonix",
+  "name": "dsh-(reasonix)UI-desktop",
+  "productName": "dsh-(reasonix)UI-desktop",
   "version": "0.1.0",
   "description": "Reasonix frontend + DeepSeek Harness backend bridge desktop",
   "main": "src/main.js",
@@ -14,12 +14,13 @@
     "electron-builder": "^26.15.3"
   },
   "build": {
-    "appId": "com.dsh.reasonix",
-    "productName": "DSH-Reasonix",
+    "appId": "com.dsh.reasonix.ui",
+    "productName": "dsh-(reasonix)UI-desktop",
     "files": [
       "src/**/*",
       "renderer/**/*",
       "prices.json",
+      "LICENSE",
       "install.ps1",
       "start.bat",
       "!**/*.map"
@@ -54,7 +55,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "DSH-Reasonix"
+      "shortcutName": "dsh-(reasonix)UI"
     }
   }
 }
