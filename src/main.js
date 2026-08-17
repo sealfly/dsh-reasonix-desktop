@@ -100,6 +100,23 @@ const HOME_DIR = os.homedir() || 'C:\\';
 // 让前端对 DSH 及其 AI 零限制（开发原则 2）。由 preload 在安全模式切换时通知。
 let bridgeFullAccess = false;
 
+// 后端 DSH 版本（与前端版本分开显示；探测不到显示 unknown）
+let dshBackendVersion = 'unknown';
+async function detectDshVersion() {
+  const probes = ['host.describe', 'system.info', 'version'];
+  for (const m of probes) {
+    try {
+      const r = await dsh.rpc(m, {}, 5000);
+      if (r) {
+        if (r.version || r.dshVersion) { dshBackendVersion = String(r.version || r.dshVersion); break; }
+        if (m === 'host.describe' && typeof r === 'object') { dshBackendVersion = String(r.version || r.dshVersion || JSON.stringify(r).slice(0, 120)); break; }
+      }
+    } catch {}
+  }
+  console.log('[DSH] backend version:', dshBackendVersion);
+  logToFile('info', 'DSH backend version: ' + dshBackendVersion);
+}
+
 // 本应用拉起的 DSH 相关进程 pid（用于退出/更新时精确清理，绝不动用户其他进程）
 const spawnedDshPids = new Set();
 // 杀掉本应用拉起的 DSH 进程树
@@ -232,6 +249,7 @@ async function ensureDsh() {
 app.whenReady().then(async () => {
   await ensureDsh();
   dsh = new DshClient(3080);
+  detectDshVersion(); // 异步探测后端 DSH 版本（与前端版本分开）
   Menu.setApplicationMenu(null); // 去掉 File/Edit/View/Window/Help 菜单栏
 
   win = new BrowserWindow({
@@ -317,6 +335,8 @@ app.whenReady().then(async () => {
   // session.prompt 是长请求（模型生成可能要几分钟），用 10 分钟超时而不是默认 60s
   ipcMain.handle('dsh:prompt', (_e, sid, text, timeoutMs) => dsh.rpc('session.prompt', { sessionId: sid, mode: 'steer', content: [{ type: 'text', text }] }, (typeof timeoutMs === 'number' && timeoutMs > 0) ? timeoutMs : 10 * 60 * 1000));
   ipcMain.handle('app:version', () => app.getVersion());
+  // 版本分开返回：frontend = 本应用版本（package.json），backend = 后端 DSH（@deepseek-ai/dsh）版本
+  ipcMain.handle('dsh:versions', () => ({ frontend: app.getVersion(), backend: dshBackendVersion }));
   ipcMain.handle('dsh:create', (_e, cwd, agentPreset) => {
     const payload = {};
     if (cwd) payload.cwd = cwd;
@@ -516,9 +536,16 @@ app.whenReady().then(async () => {
     }
     const files = [];
     const parts = status.split('\0').filter(Boolean);
-    for (let i = 0; i < parts.length; i += 2) {
-      const xy = parts[i] || '';
-      const p = parts[i + 1];
+    // porcelain v1 -z：普通条目 "XY path"；rename 条目 "R  old\0new"（下一条是 new path）。
+    // 逐条解析（原代码按 i+=2 解析，rename 会把 new path 当独立条目导致错位）。
+    for (let i = 0; i < parts.length; i++) {
+      const entry = parts[i] || '';
+      const xy = entry.slice(0, 2);
+      let p = entry.slice(3);
+      if (xy[0] === 'R' && entry.length > 3 && i + 1 < parts.length) {
+        i++;
+        p = parts[i];
+      }
       if (!p) continue;
       files.push({ path: p, sources: ['git'], gitStatus: xy.replace(/\s/g, '').slice(0, 2) || 'M' });
     }

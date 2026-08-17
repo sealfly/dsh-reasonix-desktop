@@ -52,7 +52,7 @@ async function loadPrices() {
       RELAY_PROVIDERS = cfg.relayProviders || RELAY_PROVIDERS;
       return { ok: true, updatedAt: cfg.updatedAt };
     }
-  } catch {}
+  } catch (e) { console.warn('[dsh] prices.json 加载失败，使用默认价格:', e && e.message || e); }
   return { ok: false };
 }
 // 保存价格到 prices.json
@@ -1426,12 +1426,17 @@ const appImpl = {
 // ---------- 组装 window.go.main.App（Proxy：DSH 方法优先，缺失落 mock） ----------
 // mock 不可直接 import（bridge.ts 内部），所以这里用"实现优先 + 未实现方法返回默认"策略。
 // Reasonix bridge 的 app Proxy 会调用 window.go.main.App.xxx；若某方法未实现，
-// 我们返回一个兜底 Promise，避免前端崩溃。
+// 我们返回一个兜底 Promise，避免前端崩溃；同时对每个未实现方法提示一次（方便排查"点了没反应"）。
+const warnedImpl = new Set();
 const AppProxy = new Proxy({}, {
   get(_t, prop) {
     const name = String(prop);
     if (name in appImpl) return appImpl[name];
-    // 未实现的方法：返回一个安全的兜底（尽力而为）
+    // 未实现的方法：返回一个安全的兜底（尽力而为），并提示一次
+    if (!warnedImpl.has(name)) {
+      warnedImpl.add(name);
+      console.warn('[dsh] 未实现的 App 方法（返回空兜底）:', name);
+    }
     return (..._args) => Promise.resolve(undefined);
   },
 });
@@ -1540,11 +1545,17 @@ const applyBranding = () => {
   });
 };
 
-// 启动品牌覆盖
+// 启动品牌覆盖（MutationObserver 回调做节流：高频 DOM 变更不触发全树扫描）
+let brandingPending = false;
+const scheduleBranding = () => {
+  if (brandingPending) return;
+  brandingPending = true;
+  setTimeout(() => { brandingPending = false; applyBranding(); }, 80);
+};
 if (document.readyState !== 'loading') applyBranding();
 document.addEventListener('DOMContentLoaded', applyBranding);
 if (typeof MutationObserver !== 'undefined') {
-  const brandObserver = new MutationObserver(() => applyBranding());
+  const brandObserver = new MutationObserver(() => scheduleBranding());
   document.addEventListener('DOMContentLoaded', () => {
     if (document.body) brandObserver.observe(document.body, { childList: true, subtree: true, characterData: true });
   });
@@ -1593,6 +1604,8 @@ window.dsh = {
   getConfig: () => ipcRenderer.invoke('dsh:config'),
   setConfig: (patch) => ipcRenderer.invoke('dsh:config:set', patch),
   updateDsh: () => ipcRenderer.invoke('dsh:update'),
+  // 版本分开：frontend = 本应用版本（package.json），backend = 后端 DSH（@deepseek-ai/dsh）版本
+  versions: () => ipcRenderer.invoke('dsh:versions'),
 };
 
 // 保留 __dsh 调试句柄（向后兼容），并让 __dsh.rpc 也走通用透传
@@ -1603,6 +1616,7 @@ window.__dsh = {
   getConfig: () => ipcRenderer.invoke('dsh:config'),
   setConfig: (patch) => ipcRenderer.invoke('dsh:config:set', patch),
   updateDsh: () => ipcRenderer.invoke('dsh:update'),
+  versions: () => ipcRenderer.invoke('dsh:versions'),
   onEvent: window.dsh.onEvent,
   calcCost, DEEPSEEK_OFFICIAL_PRICES, RELAY_PRICES, RELAY_PROVIDERS,
   loadPrices, savePrices, fetchOfficialPrices,

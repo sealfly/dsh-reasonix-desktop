@@ -1,13 +1,22 @@
 # GitHub API 上传脚本（用于 github.com git push 被墙时的替代方案）
-# 用法: .\upload-github.ps1 -Token "ghp_xxx" -Repo "dsh-reasonix-desktop" -User "你的用户名"
+# 用法: .\upload-github.ps1 -Token "ghp_xxx" [-Repo "你的用户名/仓库名"] [-User "你的用户名"]
+# Repo 默认从 git remote 自动读取——clone 后推到自己的 GitHub 仓库即可用，无需改脚本。
 param(
   [Parameter(Mandatory=$true)][string]$Token,
-  [string]$Repo = "dsh-reasonix-desktop",
+  [string]$Repo = "",
   [string]$User = ""
 )
 
 $ErrorActionPreference = 'Stop'
 $headers = @{ Authorization = "Bearer $Token"; "User-Agent" = "dsh-reasonix-upload" }
+
+# 0) Repo 未指定时从 git remote 自动获取
+if (-not $Repo) {
+  $remote = git remote get-url origin 2>$null
+  $Repo = (($remote -replace '^https?://[^/]+/','' -replace '^git@[^:]+:','' -replace '\.git$','').Trim())
+  if (-not $Repo) { Write-Error "无法从 git remote 获取仓库名，请用 -Repo 指定"; exit 1 }
+  Write-Host "目标仓库: $Repo" -ForegroundColor Cyan
+}
 
 # 1) 确认用户名
 if (-not $User) {
@@ -16,8 +25,9 @@ if (-not $User) {
   Write-Host "登录用户: $User" -ForegroundColor Green
 }
 
-# 2) 建仓库（已存在则忽略）
-$body = @{ name = $Repo; description = "DSH-Reasonix 桌面端 - Reasonix 前端 + DeepSeek Harness 后端"; public = $false } | ConvertTo-Json
+# 2) 建仓库（已存在则忽略；name 只取仓库名部分，不带 user/ 前缀）
+$repoName = ($Repo -split '/')[-1]
+$body = @{ name = $repoName; description = "DSH-Reasonix 桌面端 - Reasonix 前端 + DeepSeek Harness 后端"; public = $false } | ConvertTo-Json
 try {
   $repo = Invoke-RestMethod -Uri "https://api.github.com/user/repos" -Headers $headers -Method Post -Body $body
   Write-Host "仓库已创建: $($repo.html_url)" -ForegroundColor Green
