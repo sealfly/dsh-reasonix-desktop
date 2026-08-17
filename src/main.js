@@ -21,9 +21,21 @@ let win = null;
 let dsh = null;
 
 // 会话模型转换：DSH session → Reasonix TabMeta
+// 修复会话标题的 mojibake：DSH 存储标题若为 UTF-8 字节被按 Latin-1 解码，
+// 中文会显示成乱码（如 "GitHub上..." → "GitHubä¸Š..."），尝试可逆还原。
+function fixMojibake(s) {
+  if (typeof s !== 'string' || !s) return s;
+  if (/[\u00c0-\u00ff]/.test(s)) {
+    try {
+      const fixed = Buffer.from(s, 'latin1').toString('utf8');
+      if (!fixed.includes('\uFFFD') && /[^\x00-\x08\x0B\x0C\x0E-\x1F]/.test(fixed)) return fixed;
+    } catch {}
+  }
+  return s;
+}
 function sessionToTabMeta(s, idx) {
   const v = s.projections?.values || {};
-  const title = v.title || '未命名会话';
+  const title = fixMojibake(v.title) || '未命名会话';
   const workspaceRoot = s.cwd || 'C:\\';
   const wsName = workspaceRoot.split(/[\\/]/).filter(Boolean).pop() || 'workspace';
   return {
@@ -332,8 +344,16 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle('dsh:catalog', () => dsh.catalog());
   ipcMain.handle('dsh:sessions', async () => {
-    const res = await dsh.rpc('session.list', {});
-    return (res.items || []).map(sessionToTabMeta);
+    // DSH 分组机制：归档会话（workspace.list.archivedSessionIds）从列表隐藏，
+    // 只显示未归档的会话，避免历史残留把 UI 塞满。
+    const [res, ws] = await Promise.all([
+      dsh.rpc('session.list', {}),
+      dsh.rpc('workspace.list', {}).catch(() => null),
+    ]);
+    const archived = new Set((ws && ws.archivedSessionIds) || []);
+    return (res.items || [])
+      .filter((s) => !archived.has(s.sessionId))
+      .map(sessionToTabMeta);
   });
   ipcMain.handle('dsh:history', (_e, sid) => dsh.rpc('session.history', { sessionId: sid, limit: 300 }));
   // session.prompt 是长请求（模型生成可能要几分钟），用 10 分钟超时而不是默认 60s

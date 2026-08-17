@@ -416,9 +416,20 @@ async function forgetFrom(tabID, name) {
 }
 
 // ---------- DSH → TabMeta 转换（与主进程一致） ----------
+// 修复会话标题 mojibake（UTF-8 被按 Latin-1 解码的乱码），与主进程 fixMojibake 一致
+function fixMojibake(s) {
+  if (typeof s !== 'string' || !s) return s;
+  if (/[\u00c0-\u00ff]/.test(s)) {
+    try {
+      const fixed = Buffer.from(s, 'latin1').toString('utf8');
+      if (!fixed.includes('\uFFFD') && /[^\x00-\x08\x0B\x0C\x0E-\x1F]/.test(fixed)) return fixed;
+    } catch {}
+  }
+  return s;
+}
 function sessionToTabMeta(s, idx) {
   const v = s.projections?.values || {};
-  const title = v.title || '未命名会话';
+  const title = fixMojibake(v.title) || '未命名会话';
   const workspaceRoot = s.cwd || 'C:\\';
   const wsName = workspaceRoot.split(/[\\/]/).filter(Boolean).pop() || 'workspace';
   return {
