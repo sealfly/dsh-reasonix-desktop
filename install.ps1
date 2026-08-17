@@ -57,8 +57,9 @@ if (Test-Cmd "python" -or Test-Cmd "py") {
 # ---------- 4. 启动桌面端 ----------
 Write-Host ""
 Write-Host "[4/4] 启动 DSH-Reasonix 桌面端..." -ForegroundColor Yellow
-$exe = Join-Path $PSScriptRoot "DSH-Reasonix.exe"
-if (Test-Path $exe) {
+# 实际打包的主程序名由 package.json productName 决定，动态查找
+$exe = Get-ChildItem $PSScriptRoot -Filter "*.exe" -ErrorAction SilentlyContinue | Where-Object { $_.Name -match 'UI-desktop' -and $_.Name -notmatch 'uninstall' } | Select-Object -First 1 -ExpandProperty FullName
+if ($exe -and (Test-Path $exe)) {
   Start-Process $exe
   Write-Host "  已启动 DSH-Reasonix" -ForegroundColor Green
 } else {

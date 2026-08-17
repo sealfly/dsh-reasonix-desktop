@@ -1,9 +1,16 @@
+# 构建自解压单文件包（解压后直接运行主程序）
+# 用法：先运行 npm run dist 生成 release\win-unpacked，再运行本脚本
 $7z = "C:\Program Files\7-Zip\7z.exe"
 $sfx = "C:\Program Files\7-Zip\7z.sfx"
-$base = "C:\Users\ROG Zephyrus G16\Desktop\DSH\dsh-reasonix\release"
+if (-not (Test-Path $7z)) { $7z = (Get-Command 7z -ErrorAction SilentlyContinue).Source }
+if (-not (Test-Path $sfx) -and $7z) { $sfx = Join-Path (Split-Path $7z) "7z.sfx" }
+$base = Join-Path $PSScriptRoot "release"
 $unpacked = Join-Path $base "win-unpacked"
 $work = Join-Path $base "sfx-build"
 $out = Join-Path $base "DSH-Reasonix-Setup.exe"
+# 实际打包出的主程序名（package.json productName 决定）
+$mainExe = Get-ChildItem $unpacked -Filter "*.exe" -ErrorAction SilentlyContinue | Where-Object { $_.Name -notmatch 'uninstall' } | Select-Object -First 1 -ExpandProperty Name
+if (-not $mainExe) { Write-Output "未找到 win-unpacked 主程序，请先 npm run dist"; exit 1 }
 
 New-Item -ItemType Directory -Force -Path $work | Out-Null
 
@@ -13,7 +20,7 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
 # 2) 自解压配置：解压后运行主程序
 $config = @"
 ;!@Install@!UTF-8!
-RunProgram="DSH-Reasonix.exe"
+RunProgram="$mainExe"
 GUIMode="2"
 ;!@InstallEnd@!
 "@
@@ -24,7 +31,7 @@ $cmd = 'copy /b "' + $sfx + '" + "' + (Join-Path $work 'config.txt') + '" + "' +
 cmd /c $cmd | Out-Null
 
 if (Test-Path $out) {
-  Write-Output ("SFX 产物: {0:N1} MB" -f ((Get-Item $out).Length/1MB))
+  Write-Output ("SFX 产物: {0:N1} MB -> {1}" -f ((Get-Item $out).Length/1MB), $out)
 } else {
   Write-Output "SFX 生成失败"
 }

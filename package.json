@@ -17,6 +17,15 @@
   "build": {
     "appId": "com.dsh.reasonix.ui",
     "productName": "dsh-(reasonix)UI-desktop",
+    "extraResources": [
+      {
+        "from": "vendor/node",
+        "to": "node",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
     "files": [
       "src/**/*",
       "renderer/**/*",
@@ -57,7 +66,8 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "dsh-(reasonix)UI"
+      "shortcutName": "dsh-(reasonix)UI",
+      "runAfterFinish": true
     }
   }
 }

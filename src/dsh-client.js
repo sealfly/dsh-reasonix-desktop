@@ -98,17 +98,40 @@ class DshClient {
 
   _attach(handler) {
     if (typeof WebSocket === 'undefined') return;
-    const sock = new WebSocket('ws://127.0.0.1:' + this.port + '/api/events.mux');
-    this.sock = sock;
-    sock.onopen = () => console.log('[dsh-client] events.mux connected');
-    sock.onmessage = (ev) => {
-      try {
-        const frame = JSON.parse(ev.data);
-        // 全量透传：不筛选帧类型，插件广播的自定义事件也能到达
-        handler(frame);
-      } catch {}
+    let disposed = false;
+    this._dispose = () => { disposed = true; };
+    this._retry = 0;
+    const connect = () => {
+      if (disposed) return;
+      const sock = new WebSocket('ws://127.0.0.1:' + this.port + '/api/events.mux');
+      this.sock = sock;
+      sock.onopen = () => {
+        console.log('[dsh-client] events.mux connected');
+        this._retry = 0;
+      };
+      sock.onmessage = (ev) => {
+        try {
+          const frame = JSON.parse(ev.data);
+          // 全量透传：不筛选帧类型，插件广播的自定义事件也能到达
+          handler(frame);
+        } catch {}
+      };
+      sock.onclose = () => {
+        console.log('[dsh-client] events.mux closed');
+        if (disposed) return;
+        // 指数退避重连（1s→2s→4s…封顶 30s），DSH 重启/网络抖动后事件流自动恢复
+        const delay = Math.min(30000, 1000 * Math.pow(2, this._retry || 0));
+        this._retry = (this._retry || 0) + 1;
+        setTimeout(connect, delay);
+      };
     };
-    sock.onclose = () => console.log('[dsh-client] events.mux closed');
+    connect();
+  }
+
+  // 主动关闭（应用退出时调用，停止重连）
+  close() {
+    if (this._dispose) this._dispose();
+    if (this.sock) { try { this.sock.close(); } catch {} }
   }
 }
 

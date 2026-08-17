@@ -3,6 +3,7 @@ const { app, BrowserWindow, ipcMain, Menu, dialog } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const net = require('net');
+const os = require('os');
 const { spawn, execSync } = require('child_process');
 const { DshClient } = require('./dsh-client');
 
@@ -50,14 +51,22 @@ function sessionToTabMeta(s, idx) {
   };
 }
 
+// 事件类型归一化：DSH 实时流与历史记录的事件名写法可能不同
+// （turn/started vs turn/start、turn/done vs turn/end），统一匹配两种写法。
+function normEventType(t) {
+  return String(t || '')
+    .replace(/\/started$/, '/start')
+    .replace(/\/done$/, '/end');
+}
+
 // DSH 事件 → Reasonix WireEvent
 function dshEventToWire(frame) {
   const ev = frame?.event;
   if (!ev) return null;
   const d = ev.data || {};
   const base = { tabId: frame.sessionId, runtimeEpoch: String(ev.seq) };
-  switch (ev.type) {
-    case 'turn/started': return { kind: 'turn_started', ...base };
+  switch (normEventType(ev.type)) {
+    case 'turn/start': return { kind: 'turn_started', ...base };
     case 'assistant/chunk': {
       const c = d.chunk;
       if (!c) return null;
@@ -68,7 +77,7 @@ function dshEventToWire(frame) {
       if (c.type === 'tool-call-result') return { kind: 'tool_result', tool: { name: c.name, callId: c.callId }, detail: c.result ? String(c.result).slice(0, 500) : undefined, ...base };
       return null;
     }
-    case 'turn/done': case 'assistant/done': return { kind: 'turn_done', ...base };
+    case 'turn/end': case 'assistant/end': return { kind: 'turn_done', ...base };
     case 'user/prompt': return null; // 前端自己乐观渲染用户消息
     default: return null;
   }
@@ -83,10 +92,42 @@ function checkPort(port = 3080, ms = 600) {
   });
 }
 
-// 找到可用的 node（Electron 内没有系统 node，需找 PATH 里的）
+// 无会话 cwd 时的回退根目录：用户主目录
+// （原代码硬编码了作者机器路径，任何其他机器上文件树/记忆/改动栏都会指向不存在的目录）
+const HOME_DIR = os.homedir() || 'C:\\';
+
+// 完全授权模式（yolo / danger-full-access）：解除桥自身的防御性校验，
+// 让前端对 DSH 及其 AI 零限制（开发原则 2）。由 preload 在安全模式切换时通知。
+let bridgeFullAccess = false;
+
+// 本应用拉起的 DSH 相关进程 pid（用于退出/更新时精确清理，绝不动用户其他进程）
+const spawnedDshPids = new Set();
+// 杀掉本应用拉起的 DSH 进程树
+function killSpawnedDsh() {
+  for (const pid of spawnedDshPids) {
+    try { execSync('taskkill /PID ' + pid + ' /T /F', { stdio: 'ignore', windowsHide: true }); } catch {}
+  }
+  spawnedDshPids.clear();
+}
+
+// 路径沙箱：target 必须解析后位于 root 之内（防 ../ 穿越）。
+// root 缺失一律拒绝（防止渲染层绕过根限制直接读任意路径）。
+function insideRoot(target, root) {
+  try {
+    if (!root) return null;
+    const t = path.resolve(String(target || ''));
+    const r = path.resolve(String(root));
+    return (t === r || t.startsWith(r + path.sep)) ? t : null;
+  } catch { return null; }
+}
+
+// 找到可用的 node（Electron 内没有系统 node，需找 PATH 里的；
+// 安装包会自带便携 node（resources/node），优先用自带的，机器上没装 Node 也能跑）
 function findNode() {
+  const bundled = path.join(process.resourcesPath, 'node', 'node.exe');
   const candidates = [
     process.env.NODE_EXE, // 安装脚本注入
+    bundled,              // 打包自带的便携 Node（resources/node/node.exe）
     'node',
     'C:\\Program Files\\nodejs\\node.exe',
     'C:\\Users\\' + (process.env.USERNAME || '') + '\\AppData\\Local\\Programs\\nodejs\\node.exe',
@@ -101,6 +142,15 @@ function findNode() {
 // ---------- DSH 配置（自动更新 / 手动指定版本 / 手动指定路径） ----------
 // 配置文件放在 userData 目录（不随安装包覆盖），记录用户对 DSH 的偏好。
 const DSH_CONFIG_FILE = () => path.join(app.getPath('userData'), 'dsh-config.json');
+
+// 简单文件日志：写入 userData/logs/app.log，方便在没终端/没控制台的机器上排查
+function logToFile(level, msg) {
+  try {
+    const dir = path.join(app.getPath('userData'), 'logs');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.appendFileSync(path.join(dir, 'app.log'), new Date().toISOString() + ' [' + level + '] ' + msg + '\n');
+  } catch {}
+}
 
 function loadDshConfig() {
   try {
@@ -127,13 +177,19 @@ async function ensureDsh() {
   if (await checkPort()) return true; // 已有 DSH 实例在跑，直接复用（不独占、不重复拉起）
   const cfg = loadDshConfig();
   const node = findNode();
-  if (!node) { console.log('[DSH] 未找到 Node.js，请先安装 Node.js'); return false; }
+  if (!node) { console.log('[DSH] 未找到 Node.js，请先安装 Node.js'); logToFile('error', 'Node.js not found'); return false; }
+  // 若用的是打包自带的 Node，把它所在目录加入 PATH，保证后续 npx.cmd 能被找到
+  const nodeDir = path.dirname(node);
+  if (nodeDir && process.env.PATH && process.env.PATH.split(';').indexOf(nodeDir) === -1) {
+    process.env.PATH = nodeDir + ';' + process.env.PATH;
+  }
 
   // 1) 用户手动指定了 DSH 可执行文件路径 → 直接用，不装不更新
   if (cfg.dshPath) {
     console.log('[DSH] 使用手动指定的 DSH:', cfg.dshPath);
     try {
       const child = spawn(cfg.dshPath, ['web'], { detached: true, stdio: 'ignore', windowsHide: true, shell: true });
+      if (child.pid) spawnedDshPids.add(child.pid);
       child.unref();
     } catch (e) { console.log('[DSH] 指定 DSH 启动失败:', e.message); }
     for (let i = 0; i < 180; i++) {
@@ -156,21 +212,20 @@ async function ensureDsh() {
     console.log('[DSH] 自动更新关闭：使用本地已安装的 DSH');
   }
   console.log('[DSH] 启动 dsh web 服务...');
+  // 只拉起一个 npx 进程（原代码同时 spawn 两个，会竞争 3080 端口、可能双写状态）
   try {
-    const child = spawn(node, ['-e', 'require("child_process").spawn("npx.cmd",["-y",' + JSON.stringify(pkg) + ',"web"],{stdio:"inherit",shell:true})'], {
-      detached: true, stdio: 'ignore', windowsHide: true,
-    });
-    child.unref();
-    const child2 = spawn('npx.cmd', ['-y', pkg, 'web'], {
+    const child = spawn('npx.cmd', ['-y', pkg, 'web'], {
       detached: true, stdio: 'ignore', windowsHide: true, shell: true,
     });
-    child2.unref();
+    if (child.pid) spawnedDshPids.add(child.pid);
+    child.unref();
   } catch (e) { console.log('[DSH] npx 启动失败:', e.message); }
   for (let i = 0; i < 180; i++) {
     if (await checkPort()) { console.log('[DSH] 服务已就绪'); return true; }
     await new Promise((r) => setTimeout(r, 1000));
   }
   console.log('[DSH] 服务 180s 内未就绪');
+  logToFile('error', 'DSH did not become ready within 180s');
   return false;
 }
 
@@ -210,8 +265,8 @@ app.whenReady().then(async () => {
 
   win.on('closed', () => console.log('[WIN] closed'));
   win.on('close', () => console.log('[WIN] close event'));
-  win.webContents.on('did-fail-load', (_e, code2, desc, url) => console.log('[WIN] did-fail-load', code2, desc, url));
-  win.webContents.on('render-process-gone', (_e, d) => console.log('[WIN] render-process-gone', JSON.stringify(d)));
+  win.webContents.on('did-fail-load', (_e, code2, desc, url) => { console.log('[WIN] did-fail-load', code2, desc, url); logToFile('error', 'did-fail-load ' + code2 + ' ' + desc + ' ' + url); });
+  win.webContents.on('render-process-gone', (_e, d) => { console.log('[WIN] render-process-gone', JSON.stringify(d)); logToFile('error', 'render-process-gone ' + JSON.stringify(d)); });
   win.once('ready-to-show', () => { console.log('[WIN] ready-to-show'); win.show(); });
   // 固定窗口标题，防止 Reasonix 前端 <title>Reasonix</title> 覆盖
   win.webContents.on('page-title-updated', (e) => e.preventDefault());
@@ -241,15 +296,27 @@ app.whenReady().then(async () => {
 
 
 
-  // IPC：渲染层调用 DSH（通用透传，任意 method/payload，插件方法也可调）
-  ipcMain.handle('dsh:rpc', (_e, method, payload) => dsh.rpc(method, payload));
+  // IPC：渲染层调用 DSH（通用透传，任意 method/payload，插件动态注册的方法也能调）。
+  // 设计原则：桥接层不限制 DSH 原生能力——插件/前端需要什么方法就透传什么。
+  // 仅保留最小的方法名格式校验（合法插件方法名均为 namespace.method 形式，不受影响）；
+  // 完全授权模式（yolo）下连这层校验也解除。
+  // 完全授权开关（preload 在安全模式切换/会话列表同步时调用）
+  ipcMain.on('bridge:setFullAccess', (_e, on) => { bridgeFullAccess = !!on; console.log('[bridge] fullAccess =', bridgeFullAccess); });
+  ipcMain.handle('dsh:rpc', async (_e, method, payload, timeoutMs) => {
+    if (!bridgeFullAccess && (typeof method !== 'string' || !/^[a-zA-Z0-9_.-]+$/.test(method))) return { ok: false, error: 'invalid method name' };
+    const t = (typeof timeoutMs === 'number' && timeoutMs > 0) ? Math.min(timeoutMs, 30 * 60 * 1000) : undefined;
+    try { return await dsh.rpc(method, payload, t); }
+    catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  });
   ipcMain.handle('dsh:catalog', () => dsh.catalog());
   ipcMain.handle('dsh:sessions', async () => {
     const res = await dsh.rpc('session.list', {});
     return (res.items || []).map(sessionToTabMeta);
   });
   ipcMain.handle('dsh:history', (_e, sid) => dsh.rpc('session.history', { sessionId: sid, limit: 300 }));
-  ipcMain.handle('dsh:prompt', (_e, sid, text) => dsh.rpc('session.prompt', { sessionId: sid, mode: 'steer', content: [{ type: 'text', text }] }));
+  // session.prompt 是长请求（模型生成可能要几分钟），用 10 分钟超时而不是默认 60s
+  ipcMain.handle('dsh:prompt', (_e, sid, text, timeoutMs) => dsh.rpc('session.prompt', { sessionId: sid, mode: 'steer', content: [{ type: 'text', text }] }, (typeof timeoutMs === 'number' && timeoutMs > 0) ? timeoutMs : 10 * 60 * 1000));
+  ipcMain.handle('app:version', () => app.getVersion());
   ipcMain.handle('dsh:create', (_e, cwd, agentPreset) => {
     const payload = {};
     if (cwd) payload.cwd = cwd;
@@ -262,8 +329,10 @@ app.whenReady().then(async () => {
     return r.canceled ? null : r.filePaths[0];
   });
   ipcMain.handle('dsh:createFolder', async (_e, target) => {
-    fs.mkdirSync(target, { recursive: true });
-    return target;
+    const t = String(target || '');
+    if (!t || !path.isAbsolute(t)) return { ok: false, error: 'invalid path (must be absolute)' };
+    fs.mkdirSync(t, { recursive: true });
+    return t;
   });
   // 价格配置：读 prices.json（用户可改，涨价后更新即可）
   ipcMain.handle('prices:load', () => {
@@ -284,7 +353,7 @@ app.whenReady().then(async () => {
     try {
       const https = require('https');
       const fetchUrl = (url) => new Promise((resolve, reject) => {
-        https.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, (res) => {
+        const req = https.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, timeout: 20000 }, (res) => {
           if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
             const next = res.headers.location.startsWith('http') ? res.headers.location : 'https://api-docs.deepseek.com' + res.headers.location;
             res.resume();
@@ -293,7 +362,9 @@ app.whenReady().then(async () => {
           let d = '';
           res.on('data', (c) => { d += c; });
           res.on('end', () => resolve(d));
-        }).on('error', reject);
+        });
+        req.on('timeout', () => req.destroy(new Error('fetch timeout')));
+        req.on('error', reject);
       });
       const html = await fetchUrl('https://api-docs.deepseek.com/zh-cn/quick_start/pricing');
       // 解析表格：标准价表（缓存命中|未命中|输出，模型顺序与表头对应）
@@ -328,30 +399,47 @@ app.whenReady().then(async () => {
   });
 
   // 文件系统（Reasonix @ 菜单 / 工作区）
+  // 根目录固定为用户主目录，且防 ../ 穿越；
+  // 完全授权模式（yolo / danger-full-access）下解除路径限制（原则：对 DSH/AI 零限制）。
   ipcMain.handle('fs:list', async (_e, rel) => {
-    const base = 'C:\\Users\\ROG Zephyrus G16\\Desktop\\DSH';
+    if (bridgeFullAccess) {
+      const root = String(rel || HOME_DIR);
+      try {
+        const entries = fs.readdirSync(root, { withFileTypes: true });
+        const pathMod = require('path');
+        return entries.map((ent) => ({ name: ent.name, path: pathMod.join(root, ent.name), isDir: ent.isDirectory() }));
+      } catch { return []; }
+    }
+    const base = HOME_DIR;
     const target = rel && rel !== '.' && rel !== './'
       ? (rel.startsWith(base) ? rel : require('path').join(base, rel))
       : base;
+    const safe = insideRoot(target, base);
+    if (!safe) return [];
     try {
-      const entries = fs.readdirSync(target, { withFileTypes: true });
+      const entries = fs.readdirSync(safe, { withFileTypes: true });
       const pathMod = require('path');
       return entries.map((ent) => ({
         name: ent.name,
-        path: pathMod.join(target, ent.name),
+        path: pathMod.join(safe, ent.name),
         isDir: ent.isDirectory(),
       }));
     } catch { return []; }
   });
   ipcMain.handle('fs:read', async (_e, file) => {
-    try { return fs.readFileSync(file, 'utf8'); } catch { return ''; }
+    try {
+      const safe = bridgeFullAccess ? String(file || '') : insideRoot(file, HOME_DIR);
+      if (!safe) return '';
+      return fs.readFileSync(safe, 'utf8');
+    } catch { return ''; }
   });
 
   // 绝对路径版文件系统接口（preload 已拼好 cwd+相对路径，这里直接读绝对路径）
-  ipcMain.handle('fs:listAbs', async (_e, dir) => {
+  // 默认带 root（会话 cwd）校验，防 ../ 穿越；完全授权模式下解除校验
+  ipcMain.handle('fs:listAbs', async (_e, dir, root) => {
     try {
-      const target = String(dir || '');
-      const pathMod = require('path');
+      const target = bridgeFullAccess ? String(dir || '') : insideRoot(dir, root);
+      if (!target) return { error: 'path outside root' };
       const entries = fs.readdirSync(target, { withFileTypes: true });
       return entries.map((ent) => ({
         name: ent.name,
@@ -361,15 +449,19 @@ app.whenReady().then(async () => {
       }));
     } catch (e) { return { error: String(e && e.message || e) }; }
   });
-  ipcMain.handle('fs:readAbs', async (_e, file) => {
-    try { return { ok: true, body: fs.readFileSync(file, 'utf8'), size: fs.statSync(file).size }; }
-    catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  ipcMain.handle('fs:readAbs', async (_e, file, root) => {
+    try {
+      const target = bridgeFullAccess ? String(file || '') : insideRoot(file, root);
+      if (!target) return { ok: false, error: 'path outside root' };
+      return { ok: true, body: fs.readFileSync(target, 'utf8'), size: fs.statSync(target).size };
+    } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
   });
   // 记忆（Memory）：跟着项目走，存 <cwd>/.dsh/memory.md
   // read 返回 { exists, body }；write 写入；返回 { ok } 或 { ok:false, error }
   ipcMain.handle('memory:read', async (_e, cwd) => {
     try {
       const dir = String(cwd || '');
+      if (!dir || !path.isAbsolute(dir)) return { exists: false, body: '', path: '', error: 'invalid cwd' };
       const file = require('path').join(dir, '.dsh', 'memory.md');
       const exists = fs.existsSync(file);
       return { exists, body: exists ? fs.readFileSync(file, 'utf8') : '', path: file };
@@ -378,6 +470,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('memory:write', async (_e, cwd, body) => {
     try {
       const dir = String(cwd || '');
+      if (!dir || !path.isAbsolute(dir)) return { ok: false, error: 'invalid cwd' };
       const pathMod = require('path');
       const dshDir = pathMod.join(dir, '.dsh');
       const file = pathMod.join(dshDir, 'memory.md');
@@ -398,7 +491,7 @@ app.whenReady().then(async () => {
       // 非 git 仓库：回退到"最近修改的文件"（session 改动近似），让改动栏有内容
       const files = [];
       const pathMod = require('path');
-      const base = cwd || 'C:\\Users\\ROG Zephyrus G16\\Desktop\\DSH';
+      const base = cwd || HOME_DIR;
       try {
         const walk = (dir, depth) => {
           if (depth > 3) return;
@@ -472,11 +565,18 @@ app.whenReady().then(async () => {
     try {
       const node = findNode();
       if (!node) return { ok: false, error: '未找到 Node.js' };
-      // 杀掉现有 DSH 进程（由 npx 拉起的），再强制拉最新
-      execSync('taskkill /F /IM node.exe /FI "WINDOWTITLE eq dsh" 2>nul', { stdio: 'ignore', windowsHide: true });
+      // 先杀本应用拉起的 DSH 进程树；再按命令行精确过滤 @deepseek-ai/dsh 的 node 进程。
+      // 绝不使用 taskkill /IM node.exe（会误杀用户机器上所有 node 程序）。
+      killSpawnedDsh();
+      try {
+        require('child_process').spawnSync('powershell.exe', ['-NoProfile', '-Command',
+          "Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" | Where-Object { $_.CommandLine -match 'deepseek-ai/dsh' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"],
+          { windowsHide: true, stdio: 'ignore' });
+      } catch {}
       const child = spawn(node, ['-e', 'require("child_process").spawn("npx.cmd",["-y","@deepseek-ai/dsh@latest","web"],{stdio:"inherit",shell:true})'], {
         detached: true, stdio: 'ignore', windowsHide: true,
       });
+      if (child.pid) spawnedDshPids.add(child.pid);
       child.unref();
       for (let i = 0; i < 60; i++) {
         if (await checkPort()) return { ok: true, message: 'DSH 已更新并重启' };
@@ -486,4 +586,8 @@ app.whenReady().then(async () => {
     } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
   });
 });
-app.on('window-all-closed', () => app.quit());
+app.on('window-all-closed', () => {
+  // 退出时清掉本应用拉起的 DSH 后台进程，不留残留（只杀自己 spawn 的）
+  killSpawnedDsh();
+  app.quit();
+});

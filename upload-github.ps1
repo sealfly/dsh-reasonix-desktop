@@ -1,8 +1,8 @@
 # GitHub API 上传脚本（用于 github.com git push 被墙时的替代方案）
-# 用法: .\upload-github.ps1 -Token "ghp_xxx" -Repo "dsh-reasonix" -User "你的用户名"
+# 用法: .\upload-github.ps1 -Token "ghp_xxx" -Repo "dsh-reasonix-desktop" -User "你的用户名"
 param(
   [Parameter(Mandatory=$true)][string]$Token,
-  [string]$Repo = "dsh-reasonix",
+  [string]$Repo = "dsh-reasonix-desktop",
   [string]$User = ""
 )
 
@@ -36,11 +36,11 @@ try {
   } else { throw }
 }
 
-$releaseDir = "C:\Users\ROG Zephyrus G16\Desktop\DSH\dsh-reasonix\release"
+$releaseDir = Join-Path $PSScriptRoot "release"
 $assets = @(
-  "DSH-Reasonix Setup 0.1.0.exe",
-  "DSH-Reasonix-0.1.0-win.zip",
-  "DSH-Reasonix-Setup.exe"
+  "dsh-(reasonix)UI-desktop Setup 0.1.0.exe",
+  "dsh-(reasonix)UI-desktop-0.1.0-win.zip",
+  "dsh-(reasonix)UI-desktop 0.1.0.exe"
 )
 foreach ($a in $assets) {
   $p = Join-Path $releaseDir $a

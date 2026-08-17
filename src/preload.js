@@ -2,6 +2,11 @@
 // Reasonix 前端 → DSH 桥接层
 // 注入 window.go.main.App（DSH 实现 + mock 回退）和 window.runtime（事件通道）
 const { ipcRenderer, contextBridge } = require('electron');
+const { homedir } = require('os');
+
+// 会话 cwd 缺失时的回退根目录：用户主目录
+// （原代码硬编码了作者机器路径，任何其他机器上都会指向不存在的目录）
+const HOME_FALLBACK = () => homedir() || 'C:/';
 
 // ---------- 事件通道（window.runtime.EventsOn） ----------
 const eventChannels = new Map(); // channel -> Set<cb>
@@ -96,6 +101,16 @@ async function emitUsageEvent(sessionId) {
     const cacheHit = tu.cacheReadTokens || 0;
     const cacheMiss = tu.uncachedInputTokens || 0;
     const output = tu.outputTokens || 0;
+    // 动态取当前 provider/model 算费用（不要写死官方 flash）
+    let provider = 'deepseek-official';
+    let model = 'deepseek-v4-flash';
+    try {
+      const models = await rpc('session.models', { sessionId });
+      if (models && models.current) {
+        provider = models.current.provider || provider;
+        model = models.current.model || model;
+      }
+    } catch {}
     const usage = {
       promptTokens: cacheMiss,
       completionTokens: output,
@@ -106,7 +121,7 @@ async function emitUsageEvent(sessionId) {
       sessionCacheHitTokens: cacheHit,
       sessionCacheMissTokens: cacheMiss,
       source: 'dsh',
-      cost: calcCost(tu, 'deepseek-official', 'deepseek-v4-flash'),
+      cost: calcCost(tu, provider, model),
       currencyCode: 'CNY',
     };
     eventsEmit('agent:event', { kind: 'usage', usage, tabId: sessionId });
@@ -114,10 +129,27 @@ async function emitUsageEvent(sessionId) {
 }
 
 // ---------- DSH 历史 → WireEvent 重放 ----------
+// 事件类型归一化：DSH 实时流/历史记录的事件名写法可能不同
+// （turn/started vs turn/start、turn/done vs turn/end），统一匹配两种写法。
+function normType(t) {
+  return String(t || '')
+    .replace(/\/started$/, '/start')
+    .replace(/\/done$/, '/end');
+}
+
+// 重放代次：切 tab 后旧代次的延迟重放全部作废，防止历史串台到新 tab
+let replayGen = 0;
+let lastReplay = null; // { tabId, at } —— 同一 tab 短时间内重复重放（如打开 tab 触发多次）只播一次
+
 // DSH session.history 返回 events 数组；转成 Reasonix WireEvent 序列喂给前端，
 // 前端 transcript store 据此构建对话历史。
 function replayHistory(sessionId, events) {
   if (!events || !events.length) return;
+  // 幂等去重：同一 tab 3 秒内重复触发只重放一次
+  const now = Date.now();
+  if (lastReplay && lastReplay.tabId === sessionId && now - lastReplay.at < 3000) return;
+  lastReplay = { tabId: sessionId, at: now };
+  const gen = ++replayGen;
   const wire = [];
   let currentTurn = null;
   let textBuf = '';
@@ -152,24 +184,26 @@ function replayHistory(sessionId, events) {
   };
   for (const { event } of events) {
     const d = event.data || {};
-    if (event.type === 'turn/start') {
+    const t = normType(event.type);
+    if (t === 'turn/start') {
       currentTurn = d.turn;
       wire.push({ kind: 'turn_started', tabId: sessionId });
-    } else if (event.type === 'turn/end') {
+    } else if (t === 'turn/end') {
       wire.push({ kind: 'turn_done', tabId: sessionId });
       currentTurn = null;
-    } else if (event.type === 'user/message') {
-      pushMsg('user', d.content);
+    } else if (event.type === 'user/message' || event.type === 'user/prompt') {
+      pushMsg('user', d.content || d.prompt);
     } else if (event.type === 'assistant/message') {
       pushMsg('assistant', d.message && d.message.content);
     }
   }
   flushText();
-  // 延迟重放（限 300 条，避免海量 setTimeout 拖垮前端）
+  // 延迟重放（限 300 条，避免海量 setTimeout 拖垮前端）；
+  // 每条发送前检查代次：切到别的 tab 后，旧 tab 的排队重放直接丢弃
   const limited = wire.slice(0, 300);
-  limited.forEach((w, i) => setTimeout(() => eventsEmit('agent:event', w), i * 5));
+  limited.forEach((w, i) => setTimeout(() => { if (gen === replayGen) eventsEmit('agent:event', w); }, i * 5));
   // 重放后补发 usage 事件（驱动用量分析卡）
-  setTimeout(() => emitUsageEvent(sessionId), limited.length * 5 + 50);
+  setTimeout(() => { if (gen === replayGen) emitUsageEvent(sessionId); }, limited.length * 5 + 50);
 }
 
 // ---------- DSH history → HistorySlice（前端历史加载核心） ----------
@@ -241,12 +275,21 @@ const PERMISSION_TO_MODE = { 'read-only': 'ask', 'workspace-write': 'auto', 'dan
 // 不与 agentPreset 绑定（preset 管工具集，permission 管沙箱权限，是两个维度）。
 const DEFAULT_PRESET = 'code';
 let currentMode = 'auto'; // 默认 workspace-write
+let activeTabId = null;   // 前端记忆的当前 tab（主进程的 active 只是"列表第一个"）
 
 // ---------- DSH 工具函数 ----------
-const rpc = (method, payload) => ipcRenderer.invoke('dsh:rpc', method, payload);
+const rpc = (method, payload, timeoutMs) => ipcRenderer.invoke('dsh:rpc', method, payload, timeoutMs);
 const sessions = () => ipcRenderer.invoke('dsh:sessions');
 const history = (sid) => ipcRenderer.invoke('dsh:history', sid);
-const prompt = (sid, text) => ipcRenderer.invoke('dsh:prompt', sid, text);
+const prompt = (sid, text, timeoutMs) => ipcRenderer.invoke('dsh:prompt', sid, text, timeoutMs);
+// 提交消息的统一错误处理：失败不静默，console 有痕迹、调用方拿得到结果
+const submitPrompt = async (sid, input) => {
+  try {
+    const r = await prompt(sid, input, 10 * 60 * 1000);
+    if (r && r.ok === false) console.error('[dsh] prompt failed:', r.error);
+    return r;
+  } catch (e) { console.error('[dsh] prompt failed:', e && e.message || e); return { ok: false, error: String(e && e.message || e) }; }
+};
 // 切换 DSH 权限：通过 commands/execute Typert 端点执行 /permission 命令。
 // 注意：不能用 session.prompt 发 /permission（那会当普通消息发给模型，不执行命令）。
 // 正确做法是 POST /api/commands/execute，payload 为 { args: { agentId, line } }。
@@ -257,6 +300,8 @@ async function setDshPermission(sessionId, mode) {
     await rpc('commands/execute', { args: { agentId: sessionId, line: '/permission ' + perm } });
   } catch {}
   currentMode = mode;
+  // 完全授权（yolo / danger-full-access）时通知主进程解除桥的防御性校验（原则 2）
+  ipcRenderer.send('bridge:setFullAccess', mode === 'yolo');
 }
 const createSession = (cwd, agentPreset) => ipcRenderer.invoke('dsh:create', cwd, agentPreset);
 const cancelSession = (sid) => ipcRenderer.invoke('dsh:cancel', sid);
@@ -269,7 +314,7 @@ async function cwdOfTab(tabID) {
     const c = (t && (t.workspaceRoot || t.cwd)) || '';
     if (c) return c;
   } catch {}
-  return 'C:/Users/ROG Zephyrus G16/Desktop/DSH';
+  return HOME_FALLBACK();
 }
 
 // ---------- 记忆（Memory）：跟着项目走，存 <cwd>/.dsh/memory.md ----------
@@ -313,7 +358,7 @@ async function memoryViewOf(tabID) {
     const t = tabID ? tabs.find((x) => x.id === tabID) : (tabs.find((x) => x.active) || tabs[0]);
     cwd = (t && (t.workspaceRoot || t.cwd)) || '';
   } catch {}
-  if (!cwd) cwd = 'C:/Users/ROG Zephyrus G16/Desktop/DSH';
+  if (!cwd) cwd = HOME_FALLBACK();
   const storeDir = memoryPathOf(cwd);
   let body = '';
   let exists = false;
@@ -343,7 +388,7 @@ async function rememberInto(tabID, scope, note) {
     const t = tabID ? tabs.find((x) => x.id === tabID) : (tabs.find((x) => x.active) || tabs[0]);
     cwd = (t && (t.workspaceRoot || t.cwd)) || '';
   } catch {}
-  if (!cwd) cwd = 'C:/Users/ROG Zephyrus G16/Desktop/DSH';
+  if (!cwd) cwd = HOME_FALLBACK();
   const r = await ipcRenderer.invoke('memory:read', cwd);
   const body = r.body || '';
   const text = String(note || '').trim();
@@ -363,7 +408,7 @@ async function forgetFrom(tabID, name) {
     const t = tabID ? tabs.find((x) => x.id === tabID) : (tabs.find((x) => x.active) || tabs[0]);
     cwd = (t && (t.workspaceRoot || t.cwd)) || '';
   } catch {}
-  if (!cwd) cwd = 'C:/Users/ROG Zephyrus G16/Desktop/DSH';
+  if (!cwd) cwd = HOME_FALLBACK();
   const r = await ipcRenderer.invoke('memory:read', cwd);
   const facts = parseMemoryMd(r.body || '', memoryPathOf(cwd), 'project');
   const kept = facts.filter((f) => f.name !== name);
@@ -417,8 +462,18 @@ const appImpl = {
   ListTabs: async () => {
     // 主进程 dsh:sessions 已转换好 TabMeta，这里直接用（避免二次转换把 id 弄丢）
     const tabs = await sessions();
+    // 恢复前端记忆的当前 tab（主进程的 active 只是"列表第一个"，切 tab 后重拉列表会跳回）
+    if (activeTabId) {
+      const cur = tabs.find((t) => t.id === activeTabId);
+      if (cur) { for (const t of tabs) t.active = (t.id === activeTabId); }
+      else activeTabId = null;
+    }
     const active = tabs.find((t) => t.active) || tabs[0];
-    if (active?.permissions?.currentValue) currentMode = PERMISSION_TO_MODE[active.permissions.currentValue] || currentMode;
+    if (active?.permissions?.currentValue) {
+      currentMode = PERMISSION_TO_MODE[active.permissions.currentValue] || currentMode;
+      // 当前会话已是完全授权时，同步解除桥的防御性校验
+      ipcRenderer.send('bridge:setFullAccess', active.permissions.currentValue === 'danger-full-access');
+    }
     return tabs;
   },
 
@@ -526,6 +581,7 @@ const appImpl = {
     const tabs = await sessions();
     const active = tabs.find((t) => t.active) || tabs[0];
     const workspacePath = active?.workspacePath || active?.cwd || 'C:\\';
+    const mode = active?.toolApprovalMode || currentMode;
     return {
       label: active?.label || 'DeepSeek-V4-Flash',
       ready: true,
@@ -537,10 +593,10 @@ const appImpl = {
       sandboxPath: workspacePath,
       gitBranch: 'main',
       imageInputEnabled: true,
-      autoApproveTools: false,
+      autoApproveTools: mode === 'yolo',
       bypass: false,
       collaborationMode: 'normal',
-      toolApprovalMode: 'ask',
+      toolApprovalMode: mode,
       goal: '',
       goalStatus: 'stopped',
     };
@@ -549,6 +605,7 @@ const appImpl = {
     const tabs = await sessions();
     const active = tabs.find((t) => t.active) || tabs[0];
     const workspacePath = active?.workspacePath || active?.cwd || 'C:\\';
+    const mode = active?.toolApprovalMode || currentMode;
     return {
       label: active?.label || 'DeepSeek-V4-Flash',
       ready: true,
@@ -560,15 +617,16 @@ const appImpl = {
       sandboxPath: workspacePath,
       gitBranch: 'main',
       imageInputEnabled: true,
-      autoApproveTools: false,
+      autoApproveTools: mode === 'yolo',
       bypass: false,
       collaborationMode: 'normal',
-      toolApprovalMode: 'ask',
+      toolApprovalMode: mode,
       goal: '',
       goalStatus: 'stopped',
     };
   },
   SetActiveTab: async (tabID) => {
+    activeTabId = tabID;
     try { const h = await history(tabID); replayHistory(tabID, h.events); } catch {}
   },
   OpenProjectTab: async (workspaceRoot, topicId) => {
@@ -706,7 +764,7 @@ const appImpl = {
   RestoreMemoryRevision: async () => ({}),
   RestoreMemoryRevisionForTab: async () => ({}),
   AcceptSkillSuggestionForTab: async () => {},
-  Version: async () => '0.1.0',
+  Version: async () => (await ipcRenderer.invoke('app:version')) || '0.1.0',
   ReloadCommands: async () => {},
   SlashArgs: async () => ({ args: [] }),
   ScanPromptHistory: async () => [],
@@ -722,7 +780,7 @@ const appImpl = {
   ListDirForTab: async (tabID, rel) => {
     const cwd = await cwdOfTab(tabID);
     const dirAbs = cwd + '/' + String(rel || '').replace(/^\//, '');
-    const items = await ipcRenderer.invoke('fs:listAbs', dirAbs);
+    const items = await ipcRenderer.invoke('fs:listAbs', dirAbs, cwd);
     if (items && items.error) return [];
     const relBase = String(rel || '').replace(/\/$/, '');
     return (items || []).map((e) => {
@@ -743,7 +801,7 @@ const appImpl = {
   ReadFileForTab: async (tabID, path) => {
     const cwd = await cwdOfTab(tabID);
     const fileAbs = cwd + '/' + String(path || '').replace(/^\//, '');
-    const r = await ipcRenderer.invoke('fs:readAbs', fileAbs);
+    const r = await ipcRenderer.invoke('fs:readAbs', fileAbs, cwd);
     if (!r || !r.ok) {
       return { path, body: '', size: 0, truncated: false, binary: false, err: r && r.error };
     }
@@ -768,17 +826,17 @@ const appImpl = {
   OpenWorkspacePath: async () => {},
   OpenWorkspacePathForTab: async () => {},
   WorkspaceChanges: async (tabID) => {
-    const cwd = (await sessions()).find((t) => t.id === tabID)?.cwd || 'C:\\Users\\ROG Zephyrus G16\\Desktop\\DSH';
+    const cwd = (await sessions()).find((t) => t.id === tabID)?.cwd || HOME_FALLBACK();
     return await ipcRenderer.invoke('git:changes', cwd);
   },
   WorkspaceChangeDetail: async (tabID, path) => {
-    const cwd = (await sessions()).find((t) => t.id === tabID)?.cwd || 'C:\\Users\\ROG Zephyrus G16\\Desktop\\DSH';
+    const cwd = (await sessions()).find((t) => t.id === tabID)?.cwd || HOME_FALLBACK();
     return await ipcRenderer.invoke('git:detail', cwd, path);
   },
   WorkspaceConflictForTab: async () => null,
   WorkspaceRevisionForTab: async () => ({ revisions: { content: 0, tree: 0, workingTree: 0, gitMeta: 0, session: 0 }, watchState: 'active' }),
   WorkspaceGitHistory: async (tabID, path) => {
-    const cwd = (await sessions()).find((t) => t.id === tabID)?.cwd || 'C:\\Users\\ROG Zephyrus G16\\Desktop\\DSH';
+    const cwd = (await sessions()).find((t) => t.id === tabID)?.cwd || HOME_FALLBACK();
     return await ipcRenderer.invoke('git:history', cwd, path);
   },
   WorkspaceGitCommitDetail: async () => ({ diff: '' }),
@@ -788,18 +846,29 @@ const appImpl = {
   GitCheckout: async () => {},
 
   // ===== 对话 =====
-  Submit: async (input) => { const tabs = await sessions(); if (tabs.length) await prompt(tabs[0].id, input); },
-  SubmitToTab: async (tabID, input) => { await prompt(tabID, input); },
-  SubmitToTabWithID: async (tabID, input) => { await prompt(tabID, input); },
-  SubmitDisplay: async (_display, input) => { const tabs = await sessions(); if (tabs.length) await prompt(tabs[0].id, input); },
-  SubmitDisplayToTab: async (tabID, _display, input) => { await prompt(tabID, input); },
-  SubmitDisplayToTabWithID: async (tabID, _display, input) => { await prompt(tabID, input); },
-  Steer: async (input) => { const tabs = await sessions(); if (tabs.length) await prompt(tabs[0].id, input); },
-  SteerForTab: async (tabID, input) => { await prompt(tabID, input); },
+  Submit: async (input) => { const tabs = await sessions(); if (tabs.length) return submitPrompt(tabs[0].id, input); },
+  SubmitForTab: async (tabID, input) => submitPrompt(tabID, input),
+  SubmitToTab: async (tabID, input) => submitPrompt(tabID, input),
+  SubmitToTabWithID: async (tabID, input) => submitPrompt(tabID, input),
+  SubmitDisplay: async (_display, input) => { const tabs = await sessions(); if (tabs.length) return submitPrompt(tabs[0].id, input); },
+  SubmitDisplayToTab: async (tabID, _display, input) => submitPrompt(tabID, input),
+  SubmitDisplayToTabWithID: async (tabID, _display, input) => submitPrompt(tabID, input),
+  Steer: async (input) => { const tabs = await sessions(); if (tabs.length) return submitPrompt(tabs[0].id, input); },
+  SteerForTab: async (tabID, input) => submitPrompt(tabID, input),
   Cancel: async (tabID) => { await cancelSession(tabID); },
   CancelForTab: async (tabID) => { await cancelSession(tabID); },
-  Approve: async () => {},
-  Reject: async () => {},
+  // 工具审批：DSH 权限是预设级（read-only/workspace-write/danger-full-access），
+  // 工具由 agent 按当前权限自动批准/拒绝，没有"逐项人工审批"概念。
+  // 这里明确返回不支持，避免前端"点了没反应"以为是 bug。
+  Approve: async () => {
+    console.warn('[dsh] DSH 权限模式不支持逐项工具审批（工具由 agent 按当前权限自动批准/拒绝）；如需放行请切换安全模式到 auto/yolo');
+    return { ok: false, reason: 'unsupported' };
+  },
+  Reject: async () => {
+    console.warn('[dsh] DSH 权限模式不支持逐项工具审批');
+    return { ok: false, reason: 'unsupported' };
+  },
+  ApproveTab: async () => ({ ok: false, reason: 'unsupported' }),
   AnswerQuestion: async () => {},
 
   Settings: async () => ({

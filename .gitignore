@@ -6,3 +6,4 @@ dist/
 release/
 renderer/dist/
 sourcemaps/
+vendor/

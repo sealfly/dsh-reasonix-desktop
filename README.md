@@ -39,13 +39,14 @@ Reasonix 的 ToolApprovalMode 三档与 DSH 的权限体系关联（从会话 pr
 
 | Reasonix 模式 | DSH 权限 | 说明 |
 |---|---|---|
-| ask（每次询问） | workspace-write（保守） | 关键操作需确认 |
-| auto（自动批准常用） | danger-full-access | 常用工具自动放行 |
-| yolo（全自动） | danger-full-access | 全自动执行 |
+| ask | read-only | 保守：写类工具会被 DSH 拒绝 |
+| auto | workspace-write | 常用工具自动放行 |
+| yolo | danger-full-access | 全自动执行 |
 
 - 会话列表按 DSH 实际权限回显当前模式（`read-only→ask / workspace-write→auto / danger-full-access→yolo`）
-- 切换模式存到桥状态，**新建会话时按当前模式选择 agentPreset**（DSH 权限由 preset 决定，创建后不可运行中切换）
+- 切换模式通过 DSH `/permission` 命令在**运行中实时生效**（新建会话统一使用 `code` preset；权限独立于 preset 控制）
 - `SetToolApprovalMode / SetToolApprovalModeForTab / ToolApprovalMode` 已映射
+- 注意：DSH 权限是预设级，工具由 agent 按当前权限自动批准/拒绝，**不支持逐项人工审批**（`Approve/Reject` 明确返回不支持）
 
 ## 新建项目
 
@@ -54,7 +55,10 @@ Reasonix 的 ToolApprovalMode 三档与 DSH 的权限体系关联（从会话 pr
 - 创建后自动 `OpenProjectTab` 打开并刷新会话列表
 - 项目树「新建项目」入口完整可用
 
-前置：DSH web 服务运行在 3080（`start-dsh-web.bat`），且 `reasonix-reference/desktop/frontend/dist` 已构建。
+## 前置
+
+- **无需预装 Node.js**：安装包内置便携版 Node（`resources/node`），应用启动时自动 `npx -y @deepseek-ai/dsh web` 拉起 DSH 后端（首次需联网下载，约 1-3 分钟）；若 3080 已有 DSH 实例则直接复用
+- 开发模式：DSH web 服务运行在 3080（`start-dsh-web.bat`），且 `reasonix-reference/desktop/frontend/dist` 已构建（或复制到 `renderer/dist`）
 
 ## 桥接映射（当前已实现）
 
