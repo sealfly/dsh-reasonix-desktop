@@ -7,6 +7,10 @@ const os = require('os');
 const { spawn, execSync } = require('child_process');
 const { DshClient } = require('./dsh-client');
 
+// 任务栏分组身份：不设置的话 Windows 会把窗口归到"未分组"，且多窗口不合并。
+// 必须与 electron-builder 的 build.appId 一致（package.json 里是 com.dsh.reasonix.ui）。
+if (app.setAppUserModelId) app.setAppUserModelId('com.dsh.reasonix.ui');
+
 // reasonix 前端 dist 路径：打包后随 app 一起分发（renderer/dist），开发模式用 reasonix-reference
 const REASONIX_DIST = (() => {
   const bundled = path.join(__dirname, '..', 'renderer', 'dist', 'index.html');
