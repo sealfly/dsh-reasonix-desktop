@@ -1,7 +1,12 @@
 # 上传 release 资产到 GitHub Release（v0.1.0）
 # 用法：先 npm run dist，再运行本脚本（已登录 gh）。
 # 目标仓库自动从 git remote 读取——clone 后推到自己的 GitHub 仓库即可用，无需改脚本。
-$gh = (Get-Command gh -ErrorAction SilentlyContinue).Source
+# 注意：Get-Command 在脚本文件内（后台任务上下文）可能返回空，先用常见安装路径探测。
+$gh = $null
+foreach ($c in @('C:\Program Files\GitHub CLI\gh.exe', "$env:LOCALAPPDATA\Programs\GitHub CLI\gh.exe", "$env:ProgramFiles\GitHub CLI\gh.exe")) {
+  if (Test-Path $c) { $gh = $c; break }
+}
+if (-not $gh) { $gh = (Get-Command gh -ErrorAction SilentlyContinue).Source }
 if (-not $gh) { Write-Error "未找到 gh CLI，请先安装并登录: gh auth login"; exit 1 }
 $remote = (git remote get-url origin 2>$null)
 $repo = ($remote -replace '^https?://[^/]+/','' -replace '^git@[^:]+:','' -replace '\.git$','').Trim()
