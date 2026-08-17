@@ -522,6 +522,7 @@ const appImpl = {
       if (!byRoot.has(root)) byRoot.set(root, []);
       byRoot.get(root).push({
         key: s.sessionId, kind: 'session', label: title,
+        root, // 所属项目根目录：前端 projectTreeTopicOpenRequest 用 node.root 作为 workspaceRoot，缺失会导致"无法打开会话"
         topicId: s.sessionId, sessionPath: s.sessionId + '.jsonl',
         turns: v.sessionStats?.turns, turnsState: 'valid', health: 'ok',
         lastActivityAt: s.updatedAt, open: true, running: !!s.running,
@@ -555,6 +556,26 @@ const appImpl = {
       indexed: tree.indexed,
       total: tree.total,
       indexingDone: true,
+    };
+  },
+  // 运行时投影快照：前端 useProjectTreeRuntimeProjection 用它叠加会话运行状态（open/running/status）
+  GetProjectTreeRuntimeSnapshot: async () => {
+    const list = await rpc('session.list', {});
+    const items = (list && list.items) || [];
+    return {
+      revision: Date.now(),
+      topics: items.map((s) => ({
+        node: {
+          topicId: s.sessionId,
+          scope: 'project',
+          workspaceRoot: s.cwd || 'C:\\',
+          sessionPath: s.sessionId + '.jsonl',
+          open: true,
+          running: !!s.running,
+          status: s.running ? 'running' : 'idle',
+          children: [],
+        },
+      })),
     };
   },
   ListProjectTopics: async (req) => {
@@ -747,11 +768,30 @@ const appImpl = {
     if (topicID) { try { const h = await history(topicID); replayHistory(topicID, h.events); } catch {} }
     return sessionToTabMeta({ sessionId: topicID, cwd: workspaceRoot, running: false, projections: {} }, 0);
   },
+  // 前端某些路径（如 history 恢复）调用 OpenSession，与 OpenTopicSession 同语义
+  OpenSession: async (scope, workspaceRoot, topicID, sessionPath) => {
+    if (topicID) { try { const h = await history(topicID); replayHistory(topicID, h.events); } catch {} }
+    return sessionToTabMeta({ sessionId: topicID, cwd: workspaceRoot, running: false, projections: {} }, 0);
+  },
   ActivateTopic: async (scope, workspaceRoot, topicID) => {
     if (topicID) { try { const h = await history(topicID); replayHistory(topicID, h.events); } catch {} }
     return sessionToTabMeta({ sessionId: topicID, cwd: workspaceRoot, running: false, projections: {} }, 0);
   },
-  StartTopicActivation: async () => ({}),
+  StartTopicActivation: async (req) => {
+    // 前端 singleSurfaceLayout 打开会话走 activateTopic → StartTopicActivation。
+    // 必须返回 { meta, tabId, requestId }，否则前端 C=_.meta 为 undefined → "无法打开会话"。
+    const rq = (req && typeof req === 'object') ? req : {};
+    const scope = rq.scope;
+    const workspaceRoot = rq.workspaceRoot;
+    const topicId = rq.topicId;
+    if (topicId) { try { const h = await history(topicId); replayHistory(topicId, h.events); } catch {} }
+    const meta = sessionToTabMeta({ sessionId: topicId, cwd: workspaceRoot, running: false, projections: {} }, 0);
+    return {
+      meta,
+      tabId: meta.id,
+      requestId: rq.requestId || ('bridge-' + Date.now()),
+    };
+  },
   CurrentTaskSessionID: async () => '',
   OpenTaskSession: async () => ({}),
   OpenTaskSessionForTab: async () => ({}),
@@ -1051,6 +1091,7 @@ const appImpl = {
   StorageSettings: async () => ({}),
   ReloadSettings: async () => {},
   ExternalOpeners: async () => ({ openers: [], preferred: '' }),
+  ExternalOpenersForTab: async () => ({ openers: [], preferred: '' }),
   SetPreferredExternalOpener: async () => {},
   SetNetwork: async () => {},
   SetAutoApproveTools: async () => {},

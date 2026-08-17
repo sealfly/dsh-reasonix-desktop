@@ -7,9 +7,17 @@ const os = require('os');
 const { spawn, execSync } = require('child_process');
 const { DshClient } = require('./dsh-client');
 
+// 设置干净的 app 名称：package.json 的 name 含括号（dsh-(reasonix)UI-desktop），
+// 会导致 userData 目录名含括号（%APPDATA%\dsh-(reasonix)UI-desktop），
+// 这里显式设置一个干净名称，并把 userData 收进应用目录（绿色便携，不污染 %APPDATA%）。
+app.setName('DSH-ReasonixUI');
+try {
+  app.setPath('userData', path.join(__dirname, '..', '.userdata'));
+} catch (e) { console.log('[APP] userData redirect failed:', e && e.message); }
+
 // 任务栏分组身份：不设置的话 Windows 会把窗口归到"未分组"，且多窗口不合并。
 // 必须与 electron-builder 的 build.appId 一致（package.json 里是 com.dsh.reasonix.ui）。
-if (app.setAppUserModelId) app.setAppUserModelId('com.dsh.reasonix.ui');
+// （在 whenReady 中调用 setAppUserModelId）
 
 // reasonix 前端 dist 路径：打包后随 app 一起分发（renderer/dist），开发模式用 reasonix-reference
 const REASONIX_DIST = (() => {
@@ -263,6 +271,7 @@ async function ensureDsh() {
 }
 
 app.whenReady().then(async () => {
+  try { app.setAppUserModelId('com.dsh.reasonix.ui'); } catch (e) { console.log('[APP] setAppUserModelId failed:', e && e.message); }
   await ensureDsh();
   dsh = new DshClient(3080);
   detectDshVersion(); // 异步探测后端 DSH 版本（与前端版本分开）

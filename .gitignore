@@ -7,3 +7,4 @@ release/
 renderer/dist/
 sourcemaps/
 vendor/
+.userdata/
