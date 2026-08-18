@@ -8,6 +8,39 @@ const { homedir } = require('os');
 // （原代码硬编码了作者机器路径，任何其他机器上都会指向不存在的目录）
 const HOME_FALLBACK = () => homedir() || 'C:/';
 
+// ---------- 外观与语言默认偏好 ----------
+// 默认中文界面：前端 i18n 的 detectLocale 用 navigator.language 判断（zh* → 'zh'）。
+// preload 在页面脚本前运行，这里把 navigator.language 固定为中文；用户设置页切换语言后
+// 由 SetDesktopLanguage 写入 localStorage('dsh:language')，下次启动读它保持用户选择。
+try {
+  const savedLang = (typeof localStorage !== 'undefined' && localStorage.getItem('dsh:language')) || 'zh';
+  const navLang = savedLang === 'en' ? 'en-US' : savedLang === 'zh-TW' ? 'zh-TW' : 'zh-CN';
+  Object.defineProperty(navigator, 'language', { get: () => navLang, configurable: true });
+  Object.defineProperty(navigator, 'languages', { get: () => [navLang, 'zh-CN', 'en'], configurable: true });
+} catch (e) { console.warn('[dsh] language override failed:', e && e.message || e); }
+
+// 默认外观：深色（前端 initTheme 读 localStorage('reasonix-theme')；用户设置页切换主题时
+// 由 SetDesktopAppearance 持久化到这里，下次启动保持用户选择）。
+// 注意：preload 顶层 document 未就绪时 localStorage.setItem 会失败（读取正常），
+// 所以延迟到 DOMContentLoaded 后写；前端 initTheme 在模块加载时执行，当前会话用默认值，
+// 写入后从下次启动开始保持深色。
+function applyDefaultAppearance() {
+  try { if (!localStorage.getItem('reasonix-theme')) localStorage.setItem('reasonix-theme', 'dark'); } catch {}
+}
+if (typeof document !== 'undefined' && document.readyState !== 'loading') applyDefaultAppearance();
+else if (typeof document !== 'undefined') document.addEventListener('DOMContentLoaded', applyDefaultAppearance);
+else applyDefaultAppearance();
+
+// 会话/项目"钉住"集合（localStorage 持久化；前端右键菜单"钉住"调用 SetTopicPinned/SetProjectPinned）
+const PINNED_TOPICS_KEY = 'dsh:pinned-topics';
+const PINNED_PROJECTS_KEY = 'dsh:pinned-projects';
+function readPinnedList(key) {
+  try { const a = JSON.parse(localStorage.getItem(key) || '[]'); return Array.isArray(a) ? a : []; } catch { return []; }
+}
+function savePinnedList(key, list) {
+  try { localStorage.setItem(key, JSON.stringify(list)); } catch {}
+}
+
 // ---------- 事件通道（window.runtime.EventsOn） ----------
 const eventChannels = new Map(); // channel -> Set<cb>
 function eventsOn(channel, cb) {
@@ -611,6 +644,7 @@ const appImpl = {
         topicId: s.sessionId, sessionPath: s.sessionId + '.jsonl',
         turns: v.sessionStats?.turns, turnsState: 'valid', health: 'ok',
         lastActivityAt: s.updatedAt, open: true, running: !!s.running,
+        pinned: readPinnedList(PINNED_TOPICS_KEY).includes(s.sessionId), // 会话"钉住"（右键菜单）
         children: [],
       });
     }
@@ -619,7 +653,7 @@ const appImpl = {
       const name = root.split(/[\\/]/).filter(Boolean).pop() || 'workspace';
       projects.push({
         key: 'p:' + root, kind: 'project', label: name, root,
-        projectColor: undefined, pinned: false, open: true,
+        projectColor: undefined, pinned: readPinnedList(PINNED_PROJECTS_KEY).includes(root), open: true,
         children: sessionsArr,
       });
     }
@@ -1178,7 +1212,14 @@ const appImpl = {
   SetDesktopCheckUpdates: async () => {},
   SetDesktopConversationWidth: async () => {},
   SetDesktopCurrency: async () => {},
-  SetDesktopLanguage: async () => {},
+  SetDesktopLanguage: async (lang) => {
+    // 持久化语言偏好：下次启动 preload 覆盖 navigator.language 时读它（前端 detectLocale 生效）
+    try {
+      const norm = (lang === 'en' || lang === 'zh' || lang === 'zh-TW') ? lang : 'zh';
+      localStorage.setItem('dsh:language', norm);
+      return { ok: true };
+    } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  },
   SetDesktopLayoutStyle: async () => {},
   SetDesktopMetrics: async () => {},
   SetDesktopTelemetry: async () => {},
@@ -1375,8 +1416,24 @@ const appImpl = {
   SetStatusBarItems: async () => {},
   SetStatusBarStyle: async () => {},
   SetProjectColor: async () => {},
-  SetProjectPinned: async () => {},
-  SetTopicPinned: async () => {},
+  SetProjectPinned: async (root, pinned) => {
+    try {
+      let list = readPinnedList(PINNED_PROJECTS_KEY);
+      if (pinned) { if (!list.includes(root)) list.push(root); }
+      else { list = list.filter((r) => r !== root); }
+      savePinnedList(PINNED_PROJECTS_KEY, list);
+      return { ok: true };
+    } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  },
+  SetTopicPinned: async (topicId, pinned) => {
+    try {
+      let list = readPinnedList(PINNED_TOPICS_KEY);
+      if (pinned) { if (!list.includes(topicId)) list.push(topicId); }
+      else { list = list.filter((t) => t !== topicId); }
+      savePinnedList(PINNED_TOPICS_KEY, list);
+      return { ok: true };
+    } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  },
   ReorderProjects: async () => {},
   CloseTerminalForTab: async () => {},
   RenameTerminalForTab: async () => {},
@@ -1459,7 +1516,15 @@ const appImpl = {
     configWarningsRevision: 0,
     configPath: '',
   }),
-  SetDesktopAppearance: async () => {},
+  SetDesktopAppearance: async (mode, style) => {
+    // 外观（明/暗/自动 + 风格）持久化：前端 initTheme 启动时读 localStorage('reasonix-theme')
+    try {
+      const norm = (mode === 'auto' || mode === 'light' || mode === 'dark') ? mode : 'dark';
+      localStorage.setItem('reasonix-theme', norm);
+      if (style !== undefined && style !== null && style !== '') localStorage.setItem('reasonix-theme-style', String(style));
+      return { ok: true };
+    } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  },
   SetCloseBehavior: async () => {},
   SetDisplayMode: async () => {},
   NeedsOnboarding: async () => false,
@@ -1490,7 +1555,13 @@ const appImpl = {
   ImportThemePack: async () => ({}),
   CopyThemePack: async () => '',
   ThemePacks: async () => [],
-  SetThemePack: async () => {},
+  SetThemePack: async (pack) => {
+    // 主题包持久化（用户自定义/官方主题包；前端主题画廊管理）
+    try {
+      if (pack && typeof pack === 'object' && pack.id) localStorage.setItem('dsh:theme-pack', JSON.stringify(pack));
+      return { ok: true };
+    } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  },
   RefreshSkills: async () => {},
   SkillsSettings: async () => ({}),
   AddSkillPath: async () => {},
@@ -1645,7 +1716,12 @@ const appImpl = {
   OpenLocalPath: async () => {},
   SetZoomFactor: async () => {},
   ZoomFactor: async () => 1,
-  SetThemePackForTab: async () => {},
+  SetThemePackForTab: async (tabID, pack) => {
+    try {
+      if (pack && typeof pack === 'object' && pack.id) localStorage.setItem('dsh:theme-pack:' + tabID, JSON.stringify(pack));
+      return { ok: true };
+    } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  },
   ThemePackForTab: async () => null,
   SetTerminalShellForTab: async () => {},
   SubmitInvocationsToTab: async () => {},
