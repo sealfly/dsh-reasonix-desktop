@@ -96,13 +96,19 @@ class DshClient {
     this._attach((frame) => onFrame(frame.payload));
   }
 
+  // 单连接多订阅：所有订阅者共享一条 WS；任一订阅触发连接，close() 统一关闭。
   _attach(handler) {
-    if (typeof WebSocket === 'undefined') return;
-    let disposed = false;
-    this._dispose = () => { disposed = true; };
-    this._retry = 0;
+    if (typeof WebSocket === 'undefined') {
+      console.warn('[dsh-client] WebSocket unavailable in this runtime — DSH 实时事件通道不可用');
+      return;
+    }
+    this._handlers = this._handlers || new Set();
+    this._handlers.add(handler);
+    if (this.sock && this.sock.readyState === 1 /* OPEN */) return; // 已有连接
+    if (this._retryTimer) return; // 已有重连在途
     const connect = () => {
-      if (disposed) return;
+      if (this._disposed) return;
+      this._retryTimer = null;
       const sock = new WebSocket('ws://127.0.0.1:' + this.port + '/api/events.mux');
       this.sock = sock;
       sock.onopen = () => {
@@ -113,16 +119,21 @@ class DshClient {
         try {
           const frame = JSON.parse(ev.data);
           // 全量透传：不筛选帧类型，插件广播的自定义事件也能到达
-          handler(frame);
+          for (const h of this._handlers) { try { h(frame); } catch {} }
         } catch {}
+      };
+      sock.onerror = (e) => {
+        // 握手失败/网络异常至少要留痕迹，避免"事件静默缺失"
+        console.warn('[dsh-client] events.mux error:', e && (e.message || e.type) || 'ws error');
       };
       sock.onclose = () => {
         console.log('[dsh-client] events.mux closed');
-        if (disposed) return;
+        this.sock = null;
+        if (this._disposed) return;
         // 指数退避重连（1s→2s→4s…封顶 30s），DSH 重启/网络抖动后事件流自动恢复
         const delay = Math.min(30000, 1000 * Math.pow(2, this._retry || 0));
         this._retry = (this._retry || 0) + 1;
-        setTimeout(connect, delay);
+        this._retryTimer = setTimeout(connect, delay);
       };
     };
     connect();
@@ -130,8 +141,10 @@ class DshClient {
 
   // 主动关闭（应用退出时调用，停止重连）
   close() {
-    if (this._dispose) this._dispose();
-    if (this.sock) { try { this.sock.close(); } catch {} }
+    this._disposed = true;
+    if (this._retryTimer) { clearTimeout(this._retryTimer); this._retryTimer = null; }
+    if (this.sock) { try { this.sock.close(); } catch {} this.sock = null; }
+    if (this._handlers) this._handlers.clear();
   }
 }
 

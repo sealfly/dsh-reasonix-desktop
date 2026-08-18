@@ -192,9 +192,27 @@ function replayHistory(sessionId, events) {
       wire.push({ kind: 'turn_done', tabId: sessionId });
       currentTurn = null;
     } else if (event.type === 'user/message' || event.type === 'user/prompt') {
+      // 系统注入（plugin/goal 等）的 user/message 带 source.kind !== 'user'，不按用户消息重放
+      if (d.source && d.source.kind !== 'user') continue;
       pushMsg('user', d.content || d.prompt);
     } else if (event.type === 'assistant/message') {
       pushMsg('assistant', d.message && d.message.content);
+    } else if (event.type === 'tool/call') {
+      // 工具调用是独立会话事件：转 wire tool_dispatch（与主进程 dshEventToWire 同构）
+      const t = d.tool || {};
+      wire.push({
+        kind: 'tool_dispatch',
+        tool: { name: t.name || d.name || d.toolName || 'tool', callId: d.callId || t.callId },
+        tabId: sessionId,
+      });
+    } else if (event.type === 'tool/result') {
+      const t = d.tool || {};
+      wire.push({
+        kind: 'tool_result',
+        tool: { name: t.name || d.name || d.toolName || 'tool', callId: d.callId || t.callId },
+        detail: d.result ? String(d.result).slice(0, 500) : undefined,
+        tabId: sessionId,
+      });
     }
   }
   flushText();
@@ -216,14 +234,22 @@ function historyEventsToSlice(events, tabId) {
   const flushChunks = () => {
     if (currentEntry && Object.keys(chunkBuf).length) {
       const text = Object.keys(chunkBuf).sort((a, b) => Number(a) - Number(b)).map((k) => chunkBuf[k]).join('');
-      if (text) currentEntry.message.content += text;
+      if (text) {
+        const existing = currentEntry.message.content || '';
+        // DSH 常把最终全文同时写在 assistant/message.content，chunk 流与它同文：
+        // content 已包含 chunk 流时以 content 为准（避免重复），否则按 content + chunk 流顺序拼接。
+        if (!existing.includes(text)) currentEntry.message.content = existing + text;
+      }
       chunkBuf = {};
     }
   };
   for (const { event } of events || []) {
     const d = event.data || {};
     if (event.type === 'user/message' || event.type === 'assistant/message') {
-      flushChunks();
+      // chunkBuf 只属于"当前打开的条目"：只有换到新条目（用户消息）时才落盘上一个
+      // assistant 条目的 chunk 流；assistant/message 分支在创建好条目之后再 flush，
+      // 把流式文本合并进新助手条目，而不是上一条用户消息。
+      if (event.type === 'user/message') flushChunks();
       const msg = event.type === 'user/message' ? d : (d.message || d);
       const role = msg.role || (event.type.startsWith('user') ? 'user' : 'assistant');
       // content blocks → 文本 + 工具调用
@@ -253,12 +279,43 @@ function historyEventsToSlice(events, tabId) {
         refs: [],
       };
       entries.push(currentEntry);
+      // assistant/message：chunk 流合并进这个新助手条目（content 文本 + chunk 流按顺序拼接）
+      if (event.type === 'assistant/message') flushChunks();
     } else if (event.type === 'assistant/chunk') {
       const c = d.chunk;
       if (!c) continue;
       if (c.type === 'text-delta') {
         chunkBuf[c.index || 0] = (chunkBuf[c.index || 0] || '') + c.text;
       }
+    } else if (event.type === 'tool/call') {
+      // 工具调用是独立会话事件（不是 assistant/chunk）：推入 slices 让历史面板可见
+      const t = d.tool || {};
+      entries.push({
+        entryId: 's:' + tabId + ':t:' + order,
+        turn: d.turn || (currentEntry && currentEntry.turn) || 0,
+        order: order++,
+        message: {
+          role: 'tool',
+          content: '',
+          toolCalls: [{ id: d.callId || t.callId, name: t.name || d.name || d.toolName || 'tool', arguments: '' }],
+          createdAt: event.time,
+        },
+        refs: [],
+      });
+    } else if (event.type === 'tool/result') {
+      const t = d.tool || {};
+      entries.push({
+        entryId: 's:' + tabId + ':r:' + order,
+        turn: d.turn || (currentEntry && currentEntry.turn) || 0,
+        order: order++,
+        message: {
+          role: 'tool',
+          content: d.result ? String(d.result).slice(0, 500) : '',
+          toolCalls: [{ id: d.callId || t.callId, name: t.name || d.name || d.toolName || 'tool', arguments: '' }],
+          createdAt: event.time,
+        },
+        refs: [],
+      });
     }
   }
   flushChunks();
@@ -296,9 +353,20 @@ const submitPrompt = async (sid, input) => {
 async function setDshPermission(sessionId, mode) {
   const perm = MODE_TO_PERMISSION[mode];
   if (!perm || !sessionId) return;
-  try {
-    await rpc('commands/execute', { args: { agentId: sessionId, line: '/permission ' + perm } });
-  } catch {}
+  const tryPerm = async (p) => {
+    try {
+      const r = await rpc('commands/execute', { args: { agentId: sessionId, line: '/permission ' + p } });
+      const rr = r && r.result;
+      if (rr && rr.kind === 'error') return { ok: false, error: rr.text };
+      return { ok: true };
+    } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  };
+  let res = await tryPerm(perm);
+  // /permission 实参是 preset 表键：默认配置没有 read-only preset（只有 workspace-write /
+  // danger-full-access），所以 ask 模式（read-only）首次切换会报 unknown preset，
+  // 失败时回退到 DSH 的"每次询问"语义 preset = workspace-write（sandbox=workspace-write, approval=ask）
+  if (!res.ok && mode === 'ask') res = await tryPerm('workspace-write');
+  if (!res.ok) console.warn('[dsh] /permission ' + perm + ' failed:', res.error);
   currentMode = mode;
   // 完全授权（yolo / danger-full-access）时通知主进程解除桥的防御性校验（原则 2）
   ipcRenderer.send('bridge:setFullAccess', mode === 'yolo');
@@ -315,6 +383,17 @@ async function cwdOfTab(tabID) {
     if (c) return c;
   } catch {}
   return HOME_FALLBACK();
+}
+
+// 定位"活跃 tab"的会话 id：优先渲染层记忆的 activeTabId（主进程的 active 只是
+// "列表第一个"，多 tab 时会把消息发到错误会话），其次主进程标记的 x.active，最后兜底列表第一个。
+async function activeTabIdOf() {
+  if (activeTabId) return activeTabId;
+  try {
+    const tabs = await sessions();
+    const active = tabs.find((t) => t.active) || tabs[0];
+    return (active && active.id) || null;
+  } catch { return null; }
 }
 
 // ---------- 记忆（Memory）：跟着项目走，存 <cwd>/.dsh/memory.md ----------
@@ -495,7 +574,9 @@ const appImpl = {
       return {
         entries,
         nextCursor: '',
-        hasOlder: false,
+        // 主进程 dsh:history 已改为 { maxMessages: 300 }：hasMore 表示还有更早的历史。
+        // 本次不做真正翻页，只正确反映是否还有更早历史
+        hasOlder: h && h.hasMore === true,
         totalTurns: entries.length,
         startTurn: entries.length ? 1 : 0,
         endTurn: entries.length,
@@ -637,9 +718,10 @@ const appImpl = {
       goalStatus: 'stopped',
     };
   },
-  MetaForTab: async () => {
+  MetaForTab: async (tabID) => {
     const tabs = await sessions();
-    const active = tabs.find((t) => t.active) || tabs[0];
+    // 用 tabID 定位会话（取它的 workspaceRoot/cwd 等）；找不到回退当前活跃/首个
+    const active = (tabID ? tabs.find((t) => t.id === tabID) : null) || (tabs.find((t) => t.active) || tabs[0]);
     const workspacePath = active?.workspacePath || active?.cwd || 'C:\\';
     const mode = active?.toolApprovalMode || currentMode;
     return {
@@ -724,9 +806,14 @@ const appImpl = {
   },
   CreateBlankProject: async (parentDir, projectName) => {
     const name = String(projectName || '').trim();
-    if (!name || name === '.' || name === '..' || /[\\/]/.test(name)) {
-      throw new Error('project name must be a single folder name');
-    }
+    // Windows 保留字符/保留名 + 空名校验：非法时返回 { ok:false, error }（与主进程
+    // dsh:createFolder 的失败形态一致），成功仍返回目标路径字符串。
+    const invalidName = !name
+      || name === '.' || name === '..'
+      || /[\\/:*?"<>|]/.test(name) // Windows 保留字符（含路径分隔符）
+      || /[. ]$/.test(name)        // Windows 会剥离尾随点/空格，导致重名/解析异常
+      || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|$)/i.test(name); // Windows 保留设备名
+    if (invalidName) return { ok: false, error: 'invalid project name' };
     const parent = String(parentDir || '').replace(/[\\/]+$/, '');
     const target = parent + '\\' + name;
     await ipcRenderer.invoke('dsh:createFolder', target);
@@ -912,14 +999,14 @@ const appImpl = {
   GitCheckout: async () => {},
 
   // ===== 对话 =====
-  Submit: async (input) => { const tabs = await sessions(); if (tabs.length) return submitPrompt(tabs[0].id, input); },
+  Submit: async (input) => { const sid = await activeTabIdOf(); if (sid) return submitPrompt(sid, input); },
   SubmitForTab: async (tabID, input) => submitPrompt(tabID, input),
   SubmitToTab: async (tabID, input) => submitPrompt(tabID, input),
   SubmitToTabWithID: async (tabID, input) => submitPrompt(tabID, input),
-  SubmitDisplay: async (_display, input) => { const tabs = await sessions(); if (tabs.length) return submitPrompt(tabs[0].id, input); },
+  SubmitDisplay: async (_display, input) => { const sid = await activeTabIdOf(); if (sid) return submitPrompt(sid, input); },
   SubmitDisplayToTab: async (tabID, _display, input) => submitPrompt(tabID, input),
   SubmitDisplayToTabWithID: async (tabID, _display, input) => submitPrompt(tabID, input),
-  Steer: async (input) => { const tabs = await sessions(); if (tabs.length) return submitPrompt(tabs[0].id, input); },
+  Steer: async (input) => { const sid = await activeTabIdOf(); if (sid) return submitPrompt(sid, input); },
   SteerForTab: async (tabID, input) => submitPrompt(tabID, input),
   Cancel: async (tabID) => { await cancelSession(tabID); },
   CancelForTab: async (tabID) => { await cancelSession(tabID); },
@@ -989,8 +1076,7 @@ const appImpl = {
   },
   SetModel: async (ref) => {
     try {
-      const list = await rpc('session.list', {});
-      const sid = list && list.items && list.items[0] && list.items[0].sessionId;
+      const sid = await activeTabIdOf();
       if (sid && ref) {
         const parts = String(ref).split('/');
         const provider = parts[0], model = parts[1] || parts[0];
@@ -1009,8 +1095,7 @@ const appImpl = {
   },
   SetEffort: async (effort) => {
     try {
-      const list = await rpc('session.list', {});
-      const sid = list && list.items && list.items[0] && list.items[0].sessionId;
+      const sid = await activeTabIdOf();
       if (sid) {
         const m = await rpc('session.models', { sessionId: sid });
         const cur = m && m.current;
@@ -1498,7 +1583,8 @@ const warnedImpl = new Set();
 const AppProxy = new Proxy({}, {
   get(_t, prop) {
     const name = String(prop);
-    if (name in appImpl) return appImpl[name];
+    // hasOwnProperty：避免 name in appImpl 命中原型链（constructor/toString 等）
+    if (Object.prototype.hasOwnProperty.call(appImpl, name)) return appImpl[name];
     // 未实现的方法：返回一个安全的兜底（尽力而为），并提示一次
     if (!warnedImpl.has(name)) {
       warnedImpl.add(name);
@@ -1581,7 +1667,9 @@ const BRAND_NAME = 'DSH-ReasonixUI';
 const D_LOGO = 'data:image/png;base64,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';
 const applyBranding = () => {
   if (document.title !== BRAND_NAME) document.title = BRAND_NAME;
-  document.querySelectorAll('.startup-splash__name, .welcome__brand, [class*="__name"], [class*="brand"]').forEach((el) => {
+  // 最重的属性选择器扫描限定在 body 直系容器（.app / #app），找不到就维持 body
+  const scanRoot = document.querySelector('.app') || document.querySelector('#app') || document.body;
+  scanRoot.querySelectorAll('.startup-splash__name, .welcome__brand, [class*="__name"], [class*="brand"]').forEach((el) => {
     if (el.textContent.trim() === 'Reasonix') el.textContent = BRAND_NAME;
   });
   // logo 图标：把原 SVG 替换为 DSH-Reasonix 文字标识
@@ -1617,16 +1705,18 @@ let brandingPending = false;
 const scheduleBranding = () => {
   if (brandingPending) return;
   brandingPending = true;
-  setTimeout(() => { brandingPending = false; applyBranding(); }, 80);
+  setTimeout(() => { brandingPending = false; applyBranding(); }, 250);
 };
 if (document.readyState !== 'loading') applyBranding();
 document.addEventListener('DOMContentLoaded', applyBranding);
 if (typeof MutationObserver !== 'undefined') {
+  // 只注册一次 observer，且只观察 document.body 的 subtree（childList + subtree）
   const brandObserver = new MutationObserver(() => scheduleBranding());
-  document.addEventListener('DOMContentLoaded', () => {
-    if (document.body) brandObserver.observe(document.body, { childList: true, subtree: true, characterData: true });
-  });
-  if (document.body) brandObserver.observe(document.body, { childList: true, subtree: true, characterData: true });
+  const attachBrandObserver = () => {
+    if (document.body) brandObserver.observe(document.body, { childList: true, subtree: true });
+  };
+  document.addEventListener('DOMContentLoaded', attachBrandObserver);
+  attachBrandObserver();
 }
 
 // ---------- window.dsh：DSH 通用透传入口 ----------
@@ -1659,7 +1749,9 @@ window.dsh = {
   // 便捷方法：直接请求已知的常用方法（仍走通用 rpc，只是少写参数）
   sessions: () => ipcRenderer.invoke('dsh:rpc', 'session.list', {}),
   history: (sid) => ipcRenderer.invoke('dsh:rpc', 'session.history', { sessionId: sid, limit: 300 }),
-  prompt: (sid, text) => ipcRenderer.invoke('dsh:rpc', 'session.prompt', { sessionId: sid, mode: 'steer', content: [{ type: 'text', text }] }),
+  // session.prompt 是长请求（模型生成可能要几分钟）：走主进程 dsh:prompt 专用通道
+  // （默认 10 分钟超时），不走默认 60s 的通用 rpc
+  prompt: (sid, text) => ipcRenderer.invoke('dsh:prompt', sid, text),
   createSession: (cwd, agentPreset) => {
     const payload = {};
     if (cwd) payload.cwd = cwd;

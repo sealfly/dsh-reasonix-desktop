@@ -44,6 +44,8 @@ function fixMojibake(s) {
 function sessionToTabMeta(s, idx) {
   const v = s.projections?.values || {};
   const title = fixMojibake(v.title) || '未命名会话';
+  // agentPreset 在 session.list 的顶层字段（不在 projections.values 里）
+  const preset = s.agentPreset || v.agentPreset || 'code';
   const workspaceRoot = s.cwd || 'C:\\';
   const wsName = workspaceRoot.split(/[\\/]/).filter(Boolean).pop() || 'workspace';
   return {
@@ -56,7 +58,7 @@ function sessionToTabMeta(s, idx) {
     topicId: s.sessionId,
     topicTitle: title,
     sessionPath: s.sessionId + '.jsonl',
-    label: v.agentPreset || 'code',
+    label: preset,
     ready: true,
     running: !!s.running,
     pendingPrompt: false,
@@ -65,9 +67,8 @@ function sessionToTabMeta(s, idx) {
     cancellable: !!s.running,
     mode: 'normal',
     collaborationMode: 'normal',
-    toolApprovalMode: 'ask',
     tokenMode: 'full',
-    agentPreset: v.agentPreset || 'code',
+    agentPreset: preset,
     toolApprovalMode: v.permissions?.currentValue ? { 'read-only': 'ask', 'workspace-write': 'auto', 'danger-full-access': 'yolo' }[v.permissions.currentValue] || 'auto' : 'auto',
     permissions: v.permissions,
     active: idx === 0,
@@ -97,9 +98,17 @@ function dshEventToWire(frame) {
       if (c.type === 'reasoning-delta') return { kind: 'reasoning', text: c.text, reasoning: c.text, ...base };
       if (c.type === 'text-delta') return { kind: 'text', text: c.text, ...base };
       if (c.type === 'block-start') return { kind: 'text', text: '', ...base };
-      if (c.type === 'tool-call-start') return { kind: 'tool_dispatch', tool: { name: c.name || c.toolName, callId: c.callId }, ...base };
-      if (c.type === 'tool-call-result') return { kind: 'tool_result', tool: { name: c.name, callId: c.callId }, detail: c.result ? String(c.result).slice(0, 500) : undefined, ...base };
       return null;
+    }
+    // 工具是独立的会话事件（tool/call、tool/result），不是 assistant/chunk；
+    // DSH 的 StreamChunk 只有 block-start/text-delta/reasoning-delta
+    case 'tool/call': {
+      const t = d.tool || {};
+      return { kind: 'tool_dispatch', tool: { name: t.name || d.name || d.toolName || 'tool', callId: d.callId || t.callId }, ...base };
+    }
+    case 'tool/result': {
+      const t = d.tool || {};
+      return { kind: 'tool_result', tool: { name: t.name || d.name || d.toolName || 'tool', callId: d.callId || t.callId }, detail: d.result ? String(d.result).slice(0, 500) : undefined, ...base };
     }
     case 'turn/end': case 'assistant/end': return { kind: 'turn_done', ...base };
     case 'user/prompt': return null; // 前端自己乐观渲染用户消息
@@ -355,18 +364,31 @@ app.whenReady().then(async () => {
   ipcMain.handle('dsh:sessions', async () => {
     // DSH 分组机制：归档会话（workspace.list.archivedSessionIds）从列表隐藏，
     // 只显示未归档的会话，避免历史残留把 UI 塞满。
-    const [res, ws] = await Promise.all([
-      dsh.rpc('session.list', {}),
-      dsh.rpc('workspace.list', {}).catch(() => null),
-    ]);
-    const archived = new Set((ws && ws.archivedSessionIds) || []);
-    return (res.items || [])
-      .filter((s) => !archived.has(s.sessionId))
-      .map(sessionToTabMeta);
+    // 内部容错：DSH 抖动/重启时 session.list 失败不应让整个 UI 报 unhandled rejection。
+    try {
+      const [res, ws] = await Promise.all([
+        dsh.rpc('session.list', {}),
+        dsh.rpc('workspace.list', {}).catch(() => null),
+      ]);
+      const archived = new Set((ws && ws.archivedSessionIds) || []);
+      return (res.items || [])
+        .filter((s) => !archived.has(s.sessionId))
+        .map(sessionToTabMeta);
+    } catch (e) {
+      console.log('[DSH] session.list failed:', e && e.message || e);
+      return [];
+    }
   });
-  ipcMain.handle('dsh:history', (_e, sid) => dsh.rpc('session.history', { sessionId: sid, limit: 300 }));
+  ipcMain.handle('dsh:history', (_e, sid) => dsh.rpc('session.history', { sessionId: sid, maxMessages: 300 }));
   // session.prompt 是长请求（模型生成可能要几分钟），用 10 分钟超时而不是默认 60s
-  ipcMain.handle('dsh:prompt', (_e, sid, text, timeoutMs) => dsh.rpc('session.prompt', { sessionId: sid, mode: 'steer', content: [{ type: 'text', text }] }, (typeof timeoutMs === 'number' && timeoutMs > 0) ? timeoutMs : 10 * 60 * 1000));
+  ipcMain.handle('dsh:prompt', (_e, sid, text, timeoutMs) => {
+    // 校验参数：session.prompt 的 schema 会因缺 text 报含糊错误，这里先给明确错误
+    if (typeof sid !== 'string' || !sid || typeof text !== 'string' || !text) {
+      return { ok: false, error: 'invalid prompt args (sessionId and text required)' };
+    }
+    // session.prompt 是长请求（模型生成可能要几分钟），用 10 分钟超时而不是默认 60s
+    return dsh.rpc('session.prompt', { sessionId: sid, mode: 'steer', content: [{ type: 'text', text }] }, (typeof timeoutMs === 'number' && timeoutMs > 0) ? timeoutMs : 10 * 60 * 1000);
+  });
   ipcMain.handle('app:version', () => app.getVersion());
   // 版本分开返回：frontend = 本应用版本（package.json），backend = 后端 DSH（@deepseek-ai/dsh）版本
   ipcMain.handle('dsh:versions', () => ({ frontend: app.getVersion(), backend: dshBackendVersion }));
@@ -384,6 +406,8 @@ app.whenReady().then(async () => {
   ipcMain.handle('dsh:createFolder', async (_e, target) => {
     const t = String(target || '');
     if (!t || !path.isAbsolute(t)) return { ok: false, error: 'invalid path (must be absolute)' };
+    // 非完全授权模式下限制在用户主目录内建目录（防渲染层在系统目录乱建）
+    if (!bridgeFullAccess && !insideRoot(t, HOME_DIR)) return { ok: false, error: 'path outside home' };
     fs.mkdirSync(t, { recursive: true });
     return t;
   });
@@ -464,8 +488,10 @@ app.whenReady().then(async () => {
       } catch { return []; }
     }
     const base = HOME_DIR;
-    const target = rel && rel !== '.' && rel !== './'
-      ? (rel.startsWith(base) ? rel : require('path').join(base, rel))
+    // rel 可能被渲染层传成非字符串（number/object），统一按字符串处理，防 startsWith 抛 TypeError
+    const r = typeof rel === 'string' ? rel : '';
+    const target = r && r !== '.' && r !== './'
+      ? (r.startsWith(base) ? r : require('path').join(base, r))
       : base;
     const safe = insideRoot(target, base);
     if (!safe) return [];
@@ -515,6 +541,8 @@ app.whenReady().then(async () => {
     try {
       const dir = String(cwd || '');
       if (!dir || !path.isAbsolute(dir)) return { exists: false, body: '', path: '', error: 'invalid cwd' };
+      // 与 fs:* 沙箱一致：非完全授权模式下只允许在主目录内读写记忆
+      if (!bridgeFullAccess && !insideRoot(dir, HOME_DIR)) return { exists: false, body: '', path: '', error: 'path outside home' };
       const file = require('path').join(dir, '.dsh', 'memory.md');
       const exists = fs.existsSync(file);
       return { exists, body: exists ? fs.readFileSync(file, 'utf8') : '', path: file };
@@ -524,6 +552,7 @@ app.whenReady().then(async () => {
     try {
       const dir = String(cwd || '');
       if (!dir || !path.isAbsolute(dir)) return { ok: false, error: 'invalid cwd' };
+      if (!bridgeFullAccess && !insideRoot(dir, HOME_DIR)) return { ok: false, error: 'path outside home' };
       const pathMod = require('path');
       const dshDir = pathMod.join(dir, '.dsh');
       const file = pathMod.join(dshDir, 'memory.md');
@@ -538,33 +567,37 @@ app.whenReady().then(async () => {
     try { return execSync('git ' + args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }); }
     catch (e) { return null; }
   };
-  ipcMain.handle('git:changes', (_e, cwd) => {
+  ipcMain.handle('git:changes', async (_e, cwd) => {
     const status = runGit(cwd, 'status --porcelain=v1 -z');
     if (status === null) {
       // 非 git 仓库：回退到"最近修改的文件"（session 改动近似），让改动栏有内容
+      // 异步递归 + 条目上限：避免同步扫整棵目录树阻塞主进程事件循环
       const files = [];
       const pathMod = require('path');
+      const fsp = require('fs').promises;
       const base = cwd || HOME_DIR;
-      try {
-        const walk = (dir, depth) => {
-          if (depth > 3) return;
-          let entries;
-          try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
-          for (const ent of entries) {
-            if (ent.name === 'node_modules' || ent.name === '.git') continue;
-            const full = pathMod.join(dir, ent.name);
-            if (ent.isDirectory()) { walk(full, depth + 1); continue; }
-            try {
-              const st = fs.statSync(full);
-              if (Date.now() - st.mtimeMs < 24 * 60 * 60 * 1000) { // 24 小时内修改
-                files.push({ path: pathMod.relative(base, full), sources: ['session'], gitStatus: 'M', latestTime: st.mtimeMs });
-              }
-            } catch {}
-          }
-        };
-        walk(base, 0);
-        files.sort((a, b) => (b.latestTime || 0) - (a.latestTime || 0));
-      } catch {}
+      const MAX_ENTRIES = 3000;
+      let scanned = 0;
+      const walk = async (dir, depth) => {
+        if (depth > 3 || scanned > MAX_ENTRIES) return;
+        let entries;
+        try { entries = await fsp.readdir(dir, { withFileTypes: true }); } catch { return; }
+        for (const ent of entries) {
+          if (scanned > MAX_ENTRIES) return;
+          if (ent.name === 'node_modules' || ent.name === '.git') continue;
+          const full = pathMod.join(dir, ent.name);
+          if (ent.isDirectory()) { await walk(full, depth + 1); continue; }
+          try {
+            const st = await fsp.stat(full);
+            scanned++;
+            if (Date.now() - st.mtimeMs < 24 * 60 * 60 * 1000) { // 24 小时内修改
+              files.push({ path: pathMod.relative(base, full), sources: ['session'], gitStatus: 'M', latestTime: st.mtimeMs });
+            }
+          } catch {}
+        }
+      };
+      await walk(base, 0);
+      files.sort((a, b) => (b.latestTime || 0) - (a.latestTime || 0));
       return { gitAvailable: false, gitErr: 'not a git repo; showing recently modified files', files: files.slice(0, 50) };
     }
     const files = [];
@@ -636,34 +669,43 @@ app.whenReady().then(async () => {
     try { fs.rmSync(dir, { recursive: true, force: true }); return { purged: true, dir }; }
     catch (e) { return { purged: false, dir, error: String(e && e.message || e) }; }
   }
-  // 删除特定会话（非 running 才允许）
+  // 删除特定会话（非 running 才允许；归档 RPC 往返后复查，防"检查→删除"间隙会话被唤醒）
   ipcMain.handle('dsh:deleteSession', async (_e, sessionId) => {
     try {
       const id = String(sessionId || '');
       if (!/^[a-zA-Z0-9-]+$/.test(id)) return { ok: false, error: 'invalid sessionId' };
-      const items = await listRawSessions();
-      const s = items.find((x) => x.sessionId === id);
+      let items = await listRawSessions();
+      let s = items.find((x) => x.sessionId === id);
       if (!s) return { ok: false, error: 'session not found' };
       if (s.running) return { ok: false, error: 'running session cannot be deleted' };
       await archiveSessionQuiet(id);
+      // 复查：archive 的 RPC 往返期间会话可能被唤醒（steer/queue），删除活跃日志会损坏会话
+      items = await listRawSessions();
+      s = items.find((x) => x.sessionId === id);
+      if (s && s.running) return { ok: true, archived: true, purged: false, skipped: 'became running during delete' };
       const p = purgeSessionDir(id);
-      return p.purged
-        ? { ok: true, archived: true, purged: true, dir: p.dir }
-        : { ok: false, error: 'archived but log purge failed' + (p.error ? ': ' + p.error : '') };
+      if (p.purged) return { ok: true, archived: true, purged: true, dir: p.dir };
+      // 已归档但目录找不到/删不掉（布局变化或已删）：宽容处理，不报错，只记日志
+      console.warn('[DSH] session ' + id + ' archived; log dir missing/undeletable:', p.error || 'not found');
+      return { ok: true, archived: true, purged: false };
     } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
   });
-  // 清空历史：归档 + 删除所有非 running 会话
+  // 清空历史：归档 + 删除所有非 running 会话（逐个复查 running，避免误删刚唤醒的会话）
   ipcMain.handle('dsh:purgeHistory', async () => {
     try {
-      const items = await listRawSessions();
+      let items = await listRawSessions();
       const cold = items.filter((x) => !x.running);
       const details = [];
       for (const s of cold) {
         await archiveSessionQuiet(s.sessionId);
+        // 复查 running：归档往返期间被唤醒的会话跳过删除
+        const now = await listRawSessions();
+        const cur = now.find((x) => x.sessionId === s.sessionId);
+        if (cur && cur.running) { details.push({ sessionId: s.sessionId, archived: true, purged: false, skipped: 'running' }); continue; }
         const p = purgeSessionDir(s.sessionId);
         details.push({ sessionId: s.sessionId, archived: true, purged: p.purged });
       }
-      return { ok: true, deleted: details.length, details };
+      return { ok: true, deleted: details.filter((d) => d.purged).length, details };
     } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
   });
 
@@ -674,8 +716,18 @@ app.whenReady().then(async () => {
     const next = { ...cur };
     if (patch && typeof patch === 'object') {
       if (typeof patch.autoUpdate === 'boolean') next.autoUpdate = patch.autoUpdate;
-      if (typeof patch.pinnedVersion === 'string') next.pinnedVersion = patch.pinnedVersion.trim();
-      if (typeof patch.dshPath === 'string') next.dshPath = patch.dshPath.trim();
+      if (typeof patch.pinnedVersion === 'string') {
+        const pv = patch.pinnedVersion.trim();
+        // 防配置注入命令行：版本号只允许 semver 字符
+        if (pv && !/^[0-9a-zA-Z.\-+]+$/.test(pv)) return { ok: false, error: 'invalid pinnedVersion (semver only)' };
+        next.pinnedVersion = pv;
+      }
+      if (typeof patch.dshPath === 'string') {
+        const dp = patch.dshPath.trim();
+        // dshPath 会被 spawn 执行：必须是存在的绝对路径
+        if (dp && (!path.isAbsolute(dp) || !fs.existsSync(dp))) return { ok: false, error: 'dshPath must be an existing absolute path' };
+        next.dshPath = dp;
+      }
     }
     const r = saveDshConfig(next);
     return { ok: r.ok, config: next, error: r.error };
