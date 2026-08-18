@@ -1233,19 +1233,104 @@ const appImpl = {
   RevealBackgroundRuntime: async () => ({}),
   ContextUsage: async () => ({ used: 0, window: 1, sessionTokens: 0, compactRatio: 0.8 }),
   ContextPanel: async () => ({}),
-  Plugins: async () => [],
-  PluginDoctor: async () => [],
-  InstallPlugin: async () => {},
-  RemovePlugin: async () => {},
-  UpdatePlugin: async () => {},
-  PlanPluginInstall: async () => ({}),
-  PickPluginFolder: async () => '',
+  // ===== 插件市场/商店（DSH web profile 的 dshmarket + dsh-plugin-store） =====
+  Plugins: async () => {
+    try {
+      // pluginStore 是 Typert Remote：payload 必须包 {args:{...}}
+      const r = await rpc('pluginStore/installed', { args: {} });
+      const list = (r && (Array.isArray(r) ? r : r.items || r.plugins)) || [];
+      return list.map((p) => ({
+        name: p.packageName || p.name || p.entryId,
+        version: undefined,
+        description: undefined,
+        source: 'npm',
+        root: undefined,
+        manifestKind: 'cordis',
+        enabled: !!p.enabled,
+        skills: [], commands: [], hooks: [], mcpServers: [], agents: [],
+        warning: p.phase ? undefined : undefined,
+      }));
+    } catch (e) { console.warn('[dsh] pluginStore/installed failed:', e && e.message || e); return []; }
+  },
+  PluginDoctor: async (name) => {
+    const list = await appImpl.Plugins();
+    return list.find((p) => p.name === name) || null;
+  },
+  InstallPlugin: async (source, options) => {
+    try {
+      if (typeof source === 'string' && source) {
+        const r = await ipcRenderer.invoke('dsh:pluginMarketAction', 'install', { url: source });
+        return JSON.stringify(r);
+      }
+    } catch (e) { console.warn('[dsh] InstallPlugin failed:', e && e.message || e); }
+    return '{}';
+  },
+  RemovePlugin: async (name) => {
+    try {
+      if (name) {
+        const r = await rpc('pluginStore/uninstall', { args: { packageName: String(name), actor: 'reasonix-ui' } });
+        return r || {};
+      }
+    } catch (e) { console.warn('[dsh] RemovePlugin failed:', e && e.message || e); }
+    return {};
+  },
+  UpdatePlugin: async (name) => {
+    try {
+      if (name) return await ipcRenderer.invoke('dsh:pluginMarketAction', 'update', { name: String(name), force: false });
+    } catch (e) { console.warn('[dsh] UpdatePlugin failed:', e && e.message || e); }
+    return {};
+  },
+  PlanPluginInstall: async (source, options) => JSON.stringify({ dryRun: true, source, options }),
+  PickPluginFolder: async () => ipcRenderer.invoke('dsh:pickFolder'),
   PickSkillFolder: async () => '',
   MCPServers: async () => [],
-  MCPMarketplace: async () => [],
-  MCPMarketplaceResolve: async () => ({}),
+  // 市场：GET /dsh-market/registry（1341 个插件）+ /dsh-market/installed 标记已装
+  MCPMarketplace: async (query) => {
+    try {
+      const m = await ipcRenderer.invoke('dsh:pluginMarketplace');
+      if (!m || !m.registry) return { servers: [], cached: false, warning: (m && m.error) || 'market unavailable' };
+      const installedSet = new Set(Object.keys(m.installed || {}));
+      const q = String(query || '').trim().toLowerCase();
+      const servers = (m.registry.plugins || [])
+        .filter((p) => !q
+          || (p.name || '').toLowerCase().includes(q)
+          || ((p.description && (p.description.en || p.description.zh || '')) || '').toLowerCase().includes(q))
+        .map((p) => {
+          const isInstalled = installedSet.has(p.name);
+          return {
+            name: p.name,
+            suggestedName: p.name,
+            title: p.name,
+            description: (p.description && (p.description.en || p.description.zh)) || '',
+            version: undefined,
+            repositoryUrl: p.url || p.page,
+            installable: !isInstalled,
+            unavailableReason: isInstalled ? '已安装' : undefined,
+            transport: 'npm',
+            command: p.install,
+            args: [],
+            url: p.url || p.page,
+          };
+        });
+      return { servers, cached: m.source === 'cache', warning: undefined };
+    } catch (e) { console.warn('[dsh] MCPMarketplace failed:', e && e.message || e); return { servers: [], cached: false, warning: String(e && e.message || e) }; }
+  },
+  MCPMarketplaceResolve: async (registryName) => {
+    try {
+      const m = await appImpl.MCPMarketplace();
+      return m.servers.find((s) => s.name === registryName || s.suggestedName === registryName) || null;
+    } catch { return null; }
+  },
   SetMCPServerTier: async () => {},
-  SetPluginEnabled: async () => {},
+  SetPluginEnabled: async (name, enabled) => {
+    try {
+      if (name) {
+        const r = await rpc('pluginStore/setEnabled', { args: { packageName: String(name), enabled: !!enabled, actor: 'reasonix-ui' } });
+        return r || {};
+      }
+    } catch (e) { console.warn('[dsh] SetPluginEnabled failed:', e && e.message || e); }
+    return {};
+  },
   SetProviderWebSearch: async () => {},
   SaveProviderModelCatalogs: async () => {},
   SaveProviderWithKey: async () => {},
@@ -1379,7 +1464,12 @@ const appImpl = {
   SetDisplayMode: async () => {},
   NeedsOnboarding: async () => false,
   Commands: async () => [],
-  Capabilities: async () => ({}),
+  Capabilities: async () => ({
+    plugins: await appImpl.Plugins(),
+    skills: [],
+    diagnostics: [],
+    updatedAt: Date.now(),
+  }),
   SetDesktop: async () => {},
   SetStatusBar: async () => {},
   SetReasoningDisplayMode: async () => {},

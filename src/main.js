@@ -640,6 +640,73 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle('dsh:cancel', (_e, sid) => dsh.rpc('session.cancel', { sessionId: sid }));
 
+  // ---------- 插件市场/商店（DSH web profile 挂载的 dshmarket + dsh-plugin-store） ----------
+  // dshmarket 是 HTTP 路由（非 /api RPC），且 POST 要求 same-origin（带 Origin 头）；
+  // pluginStore 是 Typert Remote RPC，payload 必须包 {args:{...}}（由 preload 包好，走通用 dsh:rpc）。
+  const httpMod = require('http');
+  let pluginMarketCache = { at: 0, data: null };
+  function fetchDshMarket(path, timeoutMs = 15000) {
+    return new Promise((resolve, reject) => {
+      const req = httpMod.get({ host: '127.0.0.1', port: 3080, path, timeout: timeoutMs, headers: { Origin: 'http://127.0.0.1:3080' } }, (res) => {
+        let d = '';
+        res.on('data', (c) => { d += c; });
+        res.on('end', () => {
+          try { resolve(JSON.parse(d)); } catch { reject(new Error('bad market response')); }
+        });
+      });
+      req.on('timeout', () => req.destroy(new Error('market timeout')));
+      req.on('error', reject);
+      req.end();
+    });
+  }
+  // 市场目录 + 已装清单（合并返回；目录缓存 5 分钟，避免每次打开都拉远程）
+  ipcMain.handle('dsh:pluginMarketplace', async () => {
+    try {
+      if (pluginMarketCache.data && Date.now() - pluginMarketCache.at < 5 * 60 * 1000) return pluginMarketCache.data;
+      const [reg, installed] = await Promise.all([
+        fetchDshMarket('/dsh-market/registry').catch(() => null),
+        fetchDshMarket('/dsh-market/installed').catch(() => null),
+      ]);
+      const data = {
+        ok: !!reg,
+        source: (reg && reg.source) || 'error',
+        registry: (reg && reg.registry) || null,
+        installed: (installed && installed.installed) || {},
+      };
+      pluginMarketCache = { at: Date.now(), data };
+      return data;
+    } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  });
+  // 市场动作：install/uninstall/update/toggle（白名单动作 + 大小限制，防注入）
+  ipcMain.handle('dsh:pluginMarketAction', async (_e, action, body) => {
+    const allowed = ['install', 'uninstall', 'update', 'toggle'];
+    const a = String(action || '');
+    if (allowed.indexOf(a) === -1) return { ok: false, error: 'invalid action' };
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return { ok: false, error: 'invalid body' };
+    try {
+      const payload = JSON.stringify(body);
+      if (Buffer.byteLength(payload) > 4096) return { ok: false, error: 'body too large' };
+      return await new Promise((resolve) => {
+        const req = httpMod.request({
+          host: '127.0.0.1', port: 3080, path: '/dsh-market/' + a, method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload), Origin: 'http://127.0.0.1:3080' },
+          timeout: 60000,
+        }, (res) => {
+          let d = '';
+          res.on('data', (c) => { d += c; });
+          res.on('end', () => {
+            try { resolve({ ok: res.statusCode < 400, status: res.statusCode, body: JSON.parse(d) }); }
+            catch { resolve({ ok: res.statusCode < 400, status: res.statusCode, body: d }); }
+          });
+        });
+        req.on('timeout', () => req.destroy());
+        req.on('error', (e) => resolve({ ok: false, error: String(e && e.message || e) }));
+        req.write(payload);
+        req.end();
+      });
+    } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  });
+
   // ---------- 会话清理：归档（隐藏）+ 物理删除日志 ----------
   // DSH 没有删除 API；安全流程 = workspace.archiveSession（从列表隐藏）→ 删除
   // <DSH_HOME>/sessions/<项目键>/<sessionId>/ 目录（每会话独立日志文件）。
