@@ -1658,6 +1658,9 @@ window.dsh = {
   updateDsh: () => ipcRenderer.invoke('dsh:update'),
   // 版本分开：frontend = 本应用版本（package.json），backend = 后端 DSH（@deepseek-ai/dsh）版本
   versions: () => ipcRenderer.invoke('dsh:versions'),
+  // 会话清理：删除特定会话（运行中会拒绝）/ 清空全部历史会话
+  deleteSession: (sessionId) => ipcRenderer.invoke('dsh:deleteSession', sessionId),
+  clearHistory: () => ipcRenderer.invoke('dsh:purgeHistory'),
 };
 
 // 保留 __dsh 调试句柄（向后兼容），并让 __dsh.rpc 也走通用透传
@@ -1669,9 +1672,103 @@ window.__dsh = {
   setConfig: (patch) => ipcRenderer.invoke('dsh:config:set', patch),
   updateDsh: () => ipcRenderer.invoke('dsh:update'),
   versions: () => ipcRenderer.invoke('dsh:versions'),
+  deleteSession: (sessionId) => ipcRenderer.invoke('dsh:deleteSession', sessionId),
+  clearHistory: () => ipcRenderer.invoke('dsh:purgeHistory'),
   onEvent: window.dsh.onEvent,
   calcCost, DEEPSEEK_OFFICIAL_PRICES, RELAY_PRICES, RELAY_PROVIDERS,
   loadPrices, savePrices, fetchOfficialPrices,
   setRelayPrice: (id, table) => { if (table) RELAY_PRICES[id] = table; },
   setOfficialPrice: (model, table) => { if (table) DEEPSEEK_OFFICIAL_PRICES[model] = table; },
 };
+
+// ---------- 会话管理 UI（右下角浮动工具） ----------
+// 前端是 Reasonix 构建产物（不改源码），这里注入一个轻量工具按钮：
+// 列出未归档的历史会话，支持"删除单个"和"清空全部历史"。
+// 删除 = 归档（从列表隐藏）+ 物理清除本地日志（主进程 dsh:deleteSession / dsh:purgeHistory）。
+// 运行中的会话在主进程侧会被拒绝删除，UI 也不列出（列表只显示非 running）。
+function injectSessionManager() {
+  if (document.getElementById('dsr-session-mgr') || !document.body) return;
+  const root = document.createElement('div');
+  root.id = 'dsr-session-mgr';
+  root.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:99999;font-family:system-ui,-apple-system,sans-serif;';
+  const btn = document.createElement('button');
+  btn.textContent = '🗑';
+  btn.title = '会话管理（删除历史会话 / 清空）';
+  btn.style.cssText = 'width:40px;height:40px;border-radius:50%;border:none;background:linear-gradient(135deg,#d97757,#e58a3a);color:#fff;font-size:18px;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.4);';
+  root.appendChild(btn);
+
+  const panel = document.createElement('div');
+  panel.style.cssText = 'display:none;position:absolute;right:0;bottom:48px;width:360px;max-height:440px;overflow:auto;background:#1e2229;color:#f4f5f7;border:1px solid #39404d;border-radius:10px;padding:10px;box-shadow:0 8px 28px rgba(0,0,0,.55);font-size:13px;';
+  const head = document.createElement('div');
+  head.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-weight:600;';
+  head.innerHTML = '<span>会话管理</span><span id="dsr-sm-close" style="cursor:pointer;opacity:.65;padding:0 4px;">✕</span>';
+  const list = document.createElement('div');
+  list.id = 'dsr-sm-list';
+  panel.appendChild(head);
+  panel.appendChild(list);
+  root.appendChild(panel);
+  document.body.appendChild(root);
+
+  head.querySelector('#dsr-sm-close').onclick = () => { panel.style.display = 'none'; };
+  btn.onclick = () => { const show = panel.style.display === 'none'; panel.style.display = show ? 'block' : 'none'; if (show) refreshList(); };
+
+  async function refreshList() {
+    list.innerHTML = '<div style="opacity:.6;padding:6px;">加载中…</div>';
+    try {
+      const [res, ws] = await Promise.all([
+        ipcRenderer.invoke('dsh:rpc', 'session.list', {}),
+        ipcRenderer.invoke('dsh:rpc', 'workspace.list', {}).catch(() => null),
+      ]);
+      const archived = new Set((ws && ws.archivedSessionIds) || []);
+      // 只列出：未归档 + 非运行中（运行中的在主进程侧也会被拒删）
+      const rows = (res && res.items || []).filter((s) => !archived.has(s.sessionId) && !s.running);
+      if (!rows.length) {
+        list.innerHTML = '<div style="opacity:.6;padding:6px;">没有可清理的历史会话 ✓</div>';
+        return;
+      }
+      list.innerHTML = '';
+      const clearBtn = document.createElement('button');
+      clearBtn.textContent = '🗑 清空全部历史（' + rows.length + ' 个）';
+      clearBtn.style.cssText = 'width:100%;margin-bottom:8px;padding:8px;border:none;border-radius:8px;background:#b3402e;color:#fff;cursor:pointer;font-size:13px;';
+      clearBtn.onclick = async () => {
+        if (!window.confirm('确定清空 ' + rows.length + ' 个历史会话？\n将归档并从磁盘删除它们的日志文件。')) return;
+        const r = await ipcRenderer.invoke('dsh:purgeHistory');
+        if (r && r.ok) window.alert('已清空 ' + (r.deleted || 0) + ' 个历史会话');
+        else window.alert('清空失败：' + ((r && r.error) || '未知错误'));
+        refreshList();
+      };
+      list.appendChild(clearBtn);
+      for (const s of rows) {
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px solid #2a303a;';
+        const info = document.createElement('div');
+        info.style.cssText = 'flex:1;overflow:hidden;min-width:0;';
+        const title = document.createElement('div');
+        title.style.cssText = 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+        title.textContent = fixMojibake((s.projections && s.projections.values && s.projections.values.title) || '(无标题会话)');
+        const sub = document.createElement('div');
+        sub.style.cssText = 'opacity:.55;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+        sub.textContent = (s.cwd || '') + (s.blank ? ' · 空会话' : '');
+        info.appendChild(title);
+        info.appendChild(sub);
+        const del = document.createElement('button');
+        del.textContent = '删除';
+        del.style.cssText = 'flex-shrink:0;padding:4px 10px;border:none;border-radius:6px;background:#3a4150;color:#ff8a80;cursor:pointer;font-size:12px;';
+        del.onclick = async () => {
+          if (!window.confirm('删除会话：' + (title.textContent || s.sessionId) + '？\n将归档并从磁盘清除其日志。')) return;
+          const r = await ipcRenderer.invoke('dsh:deleteSession', s.sessionId);
+          if (r && r.ok) window.alert('已删除' + (r.purged ? '（含日志）' : '（已归档）'));
+          else window.alert('删除失败：' + ((r && r.error) || '未知错误'));
+          refreshList();
+        };
+        row.appendChild(info);
+        row.appendChild(del);
+        list.appendChild(row);
+      }
+    } catch (e) {
+      list.innerHTML = '<div style="opacity:.6;padding:6px;">加载失败：' + (e && e.message || e) + '</div>';
+    }
+  }
+}
+if (document.readyState !== 'loading') injectSessionManager();
+document.addEventListener('DOMContentLoaded', injectSessionManager);

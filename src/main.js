@@ -607,6 +607,66 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle('dsh:cancel', (_e, sid) => dsh.rpc('session.cancel', { sessionId: sid }));
 
+  // ---------- 会话清理：归档（隐藏）+ 物理删除日志 ----------
+  // DSH 没有删除 API；安全流程 = workspace.archiveSession（从列表隐藏）→ 删除
+  // <DSH_HOME>/sessions/<项目键>/<sessionId>/ 目录（每会话独立日志文件）。
+  // 运行中的会话绝不能删（会导致 corrupt session log），一律拒绝。
+  const DSH_HOME_DIR = () => process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
+  function sessionDirFor(sessionId) {
+    try {
+      const root = path.join(DSH_HOME_DIR(), 'sessions');
+      for (const proj of fs.readdirSync(root, { withFileTypes: true })) {
+        if (!proj.isDirectory()) continue;
+        const cand = path.join(root, proj.name, sessionId);
+        if (fs.existsSync(cand)) return cand;
+      }
+    } catch {}
+    return null;
+  }
+  async function listRawSessions() {
+    try { const r = await dsh.rpc('session.list', {}); return (r && r.items) || []; }
+    catch { return []; }
+  }
+  async function archiveSessionQuiet(id) {
+    try { await dsh.rpc('workspace.archiveSession', { sessionId: id }); } catch {}
+  }
+  function purgeSessionDir(id) {
+    const dir = sessionDirFor(id);
+    if (!dir) return { purged: false };
+    try { fs.rmSync(dir, { recursive: true, force: true }); return { purged: true, dir }; }
+    catch (e) { return { purged: false, dir, error: String(e && e.message || e) }; }
+  }
+  // 删除特定会话（非 running 才允许）
+  ipcMain.handle('dsh:deleteSession', async (_e, sessionId) => {
+    try {
+      const id = String(sessionId || '');
+      if (!/^[a-zA-Z0-9-]+$/.test(id)) return { ok: false, error: 'invalid sessionId' };
+      const items = await listRawSessions();
+      const s = items.find((x) => x.sessionId === id);
+      if (!s) return { ok: false, error: 'session not found' };
+      if (s.running) return { ok: false, error: 'running session cannot be deleted' };
+      await archiveSessionQuiet(id);
+      const p = purgeSessionDir(id);
+      return p.purged
+        ? { ok: true, archived: true, purged: true, dir: p.dir }
+        : { ok: false, error: 'archived but log purge failed' + (p.error ? ': ' + p.error : '') };
+    } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  });
+  // 清空历史：归档 + 删除所有非 running 会话
+  ipcMain.handle('dsh:purgeHistory', async () => {
+    try {
+      const items = await listRawSessions();
+      const cold = items.filter((x) => !x.running);
+      const details = [];
+      for (const s of cold) {
+        await archiveSessionQuiet(s.sessionId);
+        const p = purgeSessionDir(s.sessionId);
+        details.push({ sessionId: s.sessionId, archived: true, purged: p.purged });
+      }
+      return { ok: true, deleted: details.length, details };
+    } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  });
+
   // ---------- DSH 更新/配置控制（用户可手动指定、手动更新、关闭自动更新） ----------
   ipcMain.handle('dsh:config', () => loadDshConfig());
   ipcMain.handle('dsh:config:set', (_e, patch) => {
