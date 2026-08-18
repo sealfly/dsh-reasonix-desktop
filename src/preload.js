@@ -30,6 +30,27 @@ function applyDefaultAppearance() {
 if (typeof document !== 'undefined' && document.readyState !== 'loading') applyDefaultAppearance();
 else if (typeof document !== 'undefined') document.addEventListener('DOMContentLoaded', applyDefaultAppearance);
 else applyDefaultAppearance();
+// 主题持久化兜底：前端设置页点明暗模式只改 data-theme 属性（前端 E 应用），
+// SetDesktopAppearance 走延迟提交队列可能不触发；这里监听 data-theme 变化同步写 localStorage。
+// 注意：preload 顶层 document.documentElement 可能尚未解析（null），observe 会抛错，
+// 所以延迟到 DOMContentLoaded 后注册。
+const watchTheme = () => {
+  try {
+    const t = document.documentElement.getAttribute('data-theme');
+    if (t && (t === 'light' || t === 'dark')) localStorage.setItem('reasonix-theme', t);
+  } catch {}
+};
+function registerThemeObserver() {
+  try {
+    if (typeof MutationObserver !== 'undefined' && typeof document !== 'undefined' && document.documentElement) {
+      new MutationObserver(watchTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+      watchTheme();
+    }
+  } catch {}
+}
+if (typeof document !== 'undefined' && document.readyState !== 'loading') registerThemeObserver();
+else if (typeof document !== 'undefined') document.addEventListener('DOMContentLoaded', registerThemeObserver);
+else registerThemeObserver();
 
 // 会话/项目"钉住"集合（localStorage 持久化；前端右键菜单"钉住"调用 SetTopicPinned/SetProjectPinned）
 const PINNED_TOPICS_KEY = 'dsh:pinned-topics';
@@ -39,6 +60,10 @@ function readPinnedList(key) {
 }
 function savePinnedList(key, list) {
   try { localStorage.setItem(key, JSON.stringify(list)); } catch {}
+}
+// 启动设置项（语言/外观等）读 localStorage 持久化值，fallback 默认
+function startupSetting(key, fallback) {
+  try { const v = (typeof localStorage !== 'undefined') ? localStorage.getItem(key) : null; return v || fallback; } catch { return fallback; }
 }
 
 // ---------- 事件通道（window.runtime.EventsOn） ----------
@@ -1213,10 +1238,13 @@ const appImpl = {
   SetDesktopConversationWidth: async () => {},
   SetDesktopCurrency: async () => {},
   SetDesktopLanguage: async (lang) => {
-    // 持久化语言偏好：下次启动 preload 覆盖 navigator.language 时读它（前端 detectLocale 生效）
+    // 前端点击语言只调这里（设置页本地 state 不动 LocaleProvider），
+    // 所以持久化后必须重载页面：preload 重新按 localStorage 覆盖 navigator.language，
+    // 前端 detectLocale 才会用新语言渲染。原版 Wails 桌面端同样负责切换。
     try {
       const norm = (lang === 'en' || lang === 'zh' || lang === 'zh-TW') ? lang : 'zh';
       localStorage.setItem('dsh:language', norm);
+      try { window.location.reload(); } catch {}
       return { ok: true };
     } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
   },
@@ -1500,10 +1528,10 @@ const appImpl = {
   // ===== 设置/杂项（回退 mock 用） =====
   DesktopStartupSettings: async () => ({
     bot: {},
-    desktopLanguage: 'zh',
+    desktopLanguage: startupSetting('dsh:language', 'zh'),
     desktopLayoutStyle: 'workbench',
-    desktopTheme: 'dark',
-    desktopThemeStyle: 'dark',
+    desktopTheme: startupSetting('reasonix-theme', 'dark'),
+    desktopThemeStyle: startupSetting('reasonix-theme-style', startupSetting('reasonix-theme', 'dark')),
     desktopTerminalTheme: 'dark',
     displayMode: 'full',
     reasoningDisplayMode: 'auto',
