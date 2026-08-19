@@ -1,6 +1,6 @@
 'use strict';
 // DSH web 服务 RPC 客户端（直连 3080 /api 协议）
-// 设计原则：DSH 后端是多客户端、多路复用的独立服务，这里只做"通用透传"，
+// 设计原则（项目原则 1，见 PRINCIPLES.md）：DSH 后端是多客户端、多路复用的独立服务，这里只做"通用透传"，
 // 不设方法白名单——任意 DSH 方法（含插件动态注册的）都能通过 rpc() 调，
 // 任意事件帧都能通过 subscribeRaw() 收到，前端不阉割 DSH 的能力。
 const http = require('http');

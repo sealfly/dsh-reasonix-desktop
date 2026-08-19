@@ -130,7 +130,7 @@ function checkPort(port = 3080, ms = 600) {
 const HOME_DIR = os.homedir() || 'C:\\';
 
 // 完全授权模式（yolo / danger-full-access）：解除桥自身的防御性校验，
-// 让前端对 DSH 及其 AI 零限制（开发原则 2）。由 preload 在安全模式切换时通知。
+// 让前端对 DSH 及其 AI 零限制（项目原则 1.3，见 PRINCIPLES.md）。由 preload 在安全模式切换时通知。
 let bridgeFullAccess = false;
 
 // 后端 DSH 版本（与前端版本分开显示；探测不到显示 unknown）
@@ -349,7 +349,7 @@ app.whenReady().then(async () => {
 
 
   // IPC：渲染层调用 DSH（通用透传，任意 method/payload，插件动态注册的方法也能调）。
-  // 设计原则：桥接层不限制 DSH 原生能力——插件/前端需要什么方法就透传什么。
+  // 设计原则（项目原则 1，见 PRINCIPLES.md）：桥接层不限制 DSH 原生能力——插件/前端需要什么方法就透传什么。
   // 仅保留最小的方法名格式校验（合法插件方法名均为 namespace.method 形式，不受影响）；
   // 完全授权模式（yolo）下连这层校验也解除。
   // 完全授权开关（preload 在安全模式切换/会话列表同步时调用）
@@ -477,7 +477,7 @@ app.whenReady().then(async () => {
 
   // 文件系统（Reasonix @ 菜单 / 工作区）
   // 根目录固定为用户主目录，且防 ../ 穿越；
-  // 完全授权模式（yolo / danger-full-access）下解除路径限制（原则：对 DSH/AI 零限制）。
+  // 完全授权模式（yolo / danger-full-access）下解除路径限制（项目原则 1.3，见 PRINCIPLES.md）。
   ipcMain.handle('fs:list', async (_e, rel) => {
     if (bridgeFullAccess) {
       const root = String(rel || HOME_DIR);

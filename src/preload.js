@@ -65,6 +65,12 @@ function savePinnedList(key, list) {
 function startupSetting(key, fallback) {
   try { const v = (typeof localStorage !== 'undefined') ? localStorage.getItem(key) : null; return v || fallback; } catch { return fallback; }
 }
+// 费用展示币种：优先用户设置（dsh:currency）；未设置时按界面语言（zh→CNY，en→USD）
+function preferredCurrency() {
+  const c = startupSetting('dsh:currency', '');
+  if (c === 'CNY' || c === 'USD') return c;
+  return startupSetting('dsh:language', 'zh') === 'en' ? 'USD' : 'CNY';
+}
 
 // ---------- 事件通道（window.runtime.EventsOn） ----------
 const eventChannels = new Map(); // channel -> Set<cb>
@@ -81,6 +87,10 @@ function eventsEmit(channel, payload) {
 ipcRenderer.on('dsh:event', (_e, wire) => {
   // Reasonix 的 onEvent 监听 EVENT_CHANNEL = "agent:event"
   eventsEmit('agent:event', wire);
+  // 回合结束：补发 usage 事件，让费用/用量显示在回合结束后也刷新（带当前币种）
+  if (wire && wire.kind === 'turn_done' && wire.tabId) {
+    setTimeout(() => { try { emitUsageEvent(wire.tabId); } catch {} }, 300);
+  }
 });
 
 // ---------- 费用计算（价格外置 prices.json，可编辑/可抓取更新） ----------
@@ -169,6 +179,8 @@ async function emitUsageEvent(sessionId) {
         model = models.current.model || model;
       }
     } catch {}
+    // 币种：优先用户设置（dsh:currency）；未设置时按界面语言（zh→CNY，en→USD）
+    const currency = preferredCurrency();
     const usage = {
       promptTokens: cacheMiss,
       completionTokens: output,
@@ -180,7 +192,8 @@ async function emitUsageEvent(sessionId) {
       sessionCacheMissTokens: cacheMiss,
       source: 'dsh',
       cost: calcCost(tu, provider, model),
-      currencyCode: 'CNY',
+      currency: currency,
+      currencyCode: currency,
     };
     eventsEmit('agent:event', { kind: 'usage', usage, tabId: sessionId });
   } catch {}
@@ -223,6 +236,9 @@ function replayHistory(sessionId, events) {
     for (const b of blocks) {
       if (b.type === 'text' && b.text) {
         wire.push({ kind: 'text', text: b.text, tabId: sessionId });
+      } else if (b.type === 'reasoning' && b.text) {
+        // 思考内容：历史重放也补发（前端按 message.reasoning 渲染折叠思考）
+        wire.push({ kind: 'reasoning', text: b.text, reasoning: b.text, tabId: sessionId });
       } else if (b.type === 'tool-call' || b.type === 'tool_call') {
         wire.push({
           kind: 'tool_dispatch',
@@ -253,6 +269,10 @@ function replayHistory(sessionId, events) {
       // 系统注入（plugin/goal 等）的 user/message 带 source.kind !== 'user'，不按用户消息重放
       if (d.source && d.source.kind !== 'user') continue;
       pushMsg('user', d.content || d.prompt);
+    } else if (event.type === 'assistant/reasoning') {
+      // 独立思考事件（若 DSH 历史以独立事件给出 reasoning）
+      const t = d.text ?? (d.message && d.message.text) ?? '';
+      if (t) wire.push({ kind: 'reasoning', text: t, reasoning: t, tabId: sessionId });
     } else if (event.type === 'assistant/message') {
       pushMsg('assistant', d.message && d.message.content);
     } else if (event.type === 'tool/call') {
@@ -310,18 +330,20 @@ function historyEventsToSlice(events, tabId) {
       if (event.type === 'user/message') flushChunks();
       const msg = event.type === 'user/message' ? d : (d.message || d);
       const role = msg.role || (event.type.startsWith('user') ? 'user' : 'assistant');
-      // content blocks → 文本 + 工具调用
+      // content blocks → 文本 + 思考 + 工具调用
       let content = '';
+      let reasoning = '';
       const toolCalls = [];
       const blocks = Array.isArray(msg.content) ? msg.content : [];
       for (const b of blocks) {
         if (b.type === 'text' && b.text) content += b.text;
+        else if (b.type === 'reasoning' && b.text) reasoning += b.text;
         else if (b.type === 'tool-call' || b.type === 'tool_call') {
           toolCalls.push({ id: b.id || b.callId, name: b.name || 'tool', arguments: b.arguments ? String(b.arguments) : '' });
         }
       }
-      if (role === 'assistant' && !content && toolCalls.length === 0) {
-        // 纯推理消息：跳过（reasoning 单独处理）
+      if (role === 'assistant' && !content && !reasoning && toolCalls.length === 0) {
+        // 空消息（无文本/思考/工具调用）：跳过
         continue;
       }
       currentEntry = {
@@ -331,6 +353,7 @@ function historyEventsToSlice(events, tabId) {
         message: {
           role,
           content,
+          ...(reasoning ? { reasoning } : {}),
           createdAt: event.time,
           ...(toolCalls.length ? { toolCalls } : {}),
         },
@@ -426,7 +449,7 @@ async function setDshPermission(sessionId, mode) {
   if (!res.ok && mode === 'ask') res = await tryPerm('workspace-write');
   if (!res.ok) console.warn('[dsh] /permission ' + perm + ' failed:', res.error);
   currentMode = mode;
-  // 完全授权（yolo / danger-full-access）时通知主进程解除桥的防御性校验（原则 2）
+  // 完全授权（yolo / danger-full-access）时通知主进程解除桥的防御性校验（项目原则 1.3，见 PRINCIPLES.md）
   ipcRenderer.send('bridge:setFullAccess', mode === 'yolo');
 }
 const createSession = (cwd, agentPreset) => ipcRenderer.invoke('dsh:create', cwd, agentPreset);
@@ -1088,6 +1111,10 @@ const appImpl = {
     subagentModel: 'deepseek-v4-flash', subagentEffort: 'auto', maxSubagentDepth: 3,
     maxSubagentConcurrency: 2, maxParallelWriters: 1, autoPlan: 'none',
     defaultToolApprovalMode: 'ask', compactRatio: 1,
+    desktopLayoutStyle: startupSetting('dsh:layout-style', 'workbench'),
+    desktopCurrency: startupSetting('dsh:currency', ''),
+    reasoningDisplayMode: startupSetting('dsh:reasoning-mode', 'auto'),
+    reasoningDisplayModeExplicit: !!startupSetting('dsh:reasoning-mode', ''),
   }),
   HooksSettings: async () => ({ hooks: [] }),
   SaveHooksSettings: async () => {},
@@ -1236,7 +1263,14 @@ const appImpl = {
   RestoreGraphiteAppearance: async () => {},
   SetDesktopCheckUpdates: async () => {},
   SetDesktopConversationWidth: async () => {},
-  SetDesktopCurrency: async () => {},
+  SetDesktopCurrency: async (currency) => {
+    // 费用展示币种（CNY/USD，空 = 跟随界面语言）：持久化到 localStorage('dsh:currency')
+    try {
+      const norm = (currency === 'CNY' || currency === 'USD') ? currency : '';
+      localStorage.setItem('dsh:currency', norm);
+      return { ok: true };
+    } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  },
   SetDesktopLanguage: async (lang) => {
     // 前端点击语言只调这里（设置页本地 state 不动 LocaleProvider），
     // 所以持久化后必须重载页面：preload 重新按 localStorage 覆盖 navigator.language，
@@ -1248,7 +1282,16 @@ const appImpl = {
       return { ok: true };
     } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
   },
-  SetDesktopLayoutStyle: async () => {},
+  SetDesktopLayoutStyle: async (style) => {
+    // 工作台/经典/创作：持久化到 localStorage('dsh:layout-style')。
+    // DesktopStartupSettings（启动）与 Settings（设置页重读）都读它；
+    // 前端 apply() 调用后会立即 ReloadSettings→Settings() 重读并切换布局，即时生效。
+    try {
+      const norm = (style === 'workbench' || style === 'creation') ? style : 'classic';
+      localStorage.setItem('dsh:layout-style', norm);
+      return { ok: true };
+    } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  },
   SetDesktopMetrics: async () => {},
   SetDesktopTelemetry: async () => {},
   SetDesktopTerminalTheme: async () => {},
@@ -1529,12 +1572,14 @@ const appImpl = {
   DesktopStartupSettings: async () => ({
     bot: {},
     desktopLanguage: startupSetting('dsh:language', 'zh'),
-    desktopLayoutStyle: 'workbench',
+    desktopLayoutStyle: startupSetting('dsh:layout-style', 'workbench'),
     desktopTheme: startupSetting('reasonix-theme', 'dark'),
     desktopThemeStyle: startupSetting('reasonix-theme-style', startupSetting('reasonix-theme', 'dark')),
     desktopTerminalTheme: 'dark',
     displayMode: 'full',
-    reasoningDisplayMode: 'auto',
+    reasoningDisplayMode: startupSetting('dsh:reasoning-mode', 'auto'),
+    reasoningDisplayModeExplicit: !!startupSetting('dsh:reasoning-mode', ''),
+    desktopCurrency: startupSetting('dsh:currency', ''),
     statusBarStyle: 'text',
     statusBarItems: ['workspace', 'model', 'context', 'usage', 'cache', 'cost'],
     checkUpdates: false,
@@ -1565,8 +1610,22 @@ const appImpl = {
   }),
   SetDesktop: async () => {},
   SetStatusBar: async () => {},
-  SetReasoningDisplayMode: async () => {},
-  SetExpandThinking: async () => {},
+  SetReasoningDisplayMode: async (mode) => {
+    // 思考内容显示模式（hidden 隐藏 / summary 摘要 / auto 自动展开）：
+    // 持久化到 localStorage('dsh:reasoning-mode')，重启保持
+    try {
+      const norm = (mode === 'hidden' || mode === 'summary' || mode === 'auto') ? mode : 'auto';
+      localStorage.setItem('dsh:reasoning-mode', norm);
+      return { ok: true };
+    } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  },
+  SetExpandThinking: async (on) => {
+    // 展开思考开关：on → auto，off → summary（与参考实现一致）
+    try {
+      localStorage.setItem('dsh:reasoning-mode', on ? 'auto' : 'summary');
+      return { ok: true };
+    } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  },
   SetAutoPlan: async () => {},
   SetDefaultToolApprovalMode: async () => {},
   SetCompactRatio: async () => {},
@@ -1669,12 +1728,12 @@ const appImpl = {
         cacheHitTokens: tu.cacheReadTokens || 0,
         cacheMissTokens: tu.uncachedInputTokens || 0,
         sessionCost: cost,
-        sessionCurrency: 'CNY',
+        sessionCurrency: preferredCurrency(),
         sessionCostComplete: true,
         estimated: false,
       };
     } catch (e) {
-      return { used: 0, window: 1, sessionTokens: 0, compactRatio: 0.8, cacheHitTokens: 0, cacheMissTokens: 0, sessionCost: 0, sessionCurrency: 'CNY', estimated: true };
+      return { used: 0, window: 1, sessionTokens: 0, compactRatio: 0.8, cacheHitTokens: 0, cacheMissTokens: 0, sessionCost: 0, sessionCurrency: preferredCurrency(), estimated: true };
     }
   },
   AttachmentDataURL: async () => '',
@@ -1914,7 +1973,7 @@ if (typeof MutationObserver !== 'undefined') {
 }
 
 // ---------- window.dsh：DSH 通用透传入口 ----------
-// 设计原则：不设白名单。rpc 透传任意 DSH 方法（含插件动态注册的），
+// 设计原则（项目原则 1，见 PRINCIPLES.md）：不设白名单。rpc 透传任意 DSH 方法（含插件动态注册的），
 // onEvent 收到 events.mux 的全部原始帧（不筛选）。Reasonix 的 window.go.main.App
 // 只是 DSH 能力的"一个视图"，DSH 其余能力都能从这里直达，不被前端阉割。
 const dshEventListeners = new Set();

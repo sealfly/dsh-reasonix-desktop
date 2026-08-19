@@ -2,6 +2,9 @@
 
 **Reasonix 前端 + DeepSeek Harness 后端**——按你的思路：直接跑 Reasonix 桌面端的前端 UI，后端换成 DSH。
 
+> **项目原则**：本项目只是为 DSH 提供前端 UI 方便人使用，**不限制 DSH 的任何能力**。
+> 详见 [PRINCIPLES.md](PRINCIPLES.md)。
+
 ## 架构
 
 ```
