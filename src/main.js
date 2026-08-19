@@ -152,6 +152,9 @@ async function detectDshVersion() {
 
 // 本应用拉起的 DSH 相关进程 pid（用于退出/更新时精确清理，绝不动用户其他进程）
 const spawnedDshPids = new Set();
+// 关闭主窗口后的行为：quit 退出 / background 保持后台运行（DSH 继续）。
+// 由 preload 的 SetCloseBehavior 持久化并通知到这里（主进程读不到 localStorage）。
+let closeBehavior = 'quit';
 // 杀掉本应用拉起的 DSH 进程树
 function killSpawnedDsh() {
   for (const pid of spawnedDshPids) {
@@ -331,6 +334,8 @@ app.whenReady().then(async () => {
     win.isMaximized() ? win.unmaximize() : win.maximize();
   });
   ipcMain.on('win:close', () => win && win.close());
+  // 关闭行为（preload SetCloseBehavior → 这里存值；window-all-closed 时按它决定退出或后台）
+  ipcMain.on('dsh:close-behavior', (_e, b) => { closeBehavior = (b === 'background' || b === 'quit') ? b : 'quit'; console.log('[APP] closeBehavior =', closeBehavior); });
   ipcMain.handle('win:isMaximized', () => (win ? win.isMaximized() : false));
   win.on('maximize', () => win.webContents.send('win:maximized', true));
   win.on('unmaximize', () => win.webContents.send('win:maximized', false));
@@ -826,7 +831,12 @@ app.whenReady().then(async () => {
   });
 });
 app.on('window-all-closed', () => {
-  // 退出时清掉本应用拉起的 DSH 后台进程，不留残留（只杀自己 spawn 的）
-  killSpawnedDsh();
-  app.quit();
+  // quit：清掉本应用拉起的 DSH 后台进程并退出（只杀自己 spawn 的，绝不动用户其他进程）
+  // background：保持后台运行（不退出、不杀 DSH）——DSH 继续服务，再次打开窗口/新实例可复用
+  if (closeBehavior === 'quit') {
+    killSpawnedDsh();
+    app.quit();
+  } else {
+    console.log('[APP] 窗口已关闭，保持后台运行（closeBehavior=background）');
+  }
 });

@@ -55,6 +55,11 @@ else registerThemeObserver();
 // 会话/项目"钉住"集合（localStorage 持久化；前端右键菜单"钉住"调用 SetTopicPinned/SetProjectPinned）
 const PINNED_TOPICS_KEY = 'dsh:pinned-topics';
 const PINNED_PROJECTS_KEY = 'dsh:pinned-projects';
+// 通用设置持久化 key（参考 Reasonix 设置面板：思考/回合/系统行为/审批/信息栏）
+const DEFAULT_APPROVAL_KEY = 'dsh:default-approval';   // 新会话默认审批 ask/auto/yolo
+const STATUS_STYLE_KEY = 'dsh:status-bar-style';       // 底部信息栏样式 icon/text
+const STATUS_ITEMS_KEY = 'dsh:status-bar-items';       // 底部信息栏显示项
+const CLOSE_BEHAVIOR_KEY = 'dsh:close-behavior';       // 关闭窗口时 background/quit
 function readPinnedList(key) {
   try { const a = JSON.parse(localStorage.getItem(key) || '[]'); return Array.isArray(a) ? a : []; } catch { return []; }
 }
@@ -454,6 +459,8 @@ async function setDshPermission(sessionId, mode) {
 }
 const createSession = (cwd, agentPreset) => ipcRenderer.invoke('dsh:create', cwd, agentPreset);
 const cancelSession = (sid) => ipcRenderer.invoke('dsh:cancel', sid);
+// 启动时把持久化的关闭行为同步给主进程（主进程 window-all-closed 用它决定是否退出）
+try { ipcRenderer.send('dsh:close-behavior', startupSetting(CLOSE_BEHAVIOR_KEY, 'quit')); } catch {}
 
 // 取某 tab 对应会话的工作区 cwd（文件系统根目录）
 async function cwdOfTab(tabID) {
@@ -836,13 +843,15 @@ const appImpl = {
       const tabs = await sessions();
       const existing = tabs.find((s) => s.cwd === workspaceRoot);
       sid = existing ? existing.id : (await createSession(workspaceRoot, DEFAULT_PRESET)).sessionId;
+      if (!existing) await appImpl.applyDefaultApproval(sid);
     }
     try { const h = await history(sid); replayHistory(sid, h.events); } catch {}
     return sessionToTabMeta({ sessionId: sid, cwd: workspaceRoot, running: false, projections: {} }, 0);
   },
   OpenGlobalTab: async () => {
     const res = await createSession(undefined, DEFAULT_PRESET);
-    return sessionToTabMeta({ sessionId: res.sessionId, cwd: undefined, running: false, projections: {} }, 0);
+    if (res && res.sessionId) await appImpl.applyDefaultApproval(res.sessionId);
+    return sessionToTabMeta({ sessionId: res && res.sessionId, cwd: undefined, running: false, projections: {} }, 0);
   },
   EnsureBlankTab: async () => ({}),
   EnsureBlankSurface: async () => ({}),
@@ -876,6 +885,7 @@ const appImpl = {
     const existing = tabs.find((s) => s.cwd === path);
     if (existing) return existing.id;
     const res = await createSession(path, DEFAULT_PRESET);
+    if (res && res.sessionId) await appImpl.applyDefaultApproval(res.sessionId);
     return res.sessionId || '';
   },
   IsolatedWorktreeAvailability: async () => ({ available: true, repoRoot: '', branch: 'main', sourceDirty: false }),
@@ -1484,8 +1494,22 @@ const appImpl = {
   SummarizeUpToForTab: async () => {},
   SetAgentParams: async () => {},
   SetComposerProfileForTab: async () => {},
-  SetStatusBarItems: async () => {},
-  SetStatusBarStyle: async () => {},
+  SetStatusBarItems: async (items) => {
+    // 底部信息栏显示项（workspace/model/context/usage/cache/cost 等）：持久化，重启保持
+    try {
+      const arr = Array.isArray(items) ? items.filter((x) => typeof x === 'string') : [];
+      localStorage.setItem(STATUS_ITEMS_KEY, JSON.stringify(arr));
+      return { ok: true };
+    } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  },
+  SetStatusBarStyle: async (style) => {
+    // 底部信息栏样式：icon 图标版 / text 文字版
+    try {
+      const norm = (style === 'icon' || style === 'text') ? style : 'text';
+      localStorage.setItem(STATUS_STYLE_KEY, norm);
+      return { ok: true };
+    } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  },
   SetProjectColor: async () => {},
   SetProjectPinned: async (root, pinned) => {
     try {
@@ -1580,8 +1604,14 @@ const appImpl = {
     reasoningDisplayMode: startupSetting('dsh:reasoning-mode', 'auto'),
     reasoningDisplayModeExplicit: !!startupSetting('dsh:reasoning-mode', ''),
     desktopCurrency: startupSetting('dsh:currency', ''),
-    statusBarStyle: 'text',
-    statusBarItems: ['workspace', 'model', 'context', 'usage', 'cache', 'cost'],
+    statusBarStyle: startupSetting(STATUS_STYLE_KEY, 'text'),
+    statusBarItems: (() => {
+      try {
+        const v = startupSetting(STATUS_ITEMS_KEY, '');
+        if (v) { const a = JSON.parse(v); if (Array.isArray(a)) return a; }
+      } catch {}
+      return ['workspace', 'model', 'context', 'usage', 'cache', 'cost'];
+    })(),
     checkUpdates: false,
     updateChannel: 'stable',
     conversationWidth: 'standard',
@@ -1598,7 +1628,16 @@ const appImpl = {
       return { ok: true };
     } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
   },
-  SetCloseBehavior: async () => {},
+  SetCloseBehavior: async (behavior) => {
+    // 关闭窗口时：quit 退出 / background 保持后台运行（DSH 继续）。
+    // 持久化 + 通知主进程（主进程没有 localStorage，window-all-closed 时按它决定是否退出）。
+    try {
+      const norm = (behavior === 'background' || behavior === 'quit') ? behavior : 'quit';
+      localStorage.setItem(CLOSE_BEHAVIOR_KEY, norm);
+      try { ipcRenderer.send('dsh:close-behavior', norm); } catch {}
+      return { ok: true };
+    } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  },
   SetDisplayMode: async () => {},
   NeedsOnboarding: async () => false,
   Commands: async () => [],
@@ -1627,7 +1666,22 @@ const appImpl = {
     } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
   },
   SetAutoPlan: async () => {},
-  SetDefaultToolApprovalMode: async () => {},
+  SetDefaultToolApprovalMode: async (mode) => {
+    // 新会话默认审批（询问/自动/Yolo）：持久化；新会话创建后由 applyDefaultApproval 应用。
+    // 已有会话保留当前模式（项目原则：不强制改变正在使用的会话）。
+    try {
+      const norm = (mode === 'ask' || mode === 'auto' || mode === 'yolo') ? mode : 'auto';
+      localStorage.setItem(DEFAULT_APPROVAL_KEY, norm);
+      return { ok: true };
+    } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  },
+  // 新会话应用默认审批（SetDefaultToolApprovalMode 的持久化值；auto 是默认，无需额外设置）
+  applyDefaultApproval: async (sessionId) => {
+    try {
+      const mode = startupSetting(DEFAULT_APPROVAL_KEY, 'auto');
+      if (mode && mode !== 'auto' && sessionId) await setDshPermission(sessionId, mode);
+    } catch {}
+  },
   SetCompactRatio: async () => {},
   SetReasoningLanguage: async () => {},
   ReportCrash: async () => {},
