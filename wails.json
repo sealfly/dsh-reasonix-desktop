@@ -1,0 +1,19 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "dsh-reasonix-wails",
+  "outputfilename": "DSH-ReasonixUI",
+  "frontend:install": "",
+  "frontend:build": "",
+  "frontend:dev:watcher": "",
+  "frontend:dev:serverUrl": "",
+  "author": {
+    "name": "DSH-ReasonixUI"
+  },
+  "info": {
+    "companyName": "DSH-ReasonixUI",
+    "productName": "DSH-ReasonixUI",
+    "productVersion": "0.0.0",
+    "copyright": "DSH-ReasonixUI — Wails shell around DSH backend",
+    "comments": "Wails shell hosting Reasonix v1.29.0 frontend, bridged to DSH backend (127.0.0.1:3080)."
+  }
+}
