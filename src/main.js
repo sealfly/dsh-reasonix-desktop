@@ -28,15 +28,6 @@ const REASONIX_DIST = (() => {
 let win = null;
 let dsh = null;
 
-// 布局切换防抖：preload SetDesktopLayoutStyle 时记录时间戳；
-// 此后 1500ms 内的 minimize 请求视为"布局切换时的幽灵点击"（用户在设置面板切布局后
-// 界面重建，鼠标可能恰好落在窗口右上角最小化按钮上，或按钮意外获得焦点后被回车触发），
-// 拦截并记日志。正常手动最小化（切完布局 1.5s 之后再点）不受影响。
-let lastLayoutSwitchAt = 0;
-function isWithinLayoutSwitchWindow() {
-  return Date.now() - lastLayoutSwitchAt < 1500;
-}
-
 // 会话模型转换：DSH session → Reasonix TabMeta
 // 修复会话标题的 mojibake：DSH 存储标题若为 UTF-8 字节被按 Latin-1 解码，
 // 中文会显示成乱码（如 "GitHub上..." → "GitHubä¸Š..."），尝试可逆还原。
@@ -402,10 +393,6 @@ app.whenReady().then(async () => {
   win.webContents.on('page-title-updated', (e) => e.preventDefault());
   win.webContents.on('did-finish-load', () => { if (win && !win.isDestroyed()) win.setTitle('DSH-ReasonixUI'); });
 
-  // 布局切换防抖时间戳（preload SetDesktopLayoutStyle 时上报）
-  ipcMain.on('layout:switched', () => {
-    lastLayoutSwitchAt = Date.now();
-  });
   // 布局切换后的窗口级重绘：resize 1px 微抖强制整窗重绘（无闪烁），
   // 清理侧栏顶部 logo 区域的合成层残留（DOM 干净、无窗口操作时的纯视觉叠影）
   ipcMain.on('win:repaint', () => {
@@ -418,9 +405,7 @@ app.whenReady().then(async () => {
   });
   // 窗口控制（前端 bridge 调用 MinimiseMainWindow 等 → 这里执行）
   ipcMain.on('win:min', () => {
-    const since = Date.now() - lastLayoutSwitchAt;
-    if (isWithinLayoutSwitchWindow()) { console.log('[WIN-CTRL] minimize blocked (layout switch ghost click, +' + since + 'ms)'); return; }
-    console.log('[WIN-CTRL] minimize requested (+' + since + 'ms since layout switch)'); win && win.minimize();
+    console.log('[WIN-CTRL] minimize requested'); win && win.minimize();
   });
   ipcMain.on('win:max', () => {
     console.log('[WIN-CTRL] maximize/restore requested');
@@ -443,10 +428,6 @@ app.whenReady().then(async () => {
       const f = Math.min(2.0, Math.max(0.5, Number.isFinite(Number(factor)) ? Number(factor) : 1.0));
       if (win && !win.isDestroyed()) win.webContents.setZoomFactor(f);
     } catch (e) { console.log('[WIN] setZoom failed:', e && e.message); }
-  });
-  // 布局切换诊断（preload SetDesktopLayoutStyle 后延迟上报 DOM 指纹增量）
-  ipcMain.on('dsh:diag', (_e, diag) => {
-    console.log('[LAYOUT-DIFF]', JSON.stringify(diag));
   });
   // 关闭行为（preload SetCloseBehavior → 这里存值；window-all-closed 时按它决定退出或后台）
   ipcMain.on('dsh:close-behavior', (_e, b) => { closeBehavior = (b === 'background' || b === 'quit') ? b : 'quit'; console.log('[APP] closeBehavior =', closeBehavior); });

@@ -130,44 +130,6 @@ ipcRenderer.on('dsh:event', (_e, wire) => {
 ipcRenderer.on('term:output', (_e, ev) => { try { if (ev && ev.id && typeof ev.data === 'string') eventsEmit('terminal:output', ev); } catch {} });
 ipcRenderer.on('term:exit', (_e, ev) => { try { if (ev && ev.id && typeof ev.exitCode === 'number') eventsEmit('terminal:exit', ev); } catch {} });
 
-// 诊断：设置面板（settings-modal）关闭行为追踪
-// 1) 点 modal 的 X 时记录：isTrusted（是否真实点击）+ elementFromPoint（该点顶层元素，
-//    排查是否有元素盖住 X）+ modal 当前 data-state
-// 2) MutationObserver：modal 若进入 closing 后 1.5s 仍未卸载（onClose 没生效）→ 记录
-try {
-  document.addEventListener('click', (e) => {
-    try {
-      const t = e.target;
-      if (!t || !t.closest) return;
-      const modalX = t.closest('.settings-modal .modal-close-button, .management-modal .modal-close-button');
-      if (modalX) {
-        let top = null;
-        try {
-          const r = modalX.getBoundingClientRect();
-          const el = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
-          top = el ? String(el.className && el.className.baseVal !== undefined ? el.className.baseVal : el.className || el.tagName) : 'null';
-        } catch {}
-        const backdrop = document.querySelector('.settings-modal-backdrop');
-        const info = { trusted: e.isTrusted, top, state: backdrop ? backdrop.getAttribute('data-state') : 'no-backdrop' };
-        console.log('[MODAL-X-DIAG]', JSON.stringify(info));
-        try { ipcRenderer.send('dsh:diag', { modalX: info }); } catch {}
-      }
-    } catch {}
-  }, true);
-  // closing 卡住检测
-  const modalStuckCheck = () => {
-    try {
-      const bd = document.querySelector('.settings-modal-backdrop');
-      if (bd && bd.getAttribute('data-state') === 'closing') {
-        console.log('[MODAL-STUCK] closing state visible, still mounted');
-        try { ipcRenderer.send('dsh:diag', { modalStuck: true }); } catch {}
-      }
-    } catch {}
-  };
-  const stuckTimer = window.setInterval(modalStuckCheck, 1500);
-  window.addEventListener('beforeunload', () => window.clearInterval(stuckTimer), { once: true });
-} catch {}
-
 // ===== v1.29.0 Wails 拖拽 polyfill（Electron 适配）=====
 // 官方 v1.29.0 把所有拖拽区从 Electron 的 -webkit-app-region 换成了 Wails 专属的
 // --wails-draggable: drag 自定义属性（Wails runtime 识别）；我们 Electron 没有 Wails
@@ -224,6 +186,16 @@ try {
    浮在 modal 之上，可能与"设置栏关不掉"有关，先撤销嫌疑。 */
 .windows-window-controls {
   z-index: 100;
+}
+/* 扩大 modal 关闭按钮（X）的点击热区：官方按钮本体很小（lucide X 15px），
+   ::after 透明扩展 10px，点击扩展区同样触发按钮 onClick（事件冒泡到按钮） */
+.modal-close-button {
+  position: relative;
+}
+.modal-close-button::after {
+  content: '';
+  position: absolute;
+  inset: -10px;
 }
 `;
       document.head.appendChild(style);
@@ -1661,35 +1633,11 @@ const appImpl = {
     try {
       const norm = (style === 'workbench' || style === 'creation') ? style : 'classic';
       localStorage.setItem('dsh:layout-style', norm);
-      // 布局切换防抖：通知主进程记录时间戳（500ms 内忽略幽灵 minimize 点击）
-      try { ipcRenderer.send('layout:switched'); } catch {}
-      // 诊断：切换前快照 DOM 指纹（统计可疑元素计数），切换后 1.8s 对比增量
-      const domFingerprint = () => {
-        try {
-          const counts = {};
-          document.querySelectorAll('img, svg, [class*="logo"], [class*="brand"], [class*="head"], [class*="title"], [class*="row"], [class*="section"], [class*="tab"], [class*="topic"], [class*="welcome"], [class*="sidebar"], [class*="chat"], [class*="header"]').forEach((el) => {
-            let c;
-            if (el.tagName === 'IMG') c = 'IMG:' + (el.getAttribute('src') || '').split('/').pop();
-            else if (el.tagName === 'SVG') c = 'SVG:' + (el.className && el.className.baseVal !== undefined ? String(el.className.baseVal) : String(el.className || ''));
-            else c = el.tagName + ':' + (typeof el.className === 'string' ? el.className : (el.className && el.className.baseVal !== undefined ? String(el.className.baseVal) : ''));
-            if (!c) return;
-            counts[c] = (counts[c] || 0) + 1;
-          });
-          return counts;
-        } catch { return {}; }
-      };
-      const before = domFingerprint();
+      // 清理侧栏渲染层残留：DOM 干净但切换布局后侧栏顶部 logo 区域出现视觉叠影
+      // （workbench↔classic 的 sidebar__head↔sidebar__brand 结构切换，Chromium 合成层
+      //   缓存残留；body 级抖动清不掉，需 sidebar 自身重建合成层）
       setTimeout(() => {
         try {
-          const after = domFingerprint();
-          const added = {}, removed = {};
-          for (const k in after) if ((after[k] || 0) > (before[k] || 0)) added[k] = after[k] - (before[k] || 0);
-          for (const k in before) if ((before[k] || 0) > (after[k] || 0)) removed[k] = before[k] - (after[k] || 0);
-          console.log('[LAYOUT-DIFF] added=' + JSON.stringify(added) + ' removed=' + JSON.stringify(removed));
-          try { ipcRenderer.send('dsh:diag', { added, removed }); } catch {}
-          // 清理侧栏渲染层残留：DOM 干净但切换布局后侧栏顶部 logo 区域出现视觉叠影
-          // （workbench↔classic 的 sidebar__head↔sidebar__brand 结构切换，Chromium 合成层
-          //   缓存残留；body 级抖动清不掉，需 sidebar 自身重建合成层）
           try {
             const aside = document.querySelector('aside.sidebar');
             if (aside) {
@@ -1697,7 +1645,6 @@ const appImpl = {
               aside.style.display = 'none';
               void aside.offsetHeight; // 强制重排，破坏旧合成层
               aside.style.display = prev || '';
-              console.log('[LAYOUT] sidebar repaint done');
             }
           } catch {}
           // 窗口级兜底：resize 1px 微抖强制整窗重绘（无闪烁，比 hide/show 温和）
