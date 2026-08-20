@@ -12,6 +12,7 @@ type dshSession struct {
 	Running     bool           `json:"running"`
 	AgentPreset string         `json:"agentPreset"`
 	UpdatedAt   any            `json:"updatedAt"`
+	CreatedAt   any            `json:"createdAt"`
 	Projections map[string]any `json:"projections"`
 }
 
