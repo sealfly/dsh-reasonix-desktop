@@ -24,6 +24,35 @@ Reasonix 前端（v1.29.0）**本来就是为 Wails 写的**，依赖三个 Wail
 | 主题锁浅色 | `GetThemeExperience` 返回 `{}` → auto | Go 返回 themeMode=dark |
 | sync 崩溃 | `bot: {}` → 读 qq.enabled 崩 | mockBotSettings 完整结构 |
 
+## 为什么 Wails 不会有这些问题（原理）
+
+### 1. 叠影（最核心）
+
+| | Electron（出问题） | Wails（没问题） |
+|---|---|---|
+| 前端标记 | `--wails-draggable: drag` | 同一个标记 |
+| 谁处理 | 不认这个属性 → polyfill 成 `-webkit-app-region: drag` | Wails runtime（Go 层）**原生识别** |
+| 底层机制 | `-webkit-app-region` 让 Chromium 把拖拽区放进**独立合成层** | 调 **OS 原生 API**（Windows `WM_NCHITTEST`）做窗口拖动 |
+| 布局热切换 | 合成层没同步释放 → 旧帧（logo）**残留屏幕上** | sidebar 是普通 DOM，React 更新**不经过合成层** |
+
+**一句话**：叠影的根子是「Electron 用渲染层的合成器去模拟本该由操作系统做的事」。Wails 直接交给操作系统，渲染层根本不知道"拖拽"，自然无残留。之前 Electron 版试过 body 抖动/hide-show/zoom/opacity/禁用 GPU 全无效——因为都在"清渲染残留"的错误方向打转；真正的解法是**别让拖拽经过渲染层**。
+
+### 2. 拖拽失效
+
+Electron 要手工 polyfill，旧 polyfill 只映射 `.topbar`/`.app-chrome`，**漏了 workbench 布局**的 `sidebar`/`topicbar`/`dock_tools`，换布局就拖不动。Wails 的前端 `--wails-draggable` 标记**天然全区域生效**，无需映射。
+
+### 3. 桥占位崩溃
+
+Electron 手工 JS 对象模拟 `window.go.main.App`，`CapabilityDiagnostics`/`bot` 返回 `{}` → 前端读 `report.summary.errors`/`bot.qq.enabled` → undefined 崩溃。Wails 的 `window.go.main.App` 由 **Wails 自动生成**，直接绑定 Go 强类型方法；缺方法或签名不匹配**编译期就报错**（`not a function` 就是这个过程），不会留到运行时才炸。
+
+### 4. 主题锁浅色
+
+同类问题：`GetThemeExperience` 返回 `{}` → 前端 normalize 成 auto → 移除 data-theme → 浅色。Wails 版 Go 返回精确的 `ThemeExperienceView` 结构（JSON tag 保证字段名），序列化后前端永远能读到字段。
+
+### 结论
+
+> **不是"Wails 比 Electron 好"，而是"这套前端代码是给 Wails 的机器写的，我们之前硬把它塞进 Electron 的机器，接口对不上，就用手工补丁糊接口，糊不全就漏"**。迁回 Wails，接口天然对得上，所有补丁（拖拽 polyfill、方法占位、结构兜底）全部删除，问题随根因一起消失。方向从一开始就反了——Wails 才是这套前端的原生宿主。
+
 ## 两个项目的关系
 
 | 项目 | 路径 | 角色 |
@@ -55,6 +84,14 @@ go test ./...
 2. **一切适配走 Go 桥**：App 方法转 DSH RPC。
 3. **不限制 DSH 原生能力**：dsh.go 通用 RPC 透传，不设方法白名单。
 4. **失败留痕兜底不崩溃**：关键方法返回完整结构（有单元测试防回归）。
+
+## 关于「前端 UI 是否会限制 DSH 能力」的诚实边界
+
+**桥层不限制**：`dsh.go` 的 `RPC(method, payload)` 是通用透传，任意 DSH 方法（含插件动态注册的）都能调，不设白名单。这是架构上的保证。
+
+**但前端 UI 自身有功能边界**：Reasonix 前端的 bridge 只定义了约 340 个方法（会话/模型/项目树/设置/终端/历史等），对应 DSH 的核心能力。DSH 有而前端 UI 没有 GUI 入口的能力（如 `host.*` 底层文件操作、`credentials.*` 凭据管理、插件动态注册的方法），用户**无法通过这个 GUI 直接触发**。
+
+这不是"阉割" DSH，而是"GUI 功能边界"——Reasonix 前端本来就是为 AI 编程助手设计的，DSH 也是同类后端，两者核心能力高度重合；重合之外的能力（尤其插件动态方法）仍可通过 DSH 的 API/CLI 访问，只是这个特定 UI 没提供按钮。若要扩展，需改前端 dist 加界面（会破坏"零改动"原则）。
 
 ## 剩余可选工作（不影响核心目标）
 
