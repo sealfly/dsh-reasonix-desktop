@@ -181,21 +181,18 @@ try {
 .onboarding input {
   -webkit-app-region: no-drag;
 }
+/* 窗口控制按钮（最小化/最大化/关闭）强制 no-drag：.app-chrome 被映射为 drag 后，
+   Electron 的 drag 命中可能吞掉与它重叠的 controls 点击（日志显示点击未到达主进程），
+   显式 no-drag 保证可点 */
+.windows-window-controls,
+.windows-window-controls * {
+  -webkit-app-region: no-drag;
+}
 /* 窗口控制按钮恢复官方 z-index（--z-dock:100）：modal 打开时窗口 X 被遮罩盖住是
    官方 v1.29.0 的模态设计（modal 用自身的 X 关闭）。此前提升到 1400 导致窗口 X
    浮在 modal 之上，可能与"设置栏关不掉"有关，先撤销嫌疑。 */
 .windows-window-controls {
   z-index: 100;
-}
-/* 扩大 modal 关闭按钮（X）的点击热区：官方按钮本体很小（lucide X 15px），
-   ::after 透明扩展 10px，点击扩展区同样触发按钮 onClick（事件冒泡到按钮） */
-.modal-close-button {
-  position: relative;
-}
-.modal-close-button::after {
-  content: '';
-  position: absolute;
-  inset: -10px;
 }
 `;
       document.head.appendChild(style);
@@ -208,6 +205,72 @@ try {
     applyDragPolyfill();
   }
   // 布局热切换后重建 DOM 的容器不变，CSS 类规则持续生效，无需重注入
+} catch {}
+
+// 侧栏渲染残留清理（设置面板关闭时）：
+// 布局样式是在设置面板里切换的。切换后 800ms 的 sidebar 抖动在 modal 开着时执行
+// （modal 半透明遮罩盖住侧栏，抖动清的是当时的合成层）；用户关闭设置面板后，
+// 侧栏区域重新合成，残留又出现。所以监听 settings-modal 卸载，关闭后再清一次。
+try {
+  // 扩大 modal 关闭按钮（X）热区：事件委托（按钮本体小，官方 lucide X 15px；
+  //   用户反馈"难按、在 x 下方才按得到"）。用 getBoundingClientRect + 16px 扩展，
+  //   点击扩展区（按钮本体外）时手动触发按钮 click（React onClick 在冒泡阶段接收）。
+  document.addEventListener('click', (e) => {
+    try {
+      if (!e.isTrusted) return;
+      const x = e.clientX, y = e.clientY;
+      const buttons = document.querySelectorAll('.modal-close-button');
+      for (const btn of buttons) {
+        if (btn.disabled) continue;
+        const r = btn.getBoundingClientRect();
+        if (!r.width && !r.height) continue;
+        const pad = 16;
+        const inZone = x >= r.left - pad && x <= r.right + pad && y >= r.top - pad && y <= r.bottom + pad;
+        if (!inZone) continue;
+        const onBody = x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+        if (!onBody) {
+          // 扩展区（非本体）点击：手动触发一次；本体点击由浏览器自然触发，避免重复
+          btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+        }
+      }
+    } catch {}
+  }, true);
+  const clearSidebarResidual = () => {
+    setTimeout(() => {
+      try {
+        const aside = document.querySelector('aside.sidebar');
+        if (aside) {
+          const prev = aside.style.display;
+          aside.style.display = 'none';
+          void aside.offsetHeight; // 强制重排，破坏旧合成层
+          aside.style.display = prev || '';
+        }
+      } catch {}
+      try { ipcRenderer.send('win:repaint'); } catch {}
+    }, 300);
+  };
+  const observeModalClose = () => {
+    try {
+      const mo = new MutationObserver((muts) => {
+        for (const m of muts) {
+          for (const n of m.removedNodes) {
+            if (n.nodeType !== 1) continue;
+            if ((n.classList && (n.classList.contains('settings-modal-backdrop') || n.classList.contains('management-modal-backdrop'))) ||
+                (n.querySelector && n.querySelector('.settings-modal-backdrop, .management-modal-backdrop'))) {
+              clearSidebarResidual();
+              return;
+            }
+          }
+        }
+      });
+      mo.observe(document.body, { childList: true, subtree: true });
+    } catch {}
+  };
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', observeModalClose, { once: true });
+  } else {
+    observeModalClose();
+  }
 } catch {}
 
 // ---------- 费用计算（价格外置 prices.json，可编辑/可抓取更新） ----------

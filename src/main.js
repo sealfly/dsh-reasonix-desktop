@@ -393,14 +393,26 @@ app.whenReady().then(async () => {
   win.webContents.on('page-title-updated', (e) => e.preventDefault());
   win.webContents.on('did-finish-load', () => { if (win && !win.isDestroyed()) win.setTitle('DSH-ReasonixUI'); });
 
-  // 布局切换后的窗口级重绘：resize 1px 微抖强制整窗重绘（无闪烁），
-  // 清理侧栏顶部 logo 区域的合成层残留（DOM 干净、无窗口操作时的纯视觉叠影）
+  // 布局切换后的窗口级重绘：清理侧栏顶部 logo 区域的合成层残留（DOM 干净、
+  // 无窗口操作时的纯视觉叠影；归因见 AUDIT.md —— Electron 下 Chromium 合成层
+  // 在热切换时未释放 GPU 层）。三层由轻到重：
+  //   1) zoom 微抖（+0.001）强制整页重新光栅化、重建所有合成层（最强非闪烁手段）
+  //   2) opacity 微调（0.99→1）强制 DWM 重新合成整窗
+  //   3) 保留调用方（preload）先做的 sidebar display 抖动
   ipcMain.on('win:repaint', () => {
     try {
       if (!win || win.isDestroyed() || win.isMinimized() || !win.isVisible()) return;
-      const [w, h] = win.getSize();
-      win.setSize(w + 1, h, false);
-      setTimeout(() => { try { if (!win.isDestroyed()) win.setSize(w, h, false); } catch {} }, 30);
+      const wc = win.webContents;
+      const cur = wc.getZoomFactor();
+      wc.setZoomFactor(cur + 0.001); // 微调触发重光栅化（几乎不可见）
+      win.setOpacity(0.99);          // 同时强制 DWM 重新合成
+      setTimeout(() => {
+        try {
+          if (win.isDestroyed()) return;
+          wc.setZoomFactor(cur);     // 恢复用户缩放
+          win.setOpacity(1);
+        } catch {}
+      }, 50);
     } catch {}
   });
   // 窗口控制（前端 bridge 调用 MinimiseMainWindow 等 → 这里执行）
