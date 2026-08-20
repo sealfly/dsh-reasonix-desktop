@@ -19,25 +19,23 @@ try {
   Object.defineProperty(navigator, 'languages', { get: () => [navLang, 'zh-CN', 'en'], configurable: true });
 } catch (e) { console.warn('[dsh] language override failed:', e && e.message || e); }
 
-// 默认外观：深色（前端 initTheme 读 localStorage('reasonix-theme')；用户设置页切换主题时
-// 由 SetDesktopAppearance 持久化到这里，下次启动保持用户选择）。
-// 注意：preload 顶层 document 未就绪时 localStorage.setItem 会失败（读取正常），
-// 所以延迟到 DOMContentLoaded 后写；前端 initTheme 在模块加载时执行，当前会话用默认值，
-// 写入后从下次启动开始保持深色。
+// 默认外观：深色。主题持久化用我们自己的键 dsh:theme / dsh:theme-style。
+// 原因（归因见 AUDIT.md）：v1.29.0 前端改用 DesktopStartupSettings().desktopTheme 作为
+// 主题来源，并会在启动 sync 时 MigrateDesktopPreferences + clearLegacyThemePreference()
+// 清除旧的 localStorage('reasonix-theme') 键。若桥继续读写 reasonix-theme，会与前端
+// 的 clear 逻辑打架，导致主题被锁成浅色。所以统一走 dsh:theme（前端不会碰）。
 function applyDefaultAppearance() {
-  try { if (!localStorage.getItem('reasonix-theme')) localStorage.setItem('reasonix-theme', 'dark'); } catch {}
+  try { if (!localStorage.getItem('dsh:theme')) localStorage.setItem('dsh:theme', 'dark'); } catch {}
 }
 if (typeof document !== 'undefined' && document.readyState !== 'loading') applyDefaultAppearance();
 else if (typeof document !== 'undefined') document.addEventListener('DOMContentLoaded', applyDefaultAppearance);
 else applyDefaultAppearance();
-// 主题持久化兜底：前端设置页点明暗模式只改 data-theme 属性（前端 E 应用），
-// SetDesktopAppearance 走延迟提交队列可能不触发；这里监听 data-theme 变化同步写 localStorage。
-// 注意：preload 顶层 document.documentElement 可能尚未解析（null），observe 会抛错，
-// 所以延迟到 DOMContentLoaded 后注册。
+// 主题持久化兜底：前端设置页点明暗模式只改 data-theme 属性时，同步写 dsh:theme。
+// auto 模式下 data-theme 被移除（getAttribute 返回 null），不会把 auto 锁成 light/dark。
 const watchTheme = () => {
   try {
     const t = document.documentElement.getAttribute('data-theme');
-    if (t && (t === 'light' || t === 'dark')) localStorage.setItem('reasonix-theme', t);
+    if (t && (t === 'light' || t === 'dark')) localStorage.setItem('dsh:theme', t);
   } catch {}
 };
 function registerThemeObserver() {
@@ -1722,7 +1720,21 @@ const appImpl = {
   SetDesktopTerminalTheme: async () => {},
   SetDesktopUpdateChannel: async () => {},
   SetTrayLocale: async () => {},
-  MigrateDesktopPreferences: async () => {},
+  MigrateDesktopPreferences: async (legacyLanguage, theme, style) => {
+    // 主题迁移：v1.29.0 前端把 legacy localStorage('reasonix-theme') 读出来，调这里
+    // 迁移到新持久化位置后 clearLegacyThemePreference() 清除旧键。我们把迁移目标定为
+    // 自己的 dsh:theme 键。仅当 dsh:theme 尚未存在时才写入（applyDefaultAppearance 已
+    // 先写默认 'dark'，避免被污染过的 legacy 'light' 覆盖用户默认暗色）。
+    try {
+      if (!localStorage.getItem('dsh:theme') && theme && (theme === 'light' || theme === 'dark' || theme === 'auto')) {
+        localStorage.setItem('dsh:theme', theme);
+      }
+      if (!localStorage.getItem('dsh:theme-style') && style && typeof style === 'string' && style !== '') {
+        localStorage.setItem('dsh:theme-style', style);
+      }
+      return { ok: true };
+    } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  },
   ReportDesktopWebViewReady: async () => {},
   RestartApplication: async () => {},
   StorageSettings: async () => ({}),
@@ -2012,8 +2024,8 @@ const appImpl = {
     bot: mockBotSettings(),
     desktopLanguage: startupSetting('dsh:language', 'zh'),
     desktopLayoutStyle: startupSetting('dsh:layout-style', 'workbench'),
-    desktopTheme: startupSetting('reasonix-theme', 'dark'),
-    desktopThemeStyle: startupSetting('reasonix-theme-style', startupSetting('reasonix-theme', 'dark')),
+    desktopTheme: startupSetting('dsh:theme', 'dark'),
+    desktopThemeStyle: startupSetting('dsh:theme-style', startupSetting('dsh:theme', 'dark')),
     desktopTerminalTheme: 'dark',
     displayMode: 'full',
     reasoningDisplayMode: startupSetting('dsh:reasoning-mode', 'auto'),
@@ -2035,11 +2047,11 @@ const appImpl = {
     configPath: '',
   }),
   SetDesktopAppearance: async (mode, style) => {
-    // 外观（明/暗/自动 + 风格）持久化：前端 initTheme 启动时读 localStorage('reasonix-theme')
+    // 外观（明/暗/自动 + 风格）持久化到 dsh:theme（v1.29.0 前端会清除 legacy reasonix-theme 键）
     try {
       const norm = (mode === 'auto' || mode === 'light' || mode === 'dark') ? mode : 'dark';
-      localStorage.setItem('reasonix-theme', norm);
-      if (style !== undefined && style !== null && style !== '') localStorage.setItem('reasonix-theme-style', String(style));
+      localStorage.setItem('dsh:theme', norm);
+      if (style !== undefined && style !== null && style !== '') localStorage.setItem('dsh:theme-style', String(style));
       return { ok: true };
     } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
   },
