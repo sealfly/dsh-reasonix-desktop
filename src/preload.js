@@ -87,6 +87,23 @@ function preferredCurrency() {
   if (c === 'CNY' || c === 'USD') return c;
   return startupSetting('dsh:language', 'zh') === 'en' ? 'USD' : 'CNY';
 }
+// bot 安全结构：前端 sidebarImQQAdded 读 bot.qq.enabled、allowlist 等；
+// 此前 bot:{} 导致 undefined.enabled 崩溃（desktop preferences sync failed）
+function mockBotSettings() {
+  return {
+    enabled: false, model: '', toolApprovalMode: 'ask', maxSteps: 0, debounceMs: 1500,
+    queueMode: 'steer', queueCap: 20, queueDrop: 'summarize', ignoreSelfMessages: true,
+    selfUserIds: { qq: [], feishu: [], weixin: [] },
+    control: { enabled: false, addr: '127.0.0.1:37913', tokenEnv: 'REASONIX_BOT_CONTROL_TOKEN' },
+    pairing: { enabled: true, requestTtlMinutes: 60, maxPendingPerPlatform: 3 },
+    routes: [],
+    allowlist: { enabled: true, allowAll: false, qqUsers: [], feishuUsers: [], weixinUsers: [], qqApprovers: [], feishuApprovers: [], weixinApprovers: [], qqAdmins: [], feishuAdmins: [], weixinAdmins: [], qqGroups: [], feishuGroups: [], weixinGroups: [] },
+    qq: { enabled: false, appId: '', appSecretEnv: 'QQ_BOT_APP_SECRET', secretSet: false, sandbox: false, model: '', toolApprovalMode: 'ask', workspaceRoot: '', access: { enabled: true, allowAll: false, pairingEnabled: true, users: [], groups: [], approvers: [], admins: [] } },
+    feishu: { enabled: false, domain: 'feishu', appId: '', appSecretEnv: 'FEISHU_BOT_APP_SECRET', secretSet: false, verificationToken: '', mode: 'webhook', webhookPort: 8080, requireMention: true },
+    weixin: { enabled: false, accountId: 'default', tokenEnv: 'WEIXIN_BOT_TOKEN', tokenSet: false, apiBase: 'https://ilinkai.weixin.qq.com' },
+    connections: [],
+  };
+}
 
 // ---------- 事件通道（window.runtime.EventsOn） ----------
 const eventChannels = new Map(); // channel -> Set<cb>
@@ -113,19 +130,42 @@ ipcRenderer.on('dsh:event', (_e, wire) => {
 ipcRenderer.on('term:output', (_e, ev) => { try { if (ev && ev.id && typeof ev.data === 'string') eventsEmit('terminal:output', ev); } catch {} });
 ipcRenderer.on('term:exit', (_e, ev) => { try { if (ev && ev.id && typeof ev.exitCode === 'number') eventsEmit('terminal:exit', ev); } catch {} });
 
-// 诊断：监听最小化按钮的 click（isTrusted=false = 程序化触发，非真实用户点击）
+// 诊断：设置面板（settings-modal）关闭行为追踪
+// 1) 点 modal 的 X 时记录：isTrusted（是否真实点击）+ elementFromPoint（该点顶层元素，
+//    排查是否有元素盖住 X）+ modal 当前 data-state
+// 2) MutationObserver：modal 若进入 closing 后 1.5s 仍未卸载（onClose 没生效）→ 记录
 try {
   document.addEventListener('click', (e) => {
     try {
       const t = e.target;
       if (!t || !t.closest) return;
-      if (t.closest('.windows-window-control--minimize')) {
-        const info = { trusted: e.isTrusted, tag: t.tagName, at: Date.now() };
-        console.log('[CLICK-DIAG] minimize click:', JSON.stringify(info));
-        try { ipcRenderer.send('dsh:diag', { minimizeClick: info }); } catch {}
+      const modalX = t.closest('.settings-modal .modal-close-button, .management-modal .modal-close-button');
+      if (modalX) {
+        let top = null;
+        try {
+          const r = modalX.getBoundingClientRect();
+          const el = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+          top = el ? String(el.className && el.className.baseVal !== undefined ? el.className.baseVal : el.className || el.tagName) : 'null';
+        } catch {}
+        const backdrop = document.querySelector('.settings-modal-backdrop');
+        const info = { trusted: e.isTrusted, top, state: backdrop ? backdrop.getAttribute('data-state') : 'no-backdrop' };
+        console.log('[MODAL-X-DIAG]', JSON.stringify(info));
+        try { ipcRenderer.send('dsh:diag', { modalX: info }); } catch {}
       }
     } catch {}
   }, true);
+  // closing 卡住检测
+  const modalStuckCheck = () => {
+    try {
+      const bd = document.querySelector('.settings-modal-backdrop');
+      if (bd && bd.getAttribute('data-state') === 'closing') {
+        console.log('[MODAL-STUCK] closing state visible, still mounted');
+        try { ipcRenderer.send('dsh:diag', { modalStuck: true }); } catch {}
+      }
+    } catch {}
+  };
+  const stuckTimer = window.setInterval(modalStuckCheck, 1500);
+  window.addEventListener('beforeunload', () => window.clearInterval(stuckTimer), { once: true });
 } catch {}
 
 // ===== v1.29.0 Wails 拖拽 polyfill（Electron 适配）=====
@@ -179,11 +219,11 @@ try {
 .onboarding input {
   -webkit-app-region: no-drag;
 }
-/* 窗口控制按钮（最小化/最大化/关闭）永远在最高层：官方 --z-dock:100 低于
-   modal(--z-modal:1200)，设置面板打开时右上角 X 被遮罩盖住点不到；
-   Electron 桌面习惯是随时能关窗口，提到 modal 之上 */
+/* 窗口控制按钮恢复官方 z-index（--z-dock:100）：modal 打开时窗口 X 被遮罩盖住是
+   官方 v1.29.0 的模态设计（modal 用自身的 X 关闭）。此前提升到 1400 导致窗口 X
+   浮在 modal 之上，可能与"设置栏关不掉"有关，先撤销嫌疑。 */
 .windows-window-controls {
-  z-index: 1400;
+  z-index: 100;
 }
 `;
       document.head.appendChild(style);
@@ -1435,6 +1475,8 @@ const appImpl = {
   ApproveTab: async () => ({ ok: false, reason: 'unsupported' }),
   AnswerQuestion: async () => {},
 
+  // ===== 设置（Settings / DesktopStartupSettings） =====
+  // bot 结构见顶层 mockBotSettings()（安全结构，避免前端读 undefined.enabled 崩溃）
   Settings: async () => ({
     providers: [], defaultModel: 'deepseek-v4-flash', plannerModel: 'deepseek-v4-flash',
     subagentModel: 'deepseek-v4-flash', subagentEffort: 'auto', maxSubagentDepth: 3,
@@ -1444,6 +1486,7 @@ const appImpl = {
     desktopCurrency: startupSetting('dsh:currency', ''),
     reasoningDisplayMode: startupSetting('dsh:reasoning-mode', 'auto'),
     reasoningDisplayModeExplicit: !!startupSetting('dsh:reasoning-mode', ''),
+    bot: mockBotSettings(),
   }),
   HooksSettings: async () => ({ hooks: [] }),
   SaveHooksSettings: async () => {},
@@ -1956,7 +1999,7 @@ const appImpl = {
 
   // ===== 设置/杂项（回退 mock 用） =====
   DesktopStartupSettings: async () => ({
-    bot: {},
+    bot: mockBotSettings(),
     desktopLanguage: startupSetting('dsh:language', 'zh'),
     desktopLayoutStyle: startupSetting('dsh:layout-style', 'workbench'),
     desktopTheme: startupSetting('reasonix-theme', 'dark'),
@@ -2237,8 +2280,56 @@ const appImpl = {
   DisconnectBot: async () => {},
   BotInstallStart: async () => ({}),
   BotInstallPoll: async () => ({}),
-  CapabilityDiagnostics: async () => ({}),
-  RuntimeDoctor: async () => ({}),
+  // 能力诊断（设置面板"诊断"页）：返回完整结构避免前端崩溃
+  // （此前返回 {} 导致 DiagnosticsSettingsPage 读 report.summary.errors 崩溃，
+  //   React 崩溃后设置面板关闭按钮失效 → "像钉子一样关不掉"）
+  CapabilityDiagnostics: async (includeSessionRuntime) => {
+    const empty = () => ({
+      schema_version: 1, root: '', live: false,
+      summary: { errors: 0, warnings: 0, infos: 0, instructions: 0, skills: 0, commands: 0, hooks: 0, plugins: 0, mcp_servers: 0 },
+      instructions: { docs: [] },
+      skills: { roots: [], entries: [], winners: 0, shadowed: 0 },
+      commands: { roots: [], entries: [], winners: 0, shadowed: 0 },
+      hooks: { trusted_project: true, project_defines_hooks: false, sources: [], entries: [] },
+      plugins: { packages: [] },
+      mcp: { servers: [] },
+      issues: [],
+    });
+    try {
+      let cat = null;
+      try { cat = await ipcRenderer.invoke('dsh:catalog'); } catch {}
+      const methods = (cat && cat.methods) || [];
+      const count = (prefix) => methods.filter((m) => typeof m === 'string' && m.startsWith(prefix)).length;
+      const skills = count('skill.');
+      const plugins = count('plugin.');
+      const mcp = count('mcp.');
+      return {
+        schema_version: 1,
+        root: 'C:\\',
+        live: true,
+        summary: { errors: 0, warnings: 0, infos: includeSessionRuntime ? 1 : 0, instructions: 0, skills, commands: 0, hooks: 0, plugins, mcp_servers: mcp },
+        instructions: { docs: [] },
+        skills: { roots: [], entries: [], winners: 0, shadowed: 0 },
+        commands: { roots: [], entries: [], winners: 0, shadowed: 0 },
+        hooks: { trusted_project: true, project_defines_hooks: false, sources: [], entries: [] },
+        plugins: { packages: [] },
+        mcp: { servers: [] },
+        issues: includeSessionRuntime
+          ? [{ severity: 'info', code: 'bridge.runtime', subsystem: 'runtime', name: 'bridge', message: 'Electron bridge + DSH backend (port 3080)', remediation: '', settings_tab: 'general' }]
+          : [],
+      };
+    } catch (e) {
+      const r = empty();
+      r.issues = [{ severity: 'warning', code: 'bridge.catalog_failed', subsystem: 'runtime', name: 'catalog', message: String(e && e.message || e), remediation: '', settings_tab: 'general' }];
+      r.summary.warnings = 1;
+      return r;
+    }
+  },
+  RuntimeDoctor: async () => ({
+    text: 'runtime: bridge ok (electron main + preload)\nbackend: dsh http://127.0.0.1:3080\nrecoverability: clean=true irreversible=false\n',
+    publishedGeneration: 0, allowResume: true, cleanRollback: true, hasIrreversible: false,
+    noOpRebuilds: 0, fullRebuilds: 0, subgraphRebuilds: 0, staleDrops: 0, admissionRejected: 0, runtimeOwnerFallbacks: 0,
+  }),
   RevealPath: async () => {},
   OpenLocalPath: async () => {},
   SetZoomFactor: async () => {},
