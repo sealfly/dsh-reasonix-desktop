@@ -7,6 +7,11 @@ const os = require('os');
 const { spawn, execSync } = require('child_process');
 const { DshClient } = require('./dsh-client');
 
+// 禁用 GPU 加速：清理布局热切换时的侧栏 logo 叠影（归因见 AUDIT.md —— Chromium
+// GPU 合成层在 frameless 窗口热切换时未释放旧纹理，导致"重复打印 logo"）。
+// CPU 软渲染彻底消除合成层残留；本应用以文本/图标 UI 为主，软渲染性能足够。
+app.disableHardwareAcceleration();
+
 // 设置干净的 app 名称：package.json 的 name 含括号（dsh-(reasonix)UI-desktop），
 // 会导致 userData 目录名含括号（%APPDATA%\dsh-(reasonix)UI-desktop），
 // 这里显式设置一个干净名称，并把 userData 收进应用目录（绿色便携，不污染 %APPDATA%）。
@@ -401,13 +406,22 @@ app.whenReady().then(async () => {
           try {
             let startup = null;
             try { startup = await window.go.main.App.DesktopStartupSettings(); } catch (e) { startup = { err: String(e && e.message || e) }; }
+            // 定位所有 logo 元素（侧栏/欢迎页/顶栏），看是否有叠影（重复可见 logo）
+            const logos = [];
+            document.querySelectorAll('img[class*="logo"], img[src*="logo"], [class*="brand-logo"]').forEach((el) => {
+              const r = el.getBoundingClientRect();
+              const vis = r.width > 0 && r.height > 0;
+              const st = window.getComputedStyle(el);
+              logos.push({ cls: String(el.className || el.tagName), src: (el.getAttribute('src')||'').split('/').pop(), x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height), vis, display: st.display, opacity: st.opacity });
+            });
+            const welcomes = document.querySelectorAll('.welcome__brand-logo, .welcome').length;
             return {
               dshTheme: localStorage.getItem('dsh:theme'),
-              reasonixTheme: localStorage.getItem('reasonix-theme'),
               dataTheme: document.documentElement.getAttribute('data-theme'),
-              dataThemeStyle: document.documentElement.getAttribute('data-theme-style'),
               startupDesktopTheme: startup && startup.desktopTheme,
-              startupDesktopThemeStyle: startup && startup.desktopThemeStyle,
+              logoCount: logos.length,
+              logos: logos,
+              welcomeCount: welcomes,
             };
           } catch (e) { return { error: String(e && e.message || e) }; }
         })()`).then((r) => console.log('[THEME-DIAG]', JSON.stringify(r))).catch((e) => console.log('[THEME-DIAG] failed', e && e.message));
@@ -426,6 +440,7 @@ app.whenReady().then(async () => {
       if (!win || win.isDestroyed() || win.isMinimized() || !win.isVisible()) return;
       const wc = win.webContents;
       const cur = wc.getZoomFactor();
+      console.log('[REPAINT] triggered, zoom=' + cur);
       wc.setZoomFactor(cur + 0.001); // 微调触发重光栅化（几乎不可见）
       win.setOpacity(0.99);          // 同时强制 DWM 重新合成
       setTimeout(() => {
@@ -436,6 +451,10 @@ app.whenReady().then(async () => {
         } catch {}
       }, 50);
     } catch {}
+  });
+  // 渲染进程诊断通道（preload 的 console.log 不进主进程 stdout，经这里转发）
+  ipcMain.on('dsh:diag', (_e, diag) => {
+    console.log('[DIAG]', JSON.stringify(diag));
   });
   // 窗口控制（前端 bridge 调用 MinimiseMainWindow 等 → 这里执行）
   ipcMain.on('win:min', () => {

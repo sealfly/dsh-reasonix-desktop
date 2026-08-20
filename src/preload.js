@@ -202,6 +202,13 @@ try {
 .windows-window-controls {
   z-index: 100;
 }
+/* 扩大 modal 关闭按钮（X）点击热区：官方 width/height 只有 30px（--button-icon-size）、
+   padding:0，lucide X 图标 15px，用户反馈"难按、范围比按键小"。直接放大到 40px
+   标准可点击目标（图标居中，四周留 12.5px），visual 略大但 modal 头部空间充足 */
+.modal-close-button {
+  width: 40px;
+  height: 40px;
+}
 `;
       document.head.appendChild(style);
       return true;
@@ -220,29 +227,6 @@ try {
 // （modal 半透明遮罩盖住侧栏，抖动清的是当时的合成层）；用户关闭设置面板后，
 // 侧栏区域重新合成，残留又出现。所以监听 settings-modal 卸载，关闭后再清一次。
 try {
-  // 扩大 modal 关闭按钮（X）热区：事件委托（按钮本体小，官方 lucide X 15px；
-  //   用户反馈"难按、在 x 下方才按得到"）。用 getBoundingClientRect + 16px 扩展，
-  //   点击扩展区（按钮本体外）时手动触发按钮 click（React onClick 在冒泡阶段接收）。
-  document.addEventListener('click', (e) => {
-    try {
-      if (!e.isTrusted) return;
-      const x = e.clientX, y = e.clientY;
-      const buttons = document.querySelectorAll('.modal-close-button');
-      for (const btn of buttons) {
-        if (btn.disabled) continue;
-        const r = btn.getBoundingClientRect();
-        if (!r.width && !r.height) continue;
-        const pad = 16;
-        const inZone = x >= r.left - pad && x <= r.right + pad && y >= r.top - pad && y <= r.bottom + pad;
-        if (!inZone) continue;
-        const onBody = x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
-        if (!onBody) {
-          // 扩展区（非本体）点击：手动触发一次；本体点击由浏览器自然触发，避免重复
-          btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-        }
-      }
-    } catch {}
-  }, true);
   const clearSidebarResidual = () => {
     setTimeout(() => {
       try {
@@ -1720,21 +1704,25 @@ const appImpl = {
     try {
       const norm = (style === 'workbench' || style === 'creation') ? style : 'classic';
       localStorage.setItem('dsh:layout-style', norm);
+      try { ipcRenderer.send('dsh:diag', { layoutSwitch: norm, at: Date.now() }); } catch {}
       // 清理侧栏渲染层残留：DOM 干净但切换布局后侧栏顶部 logo 区域出现视觉叠影
       // （workbench↔classic 的 sidebar__head↔sidebar__brand 结构切换，Chromium 合成层
       //   缓存残留；body 级抖动清不掉，需 sidebar 自身重建合成层）
       setTimeout(() => {
         try {
+          let sidebarFound = false;
           try {
             const aside = document.querySelector('aside.sidebar');
             if (aside) {
+              sidebarFound = true;
               const prev = aside.style.display;
               aside.style.display = 'none';
               void aside.offsetHeight; // 强制重排，破坏旧合成层
               aside.style.display = prev || '';
             }
           } catch {}
-          // 窗口级兜底：resize 1px 微抖强制整窗重绘（无闪烁，比 hide/show 温和）
+          try { ipcRenderer.send('dsh:diag', { sidebarRepaint: sidebarFound, at: Date.now() }); } catch {}
+          // 窗口级兜底：zoom + opacity 微抖强制整窗重绘
           try { ipcRenderer.send('win:repaint'); } catch {}
         } catch {}
       }, 800);
