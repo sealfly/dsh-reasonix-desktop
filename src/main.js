@@ -391,7 +391,29 @@ app.whenReady().then(async () => {
   win.once('ready-to-show', () => { console.log('[WIN] ready-to-show'); win.show(); });
   // 固定窗口标题，防止 Reasonix 前端 <title>Reasonix</title> 覆盖
   win.webContents.on('page-title-updated', (e) => e.preventDefault());
-  win.webContents.on('did-finish-load', () => { if (win && !win.isDestroyed()) win.setTitle('DSH-ReasonixUI'); });
+  win.webContents.on('did-finish-load', () => {
+    if (win && !win.isDestroyed()) win.setTitle('DSH-ReasonixUI');
+    // 诊断：读渲染进程真实主题状态（preload 的 console.log 不进主进程 stdout，
+    // 这里用 executeJavaScript 直接读 localStorage + DOM 属性）
+    setTimeout(() => {
+      try {
+        win.webContents.executeJavaScript(`(async function(){
+          try {
+            let startup = null;
+            try { startup = await window.go.main.App.DesktopStartupSettings(); } catch (e) { startup = { err: String(e && e.message || e) }; }
+            return {
+              dshTheme: localStorage.getItem('dsh:theme'),
+              reasonixTheme: localStorage.getItem('reasonix-theme'),
+              dataTheme: document.documentElement.getAttribute('data-theme'),
+              dataThemeStyle: document.documentElement.getAttribute('data-theme-style'),
+              startupDesktopTheme: startup && startup.desktopTheme,
+              startupDesktopThemeStyle: startup && startup.desktopThemeStyle,
+            };
+          } catch (e) { return { error: String(e && e.message || e) }; }
+        })()`).then((r) => console.log('[THEME-DIAG]', JSON.stringify(r))).catch((e) => console.log('[THEME-DIAG] failed', e && e.message));
+      } catch (e) { console.log('[THEME-DIAG] exec failed', e && e.message); }
+    }, 3000);
+  });
 
   // 布局切换后的窗口级重绘：清理侧栏顶部 logo 区域的合成层残留（DOM 干净、
   // 无窗口操作时的纯视觉叠影；归因见 AUDIT.md —— Electron 下 Chromium 合成层

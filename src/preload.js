@@ -25,7 +25,17 @@ try {
 // 清除旧的 localStorage('reasonix-theme') 键。若桥继续读写 reasonix-theme，会与前端
 // 的 clear 逻辑打架，导致主题被锁成浅色。所以统一走 dsh:theme（前端不会碰）。
 function applyDefaultAppearance() {
-  try { if (!localStorage.getItem('dsh:theme')) localStorage.setItem('dsh:theme', 'dark'); } catch {}
+  try {
+    // 一次性：清除早期误迁移产生的 dsh:theme='auto'。当时 reasonix-theme-style 残留
+    // 使前端 readLegacyThemePreference 判定 hasValue=true，但 reasonix-theme 已为 null
+    // → theme 兜底成 'auto'，被旧的 Migrate 写进 dsh:theme，把界面锁成浅色。
+    // 用 dsh:theme-v2 标记只清一次，之后用户主动选 auto 不会被误清。
+    if (!localStorage.getItem('dsh:theme-v2')) {
+      if (localStorage.getItem('dsh:theme') === 'auto') localStorage.removeItem('dsh:theme');
+      localStorage.setItem('dsh:theme-v2', '1');
+    }
+    if (!localStorage.getItem('dsh:theme')) localStorage.setItem('dsh:theme', 'dark');
+  } catch {}
 }
 if (typeof document !== 'undefined' && document.readyState !== 'loading') applyDefaultAppearance();
 else if (typeof document !== 'undefined') document.addEventListener('DOMContentLoaded', applyDefaultAppearance);
@@ -1657,7 +1667,23 @@ const appImpl = {
 
   // ===== 主题/设置/远程/机器人（安全兜底结构） =====
   ListThemePacks: async () => [],
-  GetThemeExperience: async () => ({}),
+  // 主题体验（v1.29.0 统一主题机制）：前端 loadThemeExperience 优先调它，若返回 {} 会
+  // normalize 成 themeMode='auto' → applyTheme('auto') 移除 data-theme → 界面锁成浅色。
+  // 这里返回真实结构：themeMode 读 dsh:theme（默认 dark），baseStyle 读 dsh:theme-style。
+  GetThemeExperience: async () => {
+    const themeMode = (() => {
+      const v = startupSetting('dsh:theme', 'dark');
+      return (v === 'light' || v === 'dark' || v === 'auto') ? v : 'dark';
+    })();
+    const baseStyle = startupSetting('dsh:theme-style', 'graphite') || 'graphite';
+    return {
+      themeMode,
+      baseStyle,
+      effectiveStyle: baseStyle,
+      activeThemeId: undefined,
+      activePack: null,
+    };
+  },
   ActivateThemePack: async () => {},
   ActivateBaseStyle: async () => {},
   DeleteThemePack: async () => {},
@@ -1720,20 +1746,12 @@ const appImpl = {
   SetDesktopTerminalTheme: async () => {},
   SetDesktopUpdateChannel: async () => {},
   SetTrayLocale: async () => {},
-  MigrateDesktopPreferences: async (legacyLanguage, theme, style) => {
-    // 主题迁移：v1.29.0 前端把 legacy localStorage('reasonix-theme') 读出来，调这里
-    // 迁移到新持久化位置后 clearLegacyThemePreference() 清除旧键。我们把迁移目标定为
-    // 自己的 dsh:theme 键。仅当 dsh:theme 尚未存在时才写入（applyDefaultAppearance 已
-    // 先写默认 'dark'，避免被污染过的 legacy 'light' 覆盖用户默认暗色）。
-    try {
-      if (!localStorage.getItem('dsh:theme') && theme && (theme === 'light' || theme === 'dark' || theme === 'auto')) {
-        localStorage.setItem('dsh:theme', theme);
-      }
-      if (!localStorage.getItem('dsh:theme-style') && style && typeof style === 'string' && style !== '') {
-        localStorage.setItem('dsh:theme-style', style);
-      }
-      return { ok: true };
-    } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  MigrateDesktopPreferences: async () => {
+    // 空实现：legacy 的 reasonix-theme 值已不可信（被 watchTheme 污染过、又被前端
+    // clearLegacyThemePreference 清除），迁移它反而会把 'auto'（null 兜底）写进 dsh:theme
+    // 锁成浅色。直接丢弃 legacy，主题默认走 applyDefaultAppearance 的 'dark'；用户之后的
+    // 选择由 SetDesktopAppearance 写入 dsh:theme 保持。前端随后会 clear 掉 legacy 键。
+    return { ok: true };
   },
   ReportDesktopWebViewReady: async () => {},
   RestartApplication: async () => {},
