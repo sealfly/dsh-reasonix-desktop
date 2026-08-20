@@ -39,7 +39,15 @@ func (a *App) ContextUsageForTab(tabID string) map[string]any {
 	output := num(tu["outputTokens"])
 	sessionTokens := cacheHit + cacheMiss + output
 
-	// 费用精确计算依赖 prices.json 定价表，先置 0（后续补 calcCost）。
+	// 动态取当前 provider/model 算费用（不要写死官方 flash）
+	provider := "deepseek-official"
+	model := "deepseek-v4-flash"
+	if m := a.modelsView(tabID); m != nil && m.Current != nil {
+		provider = m.Current.Provider
+		model = m.Current.Model
+	}
+	cost := calcCost(cacheHit, cacheMiss, output, provider, model)
+
 	return map[string]any{
 		"used":         used,
 		"window":       maxI(windowTokens, 1),
@@ -47,7 +55,7 @@ func (a *App) ContextUsageForTab(tabID string) map[string]any {
 		"compactRatio": 0.8,
 		"cacheHitTokens":  cacheHit,
 		"cacheMissTokens": cacheMiss,
-		"sessionCost":    0,
+		"sessionCost":    cost,
 		"sessionCurrency": currency,
 		"sessionCostComplete": true,
 		"estimated":     false,
