@@ -1,5 +1,9 @@
-# 构建产物（前端 dist 从 Electron 项目 renderer/dist 复制，是构建产物不提交）
+# 构建产物
+build/
+# 前端 dist（从 Electron 项目 renderer/dist 复制，构建产物不提交）
 frontend/dist/
+# Wails 自动生成的绑定（每次 wails build 重新生成）
+frontend/wailsjs/
 # 可执行文件
 *.exe
 # 诊断截图/日志
