@@ -52,6 +52,17 @@ if (typeof document !== 'undefined' && document.readyState !== 'loading') regist
 else if (typeof document !== 'undefined') document.addEventListener('DOMContentLoaded', registerThemeObserver);
 else registerThemeObserver();
 
+// 启动时应用持久化的窗口缩放（v1.29.0 设置面板缩放滑块；写 localStorage('dsh:zoom')）
+function applySavedZoom() {
+  try {
+    const z = Number(startupSetting('dsh:zoom', '1'));
+    if (Number.isFinite(z) && z !== 1) ipcRenderer.send('win:setZoom', Math.min(2, Math.max(0.5, z)));
+  } catch {}
+}
+if (typeof document !== 'undefined' && document.readyState !== 'loading') applySavedZoom();
+else if (typeof document !== 'undefined') document.addEventListener('DOMContentLoaded', applySavedZoom);
+else applySavedZoom();
+
 // 会话/项目"钉住"集合（localStorage 持久化；前端右键菜单"钉住"调用 SetTopicPinned/SetProjectPinned）
 const PINNED_TOPICS_KEY = 'dsh:pinned-topics';
 const PINNED_PROJECTS_KEY = 'dsh:pinned-projects';
@@ -97,6 +108,95 @@ ipcRenderer.on('dsh:event', (_e, wire) => {
     setTimeout(() => { try { emitUsageEvent(wire.tabId); } catch {} }, 300);
   }
 });
+
+// 本地终端（方案 A）：主进程 spawn shell 的输出/退出事件 → 前端 terminal:output / terminal:exit
+ipcRenderer.on('term:output', (_e, ev) => { try { if (ev && ev.id && typeof ev.data === 'string') eventsEmit('terminal:output', ev); } catch {} });
+ipcRenderer.on('term:exit', (_e, ev) => { try { if (ev && ev.id && typeof ev.exitCode === 'number') eventsEmit('terminal:exit', ev); } catch {} });
+
+// 诊断：监听最小化按钮的 click（isTrusted=false = 程序化触发，非真实用户点击）
+try {
+  document.addEventListener('click', (e) => {
+    try {
+      const t = e.target;
+      if (!t || !t.closest) return;
+      if (t.closest('.windows-window-control--minimize')) {
+        const info = { trusted: e.isTrusted, tag: t.tagName, at: Date.now() };
+        console.log('[CLICK-DIAG] minimize click:', JSON.stringify(info));
+        try { ipcRenderer.send('dsh:diag', { minimizeClick: info }); } catch {}
+      }
+    } catch {}
+  }, true);
+} catch {}
+
+// ===== v1.29.0 Wails 拖拽 polyfill（Electron 适配）=====
+// 官方 v1.29.0 把所有拖拽区从 Electron 的 -webkit-app-region 换成了 Wails 专属的
+// --wails-draggable: drag 自定义属性（Wails runtime 识别）；我们 Electron 没有 Wails
+// runtime，窗口因此失去全部拖拽区（拖不动）。这里把官方 drag 区映射回 -webkit-app-region，
+// 同时恢复侧栏空白区可拖（用户习惯），拖拽区内的交互元素保持 no-drag 保证可点。
+// 顺带修复：拖不动 → 用户按住右上角拖动 → click 落在最小化按钮上 → 窗口被误最小化
+// （frameless 最小化残留 = "任务栏凭空印出 logo"）。拖拽恢复后该误触自然消失。
+try {
+  const applyDragPolyfill = () => {
+    try {
+      if (!document.head) return false;
+      const style = document.createElement('style');
+      style.id = 'dsh-wails-drag-polyfill';
+      style.textContent = `
+/* 官方 --wails-draggable: drag 的拖拽区 → -webkit-app-region: drag */
+.app-chrome,
+.app-chrome__drag-rail,
+.app-chrome--native-tabs .tabbar,
+.workspace-tabs-bar,
+.topicbar,
+.workbench-dock__tools,
+.topbar {
+  -webkit-app-region: drag;
+}
+/* 恢复侧栏拖拽（官方 Windows 下 sidebar no-drag；Electron 需要可拖区域，
+   只让空白/品牌区可拖，内部交互元素在下方全部 no-drag）*/
+.sidebar {
+  -webkit-app-region: drag;
+}
+/* 拖拽区内的交互元素必须 no-drag，否则点不到 */
+.app-chrome button,
+.app-chrome input,
+.app-chrome .tabbar__tab,
+.app-chrome .tabbar__new,
+.app-chrome .tabbar__command,
+.sidebar button,
+.sidebar input,
+.sidebar a,
+.sidebar .sidebar__navitem,
+.sidebar .sidebar__new,
+.sidebar .sidebar__quick-action,
+.sidebar .project-tree,
+.topicbar button,
+.topicbar input,
+.workspace-tabs-bar button,
+.workbench-dock__tools button,
+.workbench-dock__tab,
+.onboarding button,
+.onboarding input {
+  -webkit-app-region: no-drag;
+}
+/* 窗口控制按钮（最小化/最大化/关闭）永远在最高层：官方 --z-dock:100 低于
+   modal(--z-modal:1200)，设置面板打开时右上角 X 被遮罩盖住点不到；
+   Electron 桌面习惯是随时能关窗口，提到 modal 之上 */
+.windows-window-controls {
+  z-index: 1400;
+}
+`;
+      document.head.appendChild(style);
+      return true;
+    } catch { return false; }
+  };
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => { try { applyDragPolyfill(); } catch {} }, { once: true });
+  } else {
+    applyDragPolyfill();
+  }
+  // 布局热切换后重建 DOM 的容器不变，CSS 类规则持续生效，无需重注入
+} catch {}
 
 // ---------- 费用计算（价格外置 prices.json，可编辑/可抓取更新） ----------
 // 默认价格（prices.json 缺失时的兜底；正常从配置加载）
@@ -211,6 +311,38 @@ function normType(t) {
   return String(t || '')
     .replace(/\/started$/, '/start')
     .replace(/\/done$/, '/end');
+}
+
+// 内容块 → 纯文本（与 replayHistory 的 pushMsg 同解析模式：{type:'text',text} 数组）
+function blockText(blocks) {
+  if (blocks == null) return '';
+  if (typeof blocks === 'string') return blocks;
+  if (Array.isArray(blocks)) return blocks.map((b) => (b && b.text) || '').join('');
+  if (typeof blocks === 'object') return blocks.text || '';
+  return '';
+}
+
+// 从 DSH 历史事件提取文本内容（AI 重命名/内容搜索/搜索上下文复用）
+function eventText(event) {
+  try {
+    const d = event.data || {};
+    if (event.type === 'user/message' || event.type === 'user/prompt') {
+      // 系统注入（plugin/goal 等）的 user/message 带 source.kind !== 'user'，不算用户消息
+      if (d.source && d.source.kind && d.source.kind !== 'user') return '';
+      return blockText(d.content || d.prompt);
+    }
+    if (event.type === 'assistant/message') return blockText(d.message && d.message.content);
+    if (event.type === 'assistant/reasoning') return String(d.text ?? (d.message && d.message.text) ?? '');
+    if (event.type === 'tool/call') {
+      const t = d.tool || {};
+      return '[' + (t.name || d.name || d.toolName || 'tool') + '] ' + String(d.arguments || t.arguments || '');
+    }
+    if (event.type === 'tool/result') {
+      const t = d.tool || {};
+      return '[' + (t.name || 'tool') + ' 结果] ' + String(d.result || t.result || '');
+    }
+    return '';
+  } catch { return ''; }
 }
 
 // 重放代次：切 tab 后旧代次的延迟重放全部作废，防止历史串台到新 tab
@@ -635,11 +767,18 @@ const appImpl = {
   ToggleMaximiseMainWindow: async () => { ipcRenderer.send('win:max'); },
   IsMainWindowMaximised: async () => ipcRenderer.invoke('win:isMaximized'),
   CloseMainWindow: async () => { ipcRenderer.send('win:close'); },
+  GetDesktopShellStatus: async () => ({
+    // v1.29.0 桌面外壳状态：托盘就绪、支持后台关闭（配合 SetCloseBehavior 的 background 模式）
+    trayState: 'ready',
+    backgroundCloseAvailable: true,
+  }),
 
   // ===== Tab / 会话 =====
   ListTabs: async () => {
     // 主进程 dsh:sessions 已转换好 TabMeta，这里直接用（避免二次转换把 id 弄丢）
     const tabs = await sessions();
+    // v1.29.0 质量地板（standard/delivery）：按会话持久化到 localStorage('dsh:qfloor:<sid>')
+    for (const t of tabs) t.qualityFloor = startupSetting('dsh:qfloor:' + t.id, 'standard');
     // 恢复前端记忆的当前 tab（主进程的 active 只是"列表第一个"，切 tab 后重拉列表会跳回）
     if (activeTabId) {
       const cur = tabs.find((t) => t.id === activeTabId);
@@ -863,6 +1002,176 @@ const appImpl = {
     try { await rpc('session.rename', { sessionId: topicID, title: String(title || '') }); }
     catch (e) { console.error('[dsh] RenameTopic failed:', e && e.message || e); }
   },
+  // v1.29.0 AI 重命名：取会话最早的用户消息提炼标题（首行、截断 60 字）。
+  // maxMessages:300 对绝大多数会话覆盖全量历史（第一个 user/message 即开场提问）；
+  // 超大会话则取最近窗口内最早的用户消息。无用户消息时回退会话标题。
+  AIRenameSession: async (topicID) => {
+    try {
+      const h = await rpc('session.history', { sessionId: topicID, maxMessages: 300 });
+      for (const item of ((h && h.events) || [])) {
+        const e = item.event || {};
+        if (e.type === 'user/message' || e.type === 'user/prompt') {
+          const t = String(eventText(e) || '').trim().split(/\r?\n/)[0] || '';
+          if (t) return t.length > 60 ? t.slice(0, 60) + '…' : t;
+        }
+      }
+      // 兜底：投影里的会话标题
+      try {
+        const list = await rpc('session.list', {});
+        const s = ((list && list.items) || []).find((x) => x.sessionId === topicID);
+        const v = (s && s.projections && s.projections.values) || {};
+        if (v.title) return String(v.title).slice(0, 60);
+      } catch {}
+    } catch {}
+    return '';
+  },
+  // v1.29.0 质量地板（standard 标准 / delivery 交付）：按会话持久化
+  SetQualityFloor: async (floor) => {
+    try {
+      const sid = await activeTabIdOf();
+      if (sid) localStorage.setItem('dsh:qfloor:' + sid, floor === 'delivery' ? 'delivery' : 'standard');
+      return { ok: true };
+    } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  },
+  SetQualityFloorForTab: async (tabID, floor) => {
+    try {
+      if (tabID) localStorage.setItem('dsh:qfloor:' + tabID, floor === 'delivery' ? 'delivery' : 'standard');
+      return { ok: true };
+    } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  },
+  // 交付不完整恢复：DSH 无"待交付提示"概念，接受=空操作（与参考实现一致）
+  AcceptDelivery: async () => {},
+  AcceptDeliveryToTab: async () => {},
+  // ===== v1.29.0 历史目录（会话列表/内容搜索/上下文） =====
+  // DSH 会话 → SessionMeta（历史面板条目）
+  sessionToHistoryMeta: async () => {
+    try {
+      const list = await rpc('session.list', {});
+      const now = Date.now();
+      return ((list && list.items) || []).map((s) => {
+        const v = (s.projections && s.projections.values) || {};
+        const root = s.cwd || '';
+        const last = v.lastMessage || v.lastUserMessage || v.title || '';
+        const at = s.updatedAt ? new Date(s.updatedAt).getTime() : now;
+        const created = s.createdAt ? new Date(s.createdAt).getTime() : at;
+        return {
+          path: s.sessionId + '.jsonl',
+          preview: String(last).slice(0, 200),
+          title: v.title || undefined,
+          turns: (v.sessionStats && v.sessionStats.turns) || 0,
+          turnsState: 'valid',
+          createdAt: created,
+          lastActivityAt: at,
+          modTime: at,
+          current: s.sessionId === activeTabId,
+          open: true,
+          scope: root ? 'project' : 'global',
+          workspaceRoot: root || undefined,
+          topicId: s.sessionId,
+          topicTitle: v.title || undefined,
+          running: !!s.running,
+        };
+      });
+    } catch { return []; }
+  },
+  ListHistorySessions: async (req) => {
+    // 分页 + scope/状态/时间/关键字过滤（与参考实现同语义）
+    try {
+      const reqObj = req || {};
+      const all = await appImpl.sessionToHistoryMeta();
+      const q = String(reqObj.query || '').trim().toLowerCase();
+      const now = new Date();
+      const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+      const filtered = all.filter((m) => {
+        if (reqObj.scope && reqObj.scope !== 'all' && m.scope !== reqObj.scope) return false;
+        if (reqObj.status === 'current' && !m.current) return false;
+        if (reqObj.status === 'open' && !m.open) return false;
+        if (reqObj.timeFilter === 'today' && m.lastActivityAt < dayStart) return false;
+        if (reqObj.timeFilter === 'yesterday' && !(m.lastActivityAt >= dayStart - 86400000 && m.lastActivityAt < dayStart)) return false;
+        if (reqObj.timeFilter === 'older' && m.lastActivityAt >= dayStart - 86400000) return false;
+        if (q && ![m.title, m.preview, m.topicTitle, m.workspaceRoot].some((x) => String(x || '').toLowerCase().includes(q))) return false;
+        return true;
+      });
+      const start = reqObj.cursor ? (Number(reqObj.cursor) || 0) : 0;
+      const limit = Math.max(1, Math.min(reqObj.limit || 50, 200));
+      return { items: filtered.slice(start, start + limit), nextCursor: start + limit < filtered.length ? String(start + limit) : '', revision: 1, partial: false, staleCursor: false };
+    } catch (e) { return { items: [], nextCursor: '', revision: 1, partial: false, staleCursor: false }; }
+  },
+  GetHistoryIndexStatus: async () => {
+    try {
+      const list = await rpc('session.list', {});
+      const n = ((list && list.items) || []).length;
+      return { state: 'ready', mode: 'memory', revision: 1, indexed: n, total: n, pending: 0, failed: 0 };
+    } catch { return { state: 'ready', mode: 'memory', revision: 1, indexed: 0, total: 0, pending: 0, failed: 0 }; }
+  },
+  RebuildHistoryIndex: async () => {},
+  // 内容搜索：DSH 部署未启用全文索引（session.search 不可用）→ 有界扫描。
+  // 每个会话取最近 maxMessages:60 的消息，跳过流式 chunk（eventText 对其返回 ''），
+  // messageIndex = 事件在本次获取数组中的位置（与 GetHistorySearchContext 同窗口，索引一致）。
+  SearchHistoryContent: async (req) => {
+    const q = String((req && req.query) || '').trim().toLowerCase();
+    const status = await appImpl.GetHistoryIndexStatus();
+    if (!q) return { items: [], nextCursor: '', revision: 1, partial: false, staleCursor: false, status };
+    try {
+      const list = await rpc('session.list', {});
+      const sessionsArr = ((list && list.items) || []).slice(0, 10);
+      const limit = Math.max(1, Math.min((req && req.limit) || 50, 200));
+      const hits = [];
+      for (const s of sessionsArr) {
+        const v = (s.projections && s.projections.values) || {};
+        let events = [];
+        try { const h = await rpc('session.history', { sessionId: s.sessionId, maxMessages: 60 }); events = (h && h.events) || []; } catch {}
+        let idx = 0;
+        for (const item of events) {
+          const e = item.event || {};
+          const text = eventText(e);
+          const role = e.type.startsWith('user') ? 'user' : e.type.startsWith('assistant') ? 'assistant' : 'tool';
+          if (text && String(text).toLowerCase().includes(q)) {
+            hits.push({
+              sessionPath: s.sessionId + '.jsonl', sessionId: s.sessionId, source: 'session', messageIndex: idx,
+              role, kind: 'message', snippet: String(text).slice(0, 300), score: 1,
+              sessionTitle: v.title || undefined, workspaceRoot: s.cwd || undefined,
+              lastActivityAt: s.updatedAt ? new Date(s.updatedAt).getTime() : Date.now(),
+              open: true, running: !!s.running, current: s.sessionId === activeTabId,
+            });
+            if (hits.length >= limit) break;
+          }
+          idx++;
+        }
+        if (hits.length >= limit) break;
+      }
+      return { items: hits, nextCursor: '', revision: 1, partial: true, staleCursor: false, status };
+    } catch (e) { return { items: [], nextCursor: '', revision: 1, partial: false, staleCursor: false, status }; }
+  },
+  // 搜索命中的上下文行：用与搜索相同的窗口（maxMessages:60）取命中消息前后的原文片段
+  GetHistorySearchContext: async (req) => {
+    try {
+      const sid = String((req && req.sessionPath) || '').replace(/\.jsonl$/, '');
+      const h = await rpc('session.history', { sessionId: sid, maxMessages: 60 });
+      const events = (h && h.events) || [];
+      const center = (req && req.messageIndex) || 0;
+      const before = (req && req.before) || 3;
+      const lines = [];
+      let idx = 0;
+      for (const item of events) {
+        const e = item.event || {};
+        const text = eventText(e);
+        const role = e.type.startsWith('user') ? 'user' : e.type.startsWith('assistant') ? 'assistant' : 'tool';
+        if (text && Math.abs(idx - center) <= before) lines.push({ index: idx, role, text: String(text).slice(0, 200) });
+        idx++;
+      }
+      return lines;
+    } catch { return []; }
+  },
+  // ===== v1.29.0 任务目录（DSH 无任务目录能力 → 空列表 + 不可用操作，UI 如实显示） =====
+  GetTaskCatalogStatus: async () => ({ state: 'ready', mode: 'memory', revision: 1, indexed: 0, total: 0, pending: 0, failed: 0 }),
+  RebuildTaskCatalog: async () => {},
+  ListTaskPage: async () => ({ items: [], nextCursor: '', revision: 1, partial: false, staleCursor: false, status: await appImpl.GetTaskCatalogStatus() }),
+  ListTaskEventPage: async (req) => ({ items: [], nextSequence: (req && req.after) || 0, partial: false }),
+  StopTaskByKey: async (req) => ({ schema_version: 1, command: 'stop', task_id: (req && req.taskId) || '', accepted: false, idempotent: false, error: { code: 'unavailable', message: 'DSH 无任务目录能力' } }),
+  CancelTaskByKey: async (req) => ({ schema_version: 1, command: 'cancel', task_id: (req && req.taskId) || '', accepted: false, idempotent: false, error: { code: 'unavailable', message: 'DSH 无任务目录能力' } }),
+  RequeueTaskByKey: async (req) => ({ schema_version: 1, command: 'requeue', task_id: (req && req.taskId) || '', accepted: false, idempotent: false, error: { code: 'unavailable', message: 'DSH 无任务目录能力' } }),
+  OpenTaskSessionByKey: async (req) => ({ schema_version: 1, command: 'open_session', task_id: (req && req.taskId) || '', accepted: false, idempotent: false, error: { code: 'unavailable', message: 'DSH 无任务目录能力' } }),
   DeleteTopic: async () => {},
   // 移入回收站（前端两段式确认后调用）→ 归档 + 物理删除日志（与 deleteSession 同语义）
   TrashTopic: async (topicID) => {
@@ -1013,8 +1322,18 @@ const appImpl = {
   ReloadCommands: async () => {},
   SlashArgs: async () => ({ args: [] }),
   ScanPromptHistory: async () => [],
-  GetDesktopZoomFactor: async () => 1,
-  SetDesktopZoomFactor: async () => {},
+  GetDesktopZoomFactor: async () => {
+    // 读取持久化的窗口缩放（0.5–2.0，默认 1）
+    const v = Number(startupSetting('dsh:zoom', '1'));
+    return Number.isFinite(v) ? Math.min(2, Math.max(0.5, v)) : 1;
+  },
+  SetDesktopZoomFactor: async (factor) => {
+    // 窗口缩放：持久化到 localStorage('dsh:zoom')，并通知主进程实时应用（webContents.setZoomFactor）
+    const f = Math.min(2.0, Math.max(0.5, Number.isFinite(Number(factor)) ? Number(factor) : 1.0));
+    try { localStorage.setItem('dsh:zoom', String(f)); } catch {}
+    try { ipcRenderer.send('win:setZoom', f); } catch {}
+    return { ok: true };
+  },
   SaveWindowState: async () => {},
 
   // ===== 文件系统（主进程 fs IPC） =====
@@ -1299,6 +1618,49 @@ const appImpl = {
     try {
       const norm = (style === 'workbench' || style === 'creation') ? style : 'classic';
       localStorage.setItem('dsh:layout-style', norm);
+      // 布局切换防抖：通知主进程记录时间戳（500ms 内忽略幽灵 minimize 点击）
+      try { ipcRenderer.send('layout:switched'); } catch {}
+      // 诊断：切换前快照 DOM 指纹（统计可疑元素计数），切换后 1.8s 对比增量
+      const domFingerprint = () => {
+        try {
+          const counts = {};
+          document.querySelectorAll('img, svg, [class*="logo"], [class*="brand"], [class*="head"], [class*="title"], [class*="row"], [class*="section"], [class*="tab"], [class*="topic"], [class*="welcome"], [class*="sidebar"], [class*="chat"], [class*="header"]').forEach((el) => {
+            let c;
+            if (el.tagName === 'IMG') c = 'IMG:' + (el.getAttribute('src') || '').split('/').pop();
+            else if (el.tagName === 'SVG') c = 'SVG:' + (el.className && el.className.baseVal !== undefined ? String(el.className.baseVal) : String(el.className || ''));
+            else c = el.tagName + ':' + (typeof el.className === 'string' ? el.className : (el.className && el.className.baseVal !== undefined ? String(el.className.baseVal) : ''));
+            if (!c) return;
+            counts[c] = (counts[c] || 0) + 1;
+          });
+          return counts;
+        } catch { return {}; }
+      };
+      const before = domFingerprint();
+      setTimeout(() => {
+        try {
+          const after = domFingerprint();
+          const added = {}, removed = {};
+          for (const k in after) if ((after[k] || 0) > (before[k] || 0)) added[k] = after[k] - (before[k] || 0);
+          for (const k in before) if ((before[k] || 0) > (after[k] || 0)) removed[k] = before[k] - (after[k] || 0);
+          console.log('[LAYOUT-DIFF] added=' + JSON.stringify(added) + ' removed=' + JSON.stringify(removed));
+          try { ipcRenderer.send('dsh:diag', { added, removed }); } catch {}
+          // 清理侧栏渲染层残留：DOM 干净但切换布局后侧栏顶部 logo 区域出现视觉叠影
+          // （workbench↔classic 的 sidebar__head↔sidebar__brand 结构切换，Chromium 合成层
+          //   缓存残留；body 级抖动清不掉，需 sidebar 自身重建合成层）
+          try {
+            const aside = document.querySelector('aside.sidebar');
+            if (aside) {
+              const prev = aside.style.display;
+              aside.style.display = 'none';
+              void aside.offsetHeight; // 强制重排，破坏旧合成层
+              aside.style.display = prev || '';
+              console.log('[LAYOUT] sidebar repaint done');
+            }
+          } catch {}
+          // 窗口级兜底：resize 1px 微抖强制整窗重绘（无闪烁，比 hide/show 温和）
+          try { ipcRenderer.send('win:repaint'); } catch {}
+        } catch {}
+      }, 800);
       return { ok: true };
     } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
   },
@@ -1650,10 +2012,10 @@ const appImpl = {
   SetDesktop: async () => {},
   SetStatusBar: async () => {},
   SetReasoningDisplayMode: async (mode) => {
-    // 思考内容显示模式（hidden 隐藏 / summary 摘要 / auto 自动展开）：
-    // 持久化到 localStorage('dsh:reasoning-mode')，重启保持
+    // 思考内容显示模式（hidden 隐藏 / summary 摘要 / auto 自动 / expanded 展开）：
+    // v1.29.0 新增 expanded（默认展开全部思考）；持久化到 localStorage('dsh:reasoning-mode')，重启保持
     try {
-      const norm = (mode === 'hidden' || mode === 'summary' || mode === 'auto') ? mode : 'auto';
+      const norm = (mode === 'hidden' || mode === 'summary' || mode === 'auto' || mode === 'expanded') ? mode : 'auto';
       localStorage.setItem('dsh:reasoning-mode', norm);
       return { ok: true };
     } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
@@ -1774,9 +2136,26 @@ const appImpl = {
         }
       } catch {}
       const cost = calcCost(tu, provider, model);
+      // v1.29.0 上下文预算卡（ContextBudgetInfo）：由 contextPressure 投影推导
+      const used = cp.pressureTokens || 0;
+      const windowTokens = cp.contextWindow || 0;
+      const contextBudget = {
+        windowMode: 'per_tab',
+        source: 'official',
+        windowTokens,
+        promptTokens: used,
+        autoOutputTokens: 0,
+        maxOutputTokens: 0,
+        requestedOutputTokens: 0,
+        effectiveOutputTokens: 0,
+        reserveTokens: 0,
+        physicalRemaining: Math.max(0, windowTokens - used),
+        clipped: windowTokens > 0 && used >= windowTokens,
+        lastRecovery: 'none',
+      };
       return {
-        used: cp.pressureTokens || 0,
-        window: cp.contextWindow || 1,
+        used,
+        window: windowTokens || 1,
         sessionTokens: tu.cacheReadTokens + tu.uncachedInputTokens + tu.outputTokens || 0,
         compactRatio: 0.8,
         cacheHitTokens: tu.cacheReadTokens || 0,
@@ -1785,6 +2164,7 @@ const appImpl = {
         sessionCurrency: preferredCurrency(),
         sessionCostComplete: true,
         estimated: false,
+        contextBudget,
       };
     } catch (e) {
       return { used: 0, window: 1, sessionTokens: 0, compactRatio: 0.8, cacheHitTokens: 0, cacheMissTokens: 0, sessionCost: 0, sessionCurrency: preferredCurrency(), estimated: true };
@@ -1823,14 +2203,20 @@ const appImpl = {
   DismissTodoBatchForTab: async () => {},
   UsageStats: async () => ({}),
   BalanceInfo: async () => null,
-  TerminalWorkspaceForTab: async () => ({ sessions: [], cwd: '' }),
+  // ===== 本地终端（方案 A：主进程 spawn cmd/PowerShell，输出走 term:output/term:exit 事件）=====
+  TerminalWorkspaceForTab: async (tabID) => ipcRenderer.invoke('term:list', tabID),
   TerminalOutputForTab: async () => '',
-  CreateTerminalForTab: async () => ({ id: 'term-' + Date.now(), title: 'terminal', shell: 'powershell', cwd: '', createdAt: Date.now(), running: true }),
-  WriteTerminalForTab: async () => {},
-  TerminateTerminalForTab: async () => {},
-  ResizeTerminalForTab: async () => {},
+  CreateTerminalForTab: async (tabID, relativePath, shellId) => ipcRenderer.invoke('term:create', tabID, relativePath, shellId),
+  WriteTerminalForTab: async (_tabID, sessionId, data) => ipcRenderer.invoke('term:write', sessionId, data),
+  TerminateTerminalForTab: async (tabID, sessionId) => ipcRenderer.invoke('term:close', sessionId),
+  CloseTerminalForTab: async (_tabID, sessionId) => ipcRenderer.invoke('term:close', sessionId),
+  ResizeTerminalForTab: async () => ipcRenderer.invoke('term:resize'),
+  RenameTerminalForTab: async (_tabID, sessionId, title) => ipcRenderer.invoke('term:rename', sessionId, title),
   SetTerminalThemeForTab: async () => {},
-  ListTerminalSessionsForTab: async () => [],
+  ListTerminalSessionsForTab: async (tabID) => {
+    const w = await ipcRenderer.invoke('term:list', tabID);
+    return (w && w.sessions) || [];
+  },
   ShellForTerminal: async () => 'powershell',
   SetShellForTerminal: async () => {},
   ClearTerminalForTab: async () => {},

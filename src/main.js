@@ -28,6 +28,15 @@ const REASONIX_DIST = (() => {
 let win = null;
 let dsh = null;
 
+// 布局切换防抖：preload SetDesktopLayoutStyle 时记录时间戳；
+// 此后 1500ms 内的 minimize 请求视为"布局切换时的幽灵点击"（用户在设置面板切布局后
+// 界面重建，鼠标可能恰好落在窗口右上角最小化按钮上，或按钮意外获得焦点后被回车触发），
+// 拦截并记日志。正常手动最小化（切完布局 1.5s 之后再点）不受影响。
+let lastLayoutSwitchAt = 0;
+function isWithinLayoutSwitchWindow() {
+  return Date.now() - lastLayoutSwitchAt < 1500;
+}
+
 // 会话模型转换：DSH session → Reasonix TabMeta
 // 修复会话标题的 mojibake：DSH 存储标题若为 UTF-8 字节被按 Latin-1 解码，
 // 中文会显示成乱码（如 "GitHub上..." → "GitHubä¸Š..."），尝试可逆还原。
@@ -114,6 +123,72 @@ function dshEventToWire(frame) {
     case 'user/prompt': return null; // 前端自己乐观渲染用户消息
     default: return null;
   }
+}
+
+// ---------- 本地终端（方案 A：主进程 spawn 本机 shell，IPC 桥接） ----------
+// DSH 后端没有终端能力（能力目录无 shell/terminal/exec），所以这里在主进程
+// 直接起 cmd.exe / PowerShell，stdin/stdout 经 IPC 透传，输出以 base64 字节流
+// 推给前端（xterm 渲染）。无 PTY：没有 ANSI 色彩/光标控制/Ctrl+C 信号，但基本
+// 交互可用。会话按 tabId 分组，切换/关闭 tab 时进程管理干净。
+const terminalSessions = new Map(); // sessionId -> { proc, tabId, title, shell, cwd, createdAt, running }
+let terminalSeq = 0;
+
+function termEmit(channel, payload) {
+  try { if (win && !win.isDestroyed()) win.webContents.send(channel, payload); } catch {}
+}
+
+function spawnTerminal(sessionId, tabId, shell, cwd) {
+  const isPwsh = shell === 'powershell';
+  const args = isPwsh ? ['-NoLogo'] : ['/Q'];
+  const proc = spawn(isPwsh ? 'powershell' : 'cmd.exe', args, {
+    cwd: cwd || os.homedir(),
+    windowsHide: true,
+    // 无 PTY：cmd 用管道模式，行缓冲输出（实测 \r\n 写入会实时执行并回显）
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  proc.stdout.on('data', (d) => termEmit('term:output', { id: sessionId, data: d.toString('base64') }));
+  proc.stderr.on('data', (d) => termEmit('term:output', { id: sessionId, data: d.toString('base64') }));
+  proc.on('error', (e) => {
+    termEmit('term:output', { id: sessionId, data: Buffer.from('\r\n[terminal] 启动失败: ' + String(e.message || e) + '\r\n').toString('base64') });
+    terminalSessions.delete(sessionId);
+  });
+  proc.on('exit', (code) => {
+    terminalSessions.delete(sessionId);
+    termEmit('term:exit', { id: sessionId, exitCode: code == null ? 0 : code, removed: false });
+  });
+  // 切 UTF-8 代码页：默认 GBK 下中文输出在管道里乱码（banner 会先乱，之后正常）
+  try { proc.stdin.write('chcp 65001>nul\r\n'); } catch {}
+  return proc;
+}
+
+// 取会话 cwd（session.list 投影）；失败回退用户主目录
+async function terminalCwdForTab(tabId) {
+  try {
+    const res = await dsh.rpc('session.list', {});
+    const s = ((res && res.items) || []).find((x) => x.sessionId === tabId);
+    if (s && s.cwd) return s.cwd;
+  } catch {}
+  return os.homedir() || 'C:\\';
+}
+
+async function terminalWorkspaceForTab(tabId) {
+  const cwd = await terminalCwdForTab(tabId);
+  const sessions = [];
+  for (const [id, s] of terminalSessions) {
+    if (s.tabId === tabId) sessions.push({
+      id, title: s.title, shell: s.shell, cwd: s.cwd,
+      createdAt: s.createdAt, running: s.running, exitCode: s.exitCode,
+    });
+  }
+  return {
+    available: true,
+    readOnly: false,
+    sessions,
+    shells: [
+      { id: 'default', label: 'cmd.exe（默认）' },
+      { id: 'powershell', label: 'PowerShell' },
+    ],
+  };
 }
 
 // ---------- DSH 服务自动启动 ----------
@@ -327,13 +402,52 @@ app.whenReady().then(async () => {
   win.webContents.on('page-title-updated', (e) => e.preventDefault());
   win.webContents.on('did-finish-load', () => { if (win && !win.isDestroyed()) win.setTitle('DSH-ReasonixUI'); });
 
+  // 布局切换防抖时间戳（preload SetDesktopLayoutStyle 时上报）
+  ipcMain.on('layout:switched', () => {
+    lastLayoutSwitchAt = Date.now();
+  });
+  // 布局切换后的窗口级重绘：resize 1px 微抖强制整窗重绘（无闪烁），
+  // 清理侧栏顶部 logo 区域的合成层残留（DOM 干净、无窗口操作时的纯视觉叠影）
+  ipcMain.on('win:repaint', () => {
+    try {
+      if (!win || win.isDestroyed() || win.isMinimized() || !win.isVisible()) return;
+      const [w, h] = win.getSize();
+      win.setSize(w + 1, h, false);
+      setTimeout(() => { try { if (!win.isDestroyed()) win.setSize(w, h, false); } catch {} }, 30);
+    } catch {}
+  });
   // 窗口控制（前端 bridge 调用 MinimiseMainWindow 等 → 这里执行）
-  ipcMain.on('win:min', () => win && win.minimize());
+  ipcMain.on('win:min', () => {
+    const since = Date.now() - lastLayoutSwitchAt;
+    if (isWithinLayoutSwitchWindow()) { console.log('[WIN-CTRL] minimize blocked (layout switch ghost click, +' + since + 'ms)'); return; }
+    console.log('[WIN-CTRL] minimize requested (+' + since + 'ms since layout switch)'); win && win.minimize();
+  });
   ipcMain.on('win:max', () => {
+    console.log('[WIN-CTRL] maximize/restore requested');
     if (!win) return;
     win.isMaximized() ? win.unmaximize() : win.maximize();
   });
-  ipcMain.on('win:close', () => win && win.close());
+  ipcMain.on('win:close', () => { console.log('[WIN-CTRL] close requested'); win && win.close(); });
+  // 窗口状态变化记录（诊断：布局切换是否触发最小化/隐藏等）
+  if (win) {
+    win.on('minimize', () => console.log('[WIN-STATE] minimized'));
+    win.on('restore', () => console.log('[WIN-STATE] restored'));
+    win.on('maximize', () => console.log('[WIN-STATE] maximized'));
+    win.on('unmaximize', () => console.log('[WIN-STATE] unmaximized'));
+    win.on('hide', () => console.log('[WIN-STATE] hidden'));
+    win.on('show', () => console.log('[WIN-STATE] shown'));
+  }
+  ipcMain.on('win:setZoom', (_e, factor) => {
+    // v1.29.0 窗口缩放（设置面板滑块 → preload 持久化 + 这里实时应用）
+    try {
+      const f = Math.min(2.0, Math.max(0.5, Number.isFinite(Number(factor)) ? Number(factor) : 1.0));
+      if (win && !win.isDestroyed()) win.webContents.setZoomFactor(f);
+    } catch (e) { console.log('[WIN] setZoom failed:', e && e.message); }
+  });
+  // 布局切换诊断（preload SetDesktopLayoutStyle 后延迟上报 DOM 指纹增量）
+  ipcMain.on('dsh:diag', (_e, diag) => {
+    console.log('[LAYOUT-DIFF]', JSON.stringify(diag));
+  });
   // 关闭行为（preload SetCloseBehavior → 这里存值；window-all-closed 时按它决定退出或后台）
   ipcMain.on('dsh:close-behavior', (_e, b) => { closeBehavior = (b === 'background' || b === 'quit') ? b : 'quit'; console.log('[APP] closeBehavior =', closeBehavior); });
   ipcMain.handle('win:isMaximized', () => (win ? win.isMaximized() : false));
@@ -385,6 +499,50 @@ app.whenReady().then(async () => {
     }
   });
   ipcMain.handle('dsh:history', (_e, sid) => dsh.rpc('session.history', { sessionId: sid, maxMessages: 300 }));
+
+  // ---- 本地终端（方案 A）----
+  ipcMain.handle('term:list', (_e, tabId) => terminalWorkspaceForTab(String(tabId || '')));
+  ipcMain.handle('term:create', async (_e, tabId, relativePath, shellId) => {
+    const tid = String(tabId || '');
+    const base = await terminalCwdForTab(tid);
+    const rel = String(relativePath || '.').replace(/^\.$/, '');
+    const cwd = rel && rel !== '.' ? path.resolve(base, rel) : base;
+    const shell = (shellId === 'powershell' || shellId === 'default') ? shellId : 'default';
+    const id = 'term-' + (++terminalSeq) + '-' + Date.now();
+    const createdAt = Date.now();
+    const rec = {
+      id, tabId: tid, title: shell === 'powershell' ? 'PowerShell' : 'cmd.exe',
+      shell, cwd, createdAt, running: true, proc: null,
+    };
+    rec.proc = spawnTerminal(id, tid, shell, cwd);
+    terminalSessions.set(id, rec);
+    return { id, title: rec.title, shell, cwd, createdAt, running: true };
+  });
+  ipcMain.handle('term:write', (_e, sessionId, data) => {
+    const s = terminalSessions.get(String(sessionId || ''));
+    if (!s || !s.running) return { ok: false, error: 'terminal session not running' };
+    try {
+      // xterm 的 Enter 产生 \r；cmd 管道模式需要 \r\n 才执行。把 \r 规范成 \r\n（保留已有 \r\n）
+      const normalized = String(data || '').replace(/\r\n/g, '\n').replace(/\r/g, '\r\n');
+      s.proc.stdin.write(normalized);
+      return { ok: true };
+    }
+    catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  });
+  ipcMain.handle('term:resize', () => ({ ok: true })); // 无 PTY，尺寸变化忽略
+  ipcMain.handle('term:close', (_e, sessionId) => {
+    const s = terminalSessions.get(String(sessionId || ''));
+    if (!s) return { ok: false };
+    try { s.proc.kill(); } catch {}
+    terminalSessions.delete(sessionId);
+    termEmit('term:exit', { id: sessionId, exitCode: 0, removed: true });
+    return { ok: true };
+  });
+  ipcMain.handle('term:rename', (_e, sessionId, title) => {
+    const s = terminalSessions.get(String(sessionId || ''));
+    if (s) s.title = String(title || s.title);
+    return { ok: true };
+  });
   // session.prompt 是长请求（模型生成可能要几分钟），用 10 分钟超时而不是默认 60s
   ipcMain.handle('dsh:prompt', (_e, sid, text, timeoutMs) => {
     // 校验参数：session.prompt 的 schema 会因缺 text 报含糊错误，这里先给明确错误
