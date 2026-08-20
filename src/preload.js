@@ -199,8 +199,14 @@ try {
       if (!document.head) return false;
       const style = document.createElement('style');
       style.id = 'dsh-wails-drag-polyfill';
-      style.textContent = `
-/* 官方 --wails-draggable: drag 的拖拽区 → -webkit-app-region: drag */
+      // 实验开关：localStorage('dsh:drag-off')='1' 时禁用所有 -webkit-app-region: drag，
+      // 用于验证「叠影是否是 Electron app-region 合成层导致的」（官方 Wails 用原生拖拽，
+      // 不经过 app-region，故无叠影）。默认启用拖拽。
+      let dragOff = false;
+      try { dragOff = localStorage.getItem('dsh:drag-off') === '1'; } catch {}
+      const dragRule = dragOff
+        ? '/* drag 实验关闭：不映射任何 drag 区 */'
+        : `
 .app-chrome,
 .app-chrome__drag-rail,
 .app-chrome--native-tabs .tabbar,
@@ -210,11 +216,14 @@ try {
 .topbar {
   -webkit-app-region: drag;
 }
-/* 恢复侧栏拖拽（官方 Windows 下 sidebar no-drag；Electron 需要可拖区域，
-   只让空白/品牌区可拖，内部交互元素在下方全部 no-drag）*/
 .sidebar {
   -webkit-app-region: drag;
 }
+`;
+      style.textContent = `
+/* 官方 --wails-draggable: drag 的拖拽区 → -webkit-app-region: drag（Electron 适配；
+   官方 Wails 用原生拖拽，不走 Chromium 的 app-region，故不会像我们这样残留旧帧） */
+${dragRule}
 /* 拖拽区内的交互元素必须 no-drag，否则点不到 */
 .app-chrome button,
 .app-chrome input,
