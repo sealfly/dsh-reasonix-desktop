@@ -1,4 +1,52 @@
 'use strict';
+/**
+ * ============================================================================
+ * DSH-ReasonixUI — 桥接层（preload script / Bridge）
+ * Reasonix frontend → DSH 桥：注入 window.go.main.App 与 window.runtime
+ * ============================================================================
+ *
+ * 【职责 Responsibility】
+ *   本文件是「一切适配走桥」的核心：前端 dist（Reasonix v1.29.0，gitignored，
+ *   零改动）通过 window.go.main.App 调用这里暴露的方法，这里再转成 DSH RPC
+ *   （ipcRenderer.invoke('dsh:rpc', ...)）或直接读写 localStorage。
+ *
+ *   注入两个全局对象：
+ *   - window.go.main.App  → 前端 bridge.ts 的 realApp() 命中它，走"真实"分支
+ *   - window.runtime        → { EventsOn } 事件订阅（terminal:output/exit 等）
+ *
+ * 【关键持久化键 localStorage keys（勿改名，前端依赖）】
+ *   - dsh:layout-style       布局样式 workbench/classic/creation（默认 workbench）
+ *   - dsh:currency           费用币种 CNY/USD（空=跟随界面语言）
+ *   - dsh:reasoning-mode     思考显示 hidden/summary/auto/expanded
+ *   - dsh:theme / dsh:theme-style   主题持久化（★不能用 reasonix-theme：v1.29.0
+ *                           前端会 clearLegacyThemePreference() 清掉它）
+ *   - dsh:qfloor:<sid>       质量地板（standard/delivery）按会话
+ *   - dsh:zoom               窗口缩放 0.5–2.0
+ *   - dsh:close-behavior     关闭行为 quit/background
+ *   - dsh:theme-pack         主题包（theme pack）
+ *   - dsh:language           界面语言 zh/en
+ *
+ * 【本会话关键修复 Fixes（详见 AUDIT.md，勿回退）】
+ *   1. 拖拽 polyfill：官方用 --wails-draggable: drag（Wails 语义），Electron 不认 →
+ *      注入 CSS 把官方 11 个 drag 区映射为 -webkit-app-region: drag；窗口控制按钮
+ *      显式 no-drag（否则 .app-chrome 的 drag 命中会吞掉 controls 点击）。
+ *   2. 主题失效（锁浅色）：GetThemeExperience 曾返回 {} → normalizeExperience 兜底
+ *      themeMode='auto' → applyTheme('auto') 移除 data-theme → 浅色。已补真实结构。
+ *      且主题持久化统一走 dsh:theme（脱离会被前端 clear 的 reasonix-theme）。
+ *   3. 设置面板关不掉：CapabilityDiagnostics 曾返回 {} → 诊断页读 report.summary.errors
+ *      崩溃 → React 崩 → modal 卡死。已补完整结构。
+ *   4. desktop preferences sync 崩：bot 曾为 {} → sidebarImQQAdded 读 qq.enabled 崩溃。
+ *      已用 mockBotSettings() 补安全结构。
+ *   5. 侧栏 logo 叠影：React 条件渲染中间态（新旧两个 logo 短暂共存）→ 注入 CSS
+ *      互斥规则（.sidebar--workbench 标记当前布局，隐藏非当前布局的 logo）。
+ *   6. X 关闭按钮热区：官方 30px 太小 → CSS 放大到 40px。
+ *
+ * 【终端方案 A Terminal plan A】
+ *   - TerminalWorkspaceForTab/CreateTerminalForTab/WriteTerminalForTab 等 → ipcRenderer
+ *     .invoke('term:*')；输出经 window.runtime.EventsOn('terminal:output'/'exit')。
+ *   - 主进程 spawn cmd.exe（/Q）或 powershell（-NoLogo）；无 PTY。
+ * ============================================================================
+ */
 // Reasonix 前端 → DSH 桥接层
 // 注入 window.go.main.App（DSH 实现 + mock 回退）和 window.runtime（事件通道）
 const { ipcRenderer, contextBridge } = require('electron');
@@ -209,6 +257,14 @@ try {
   width: 40px;
   height: 40px;
 }
+/* 侧栏 logo 互斥（修复叠影）：布局热切换时 React 条件渲染的中间态会让新旧两个
+   logo 短暂共存（旧 logo 卸载延迟，不同 x/y 位置，非重叠）。sidebar 容器带
+   sidebar--workbench 类标记当前布局，据此强制隐藏非当前布局的 logo，任何时刻只
+   显示一个，消除"重复打印 logo"的叠影。 */
+.sidebar--workbench .sidebar__brand-logo:not(.sidebar__brand-logo--workbench),
+.sidebar:not(.sidebar--workbench) .sidebar__brand-logo--workbench {
+  display: none !important;
+}
 `;
       document.head.appendChild(style);
       return true;
@@ -220,49 +276,6 @@ try {
     applyDragPolyfill();
   }
   // 布局热切换后重建 DOM 的容器不变，CSS 类规则持续生效，无需重注入
-} catch {}
-
-// 侧栏渲染残留清理（设置面板关闭时）：
-// 布局样式是在设置面板里切换的。切换后 800ms 的 sidebar 抖动在 modal 开着时执行
-// （modal 半透明遮罩盖住侧栏，抖动清的是当时的合成层）；用户关闭设置面板后，
-// 侧栏区域重新合成，残留又出现。所以监听 settings-modal 卸载，关闭后再清一次。
-try {
-  const clearSidebarResidual = () => {
-    setTimeout(() => {
-      try {
-        const aside = document.querySelector('aside.sidebar');
-        if (aside) {
-          const prev = aside.style.display;
-          aside.style.display = 'none';
-          void aside.offsetHeight; // 强制重排，破坏旧合成层
-          aside.style.display = prev || '';
-        }
-      } catch {}
-      try { ipcRenderer.send('win:repaint'); } catch {}
-    }, 300);
-  };
-  const observeModalClose = () => {
-    try {
-      const mo = new MutationObserver((muts) => {
-        for (const m of muts) {
-          for (const n of m.removedNodes) {
-            if (n.nodeType !== 1) continue;
-            if ((n.classList && (n.classList.contains('settings-modal-backdrop') || n.classList.contains('management-modal-backdrop'))) ||
-                (n.querySelector && n.querySelector('.settings-modal-backdrop, .management-modal-backdrop'))) {
-              clearSidebarResidual();
-              return;
-            }
-          }
-        }
-      });
-      mo.observe(document.body, { childList: true, subtree: true });
-    } catch {}
-  };
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', observeModalClose, { once: true });
-  } else {
-    observeModalClose();
-  }
 } catch {}
 
 // ---------- 费用计算（价格外置 prices.json，可编辑/可抓取更新） ----------
@@ -1705,27 +1718,20 @@ const appImpl = {
       const norm = (style === 'workbench' || style === 'creation') ? style : 'classic';
       localStorage.setItem('dsh:layout-style', norm);
       try { ipcRenderer.send('dsh:diag', { layoutSwitch: norm, at: Date.now() }); } catch {}
-      // 清理侧栏渲染层残留：DOM 干净但切换布局后侧栏顶部 logo 区域出现视觉叠影
-      // （workbench↔classic 的 sidebar__head↔sidebar__brand 结构切换，Chromium 合成层
-      //   缓存残留；body 级抖动清不掉，需 sidebar 自身重建合成层）
-      setTimeout(() => {
+      // 诊断：连续采样 sidebar 里 logo 元素的数量 + 位置，判断叠影是
+      // "两个 img 的 React 中间态" 还是 "单个 img 的视觉残影"（DOM 只有一个但视觉重复）。
+      const sampleLogos = (label) => {
         try {
-          let sidebarFound = false;
-          try {
-            const aside = document.querySelector('aside.sidebar');
-            if (aside) {
-              sidebarFound = true;
-              const prev = aside.style.display;
-              aside.style.display = 'none';
-              void aside.offsetHeight; // 强制重排，破坏旧合成层
-              aside.style.display = prev || '';
-            }
-          } catch {}
-          try { ipcRenderer.send('dsh:diag', { sidebarRepaint: sidebarFound, at: Date.now() }); } catch {}
-          // 窗口级兜底：zoom + opacity 微抖强制整窗重绘
-          try { ipcRenderer.send('win:repaint'); } catch {}
-        } catch {}
-      }, 800);
+          const imgs = [];
+          document.querySelectorAll('aside.sidebar img[class*="brand-logo"], aside.sidebar img[src*="logo"], .sidebar__brand-logo').forEach((el) => {
+            const r = el.getBoundingClientRect();
+            imgs.push({ cls: String(el.className).slice(0, 50), x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height), vis: r.width > 0 && r.height > 0, display: window.getComputedStyle(el).display });
+          });
+          try { ipcRenderer.send('dsh:diag', { [label]: imgs }); } catch {}
+        } catch (e) { try { ipcRenderer.send('dsh:diag', { [label]: 'err:' + (e && e.message) }); } catch {} }
+      };
+      sampleLogos('logoNow');
+      [60, 150, 350, 700, 1200].forEach((ms) => setTimeout(() => sampleLogos('logo@' + ms), ms));
       return { ok: true };
     } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
   },

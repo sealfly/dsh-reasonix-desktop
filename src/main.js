@@ -1,4 +1,51 @@
 'use strict';
+/**
+ * ============================================================================
+ * DSH-ReasonixUI — Electron 主进程（main process）
+ * Main Process — owns BrowserWindow, IPC, local terminal, window controls
+ * ============================================================================
+ *
+ * 【架构 Architecture】
+ *   Electron 主进程 = DSH-ReasonixUI 桌面外壳。它只负责窗口/进程/系统能力，
+ *   不承载业务 UI。UI 由 renderer/dist（Reasonix v1.29.0 前端，gitignored，
+ *   零改动）渲染；前端通过 preload.js 注入的 window.go.main.App 调用这里的能力。
+ *
+ *   ┌─────────────┐  ipcRenderer.invoke   ┌──────────────┐  HTTP  ┌──────────┐
+ *   │ Reasonix UI │ ────────────────────→ │   preload.js  │ ─────→ │ DSH 后端 │
+ *   │ (dist)      │  window.go.main.App   │   (桥 Bridge)  │  3080  │ (本会话)  │
+ *   └─────────────┘                       └──────────────┘        └──────────┘
+ *                                           │ ipcRenderer.send
+ *                                           ▼
+ *                                      ┌──────────┐
+ *                                      │ main.js  │ 窗口/终端/系统能力
+ *                                      └──────────┘
+ *
+ * 【职责 Responsibilities】
+ *   1. BrowserWindow 创建（单窗口、frameless、1480x920）
+ *   2. 本地终端（方案 A）：spawn cmd.exe / powershell，stdout/stderr 经 term:output
+ *      事件推给前端 xterm；无 PTY（无 ANSI 色彩/光标控制），基本交互可用
+ *   3. 窗口控制 IPC：win:min / win:max / win:close / win:setZoom / win:isMaximized
+ *   4. 布局切换后的窗口级重绘（win:repaint，现为空操作，见下"已知问题"）
+ *   5. DSH 后端连接（DshClient，端口 3080）
+ *
+ * 【关键细节 / 已知问题 Key details & known issues】
+ *   - 禁用 GPU 加速（disableHardwareAcceleration）：见下。CPU 软渲染。
+ *   - 单窗口：只创建一个 BrowserWindow，避免多窗口状态混乱。
+ *   - 终端方案 A：cmd 用 \r\n 才执行（管道模式），故 term:write 需把 \r 规范成 \r\n；
+ *     启动写 `chcp 65001>nul` 切 UTF-8 防中文乱码。
+ *   - closeBehavior（quit/background）：dsh:close-behavior IPC 存值，window-all-closed
+ *     按它决定退出或后台驻留（DSH 后端是共享实例，杀它会杀本会话）。
+ *   - [WIN-CTRL]/[WIN-STATE] 日志：低成本诊断，保留。
+ *
+ * 【本会话修复记录 Fixes（详见 AUDIT.md）】
+ *   - 拖拽失效：官方 v1.29.0 用 --wails-draggable（Wails 语义），Electron 需 polyfill
+ *     （在 preload.js 注入 -webkit-app-region），本文件不涉及。
+ *   - 侧栏 logo 叠影：最终定位为 React 条件渲染中间态（两个 logo 短暂共存），
+ *     由 preload.js 注入 CSS 互斥规则解决；本文件的 win:repaint（zoom+opacity 微抖）
+ *     已证无效，保留为空操作。
+ *   - 主题/诊断/bot 崩溃：都是 preload.js 桥的占位（{}）导致，本文件不涉及。
+ * ============================================================================
+ */
 const { app, BrowserWindow, ipcMain, Menu, dialog } = require('electron');
 const fs = require('fs');
 const path = require('path');
@@ -7,9 +54,10 @@ const os = require('os');
 const { spawn, execSync } = require('child_process');
 const { DshClient } = require('./dsh-client');
 
-// 禁用 GPU 加速：清理布局热切换时的侧栏 logo 叠影（归因见 AUDIT.md —— Chromium
-// GPU 合成层在 frameless 窗口热切换时未释放旧纹理，导致"重复打印 logo"）。
-// CPU 软渲染彻底消除合成层残留；本应用以文本/图标 UI 为主，软渲染性能足够。
+// 禁用 GPU 加速（disable hardware acceleration）：CPU 软渲染。
+// 当初为清理布局热切换的侧栏 logo 叠影而加（以为是 GPU 合成层残留），
+// 后证实叠影实为 React 条件渲染中间态（已用 CSS 互斥在 preload 解决），
+// 但禁用 GPU 对文本/图标为主的 UI 无感且更稳，保留。
 app.disableHardwareAcceleration();
 
 // 设置干净的 app 名称：package.json 的 name 含括号（dsh-(reasonix)UI-desktop），

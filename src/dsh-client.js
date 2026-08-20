@@ -1,4 +1,20 @@
 'use strict';
+/**
+ * ============================================================================
+ * DshClient — DSH 后端 RPC 客户端（直连 127.0.0.1:3080）
+ * DSH web service RPC client (talks to the local DSH backend on port 3080)
+ * ============================================================================
+ *
+ * 【关键细节 Key details】
+ *   - DSH 后端是本会话共享实例（端口 3080），多客户端、多路复用。杀它会杀本会话，
+ *     所以这里只做"通用透传"（transparent passthrough），绝不主动关闭后端。
+ *   - rpc(method, payload)：POST /api/<method>，body={type:'client-request',rpcId,...}；
+ *     成功 resolve parsed.result.value，失败 reject error.message。
+ *   - KNOWN_METHODS 只是"能力基线"提示（供前端发现能力），不是白名单——插件动态
+ *     注册的方法即使不在表里也能通过 rpc() 透传调用（遵循 PRINCIPLES.md 原则 1：
+ *     不限制 DSH 能力）。
+ *   - 事件帧经 subscribeRaw 订阅（见下方），preload 再转成 window.runtime.EventsOn。
+ */
 // DSH web 服务 RPC 客户端（直连 3080 /api 协议）
 // 设计原则（项目原则 1，见 PRINCIPLES.md）：DSH 后端是多客户端、多路复用的独立服务，这里只做"通用透传"，
 // 不设方法白名单——任意 DSH 方法（含插件动态注册的）都能通过 rpc() 调，
