@@ -72,7 +72,46 @@ func (a *App) HeartbeatReloadConfig() error { return nil }
 func (a *App) HeartbeatSaveConfig() error { return nil }
 func (a *App) HeartbeatTriggerNow() error { return nil }
 func (a *App) HistoryContentForTab() error { return nil }
-func (a *App) HistorySliceForTab(_tabID string, _req map[string]any) error { return nil }
+func (a *App) HistorySliceForTab(_tabID string, _req map[string]any) map[string]any {
+	// 返回 HistorySlice 结构（前端读 .entries/.hasOlder/.error 等，不能返回 null）
+	return map[string]any{
+		"entries": []any{}, "nextCursor": "", "hasOlder": false,
+		"totalTurns": 0, "startTurn": 0, "endTurn": 0, "stale": false,
+		"revision": 0, "revisionKnown": false, "digest": "", "source": "dsh", "error": "",
+	}
+}
+
+// ListProjectGroups 项目分组（旧版前端名；新版用 GetProjectGroups）。
+func (a *App) ListProjectGroups(_scope, _workspaceRoot string) []map[string]any {
+	return []map[string]any{}
+}
+
+// GetProjectGroups 项目分组快照（返回 {groups, revision, applied}）。
+func (a *App) GetProjectGroups(_scope, _workspaceRoot string) map[string]any {
+	return map[string]any{"groups": []any{}, "revision": 0, "applied": true}
+}
+
+// ExternalOpenersForTab 外部打开器（返回 {openers, preferred, workspaceOpenable}）。
+func (a *App) ExternalOpenersForTab(_tabID string) map[string]any {
+	return map[string]any{"openers": []any{}, "preferred": "", "workspaceOpenable": true}
+}
+
+// OpenWorkspaceInExternalOpenerForTab 用外部打开器打开工作区。
+func (a *App) OpenWorkspaceInExternalOpenerForTab(_tabID, _id string) error { return nil }
+
+// ReorderTopics 会话排序。
+func (a *App) ReorderTopics(_scope, _workspaceRoot string, _orderedTopicIDs []string) error { return nil }
+
+// SaveSessionGroups 保存会话分组。
+func (a *App) SaveSessionGroups(_scope, _workspaceRoot string, _groups []map[string]any) error { return nil }
+
+// SaveSessionGroupsVersioned 保存会话分组（版本化）。
+func (a *App) SaveSessionGroupsVersioned(_scope, _workspaceRoot string, _expectedRevision uint64, _groups []map[string]any) map[string]any {
+	return map[string]any{"groups": []any{}, "revision": 0, "applied": true}
+}
+
+// SetPreferredExternalOpener 设置首选外部打开器。
+func (a *App) SetPreferredExternalOpener(_id string) error { return nil }
 func (a *App) ImportThemePack() error { return nil }
 func (a *App) InstallMCPServer() error { return nil }
 func (a *App) InstallPlugin(_source string, _options map[string]any) error { return nil }
