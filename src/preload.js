@@ -1743,7 +1743,17 @@ const appImpl = {
   },
   ReportDesktopWebViewReady: async () => {},
   RestartApplication: async () => {},
-  StorageSettings: async () => ({}),
+  // 存储设置（设置面板"存储"页签）：前端 setView(await StorageSettings()) 读 4 个字段，
+  // 返回 {} 会导致 view.defaultWorkspace 等为 undefined。DSH 无独立存储配置，用主目录兜底。
+  StorageSettings: async () => {
+    const home = HOME_FALLBACK();
+    return {
+      defaultWorkspace: home,
+      statePath: home + '\\.reasonix',
+      cachePath: home + '\\.reasonix\\cache',
+      extensionsPath: home + '\\.reasonix\\plugins',
+    };
+  },
   ReloadSettings: async () => {},
   ExternalOpeners: async () => ({ openers: [], preferred: '' }),
   ExternalOpenersForTab: async () => ({ openers: [], preferred: '' }),
@@ -2137,7 +2147,9 @@ const appImpl = {
     } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
   },
   RefreshSkills: async () => {},
-  SkillsSettings: async () => ({}),
+  // 技能设置（设置面板"技能"页签）：前端读 skills/skillRoots 字段，返回 {} 会崩
+  // （类似 DiagnosticsSettingsPage 读 summary.errors）。DSH 无技能配置目录，返回空结构。
+  SkillsSettings: async () => ({ skills: [], skillRoots: [], allowImplicitInvocation: true }),
   AddSkillPath: async () => {},
   RemoveSkillPath: async () => {},
   SetSkillPathEnabled: async () => {},
