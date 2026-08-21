@@ -1,0 +1,1 @@
+function asArray(r){return Array.isArray(r)?r:[]}export{asArray as t};
