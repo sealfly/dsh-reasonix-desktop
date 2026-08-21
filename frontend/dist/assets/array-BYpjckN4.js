@@ -1,0 +1,1 @@
+function array_default(r){return"object"==typeof r&&"length"in r?r:Array.from(r)}Array.prototype.slice;export{array_default as t};
