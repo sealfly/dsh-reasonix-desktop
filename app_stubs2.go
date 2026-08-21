@@ -32,7 +32,6 @@ func (a *App) CleanRecoveryLineage() error { return nil }
 func (a *App) CleanRemoteLegacyWorkbenchData() error { return nil }
 func (a *App) ClearBotSecret() error { return nil }
 func (a *App) ClearMCPServerAuthentication() error { return nil }
-func (a *App) ClearProviderKey() error { return nil }
 func (a *App) ClearSession() error { return nil }
 func (a *App) ClearSessionForTab() error { return nil }
 func (a *App) CommitRewindForTab() error { return nil }
@@ -40,7 +39,6 @@ func (a *App) CommitWorkspaceFileRevertForTab() error { return nil }
 func (a *App) CompactForTab() error { return nil }
 func (a *App) ConfirmRemoteHostKey() error { return nil }
 func (a *App) ConfirmRemoteSecret() error { return nil }
-func (a *App) ConnectKey() string { return "" }
 func (a *App) ConnectRemoteHost() error { return nil }
 func (a *App) ContextPanel() error { return nil }
 func (a *App) CopyThemePack() error { return nil }
@@ -59,8 +57,6 @@ func (a *App) EnqueueInboxSteer() error { return nil }
 func (a *App) EnsureBlankSurface() error { return nil }
 func (a *App) EnsureBlankTab() error { return nil }
 func (a *App) ExportThemePack() string { return "" }
-func (a *App) FetchAllProviderModels() []any { return []any{} }
-func (a *App) FetchProviderModels() error { return nil }
 func (a *App) Forget(_name string) error { return nil }
 func (a *App) ForgetForTab(_tabID string, _name string) error { return nil }
 func (a *App) ForkForTab() error { return nil }
@@ -173,9 +169,7 @@ func (a *App) RunShellForTab() error { return nil }
 func (a *App) SaveHooksSettingsForRoot() error { return nil }
 func (a *App) SaveLocalPathAs() error { return nil }
 func (a *App) SaveProvider() error { return nil }
-func (a *App) SaveProviderKey() error { return nil }
 func (a *App) SaveProviderModelCatalogs() error { return nil }
-func (a *App) SaveProviderWithKey() error { return nil }
 func (a *App) SaveThemePack() error { return nil }
 func (a *App) ScanPromptHistory() []any { return []any{} }
 func (a *App) ScanRemoteLegacyWorkbenchData() error { return nil }
@@ -189,7 +183,6 @@ func (a *App) SetMCPServerEnabled() error { return nil }
 func (a *App) SetNetwork() error { return nil }
 func (a *App) SetPermissionMode() error { return nil }
 func (a *App) SetPluginEnabled(_name string, _enabled bool) error { return nil }
-func (a *App) SetProviderKey() error { return nil }
 func (a *App) SetProviderWebSearch() error { return nil }
 func (a *App) SetReasoningLanguage() error { return nil }
 func (a *App) SetSandbox() error { return nil }
