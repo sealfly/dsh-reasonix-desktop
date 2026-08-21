@@ -9,3 +9,5 @@ frontend/wailsjs/
 # 诊断截图/日志
 *.png
 *.log
+# 便携工具（gh.exe 等）
+.tools/
