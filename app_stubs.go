@@ -1,11 +1,26 @@
 package main
 
+import "strings"
+
 // 启动路径必需 + 常见空实现（补齐前端调用但 Go 端缺失的方法，防 not-a-function 崩溃）。
 // 前端实际调用 332 个方法，Go 端只实现了核心 60 个；其余在此按"安全空实现"补齐，
 // 返回空态/降级，前端能正确处理。已实现真实逻辑的方法不在此重复定义。
 
 // Commands 斜杠命令列表（Composer 调用）。
 func (a *App) Commands() []any { return []any{} }
+
+// BuildProbe DSH-ReasonixUI 构建探针(无害,用于区分构建指纹)。
+func (a *App) BuildProbe() string { return "dsh-reasonix-build-2026-08-24A" }
+
+// SlashArgs 斜杠命令参数补全（Composer 输入 /xxx 空格后调用）。
+// 返回 {items: [{label, insert, hint, descend}], from}；DSH 当前无静态子命令表，返回空补全，前端正确降级。
+func (a *App) SlashArgs(input string) map[string]any {
+	from := 0
+	if i := strings.LastIndex(input, " "); i >= 0 {
+		from = i + 1
+	}
+	return map[string]any{"items": []any{}, "from": from}
+}
 
 // ReplayPendingPrompts 重放待处理提示（无 PTY/待处理概念，空操作）。
 func (a *App) ReplayPendingPrompts() {}
