@@ -39,12 +39,6 @@ func (a *App) ListThemePacks() []any { return []any{} }
 // ThemePacks 同 ListThemePacks。
 func (a *App) ThemePacks() []any { return []any{} }
 
-// Plugins 插件列表（DSH pluginStore，失败降级空）。
-func (a *App) Plugins() []any { return []any{} }
-
-// PluginDoctor 单个插件诊断。
-func (a *App) PluginDoctor(_name string) map[string]any { return nil }
-
 // MCPServers MCP 服务器列表（DSH 无 MCP 配置，空）。
 func (a *App) MCPServers() []any { return []any{} }
 

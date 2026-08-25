@@ -1,7 +1,7 @@
 package main
 
-// 批量生成的空实现（gen-stubs.js 从 preload.js + 前端调用清单对比生成）。
-// 覆盖前端调用但 Go 端缺失的方法，返回安全空态/降级，防 not-a-function 崩溃。
+// 鎵归噺鐢熸垚鐨勭┖瀹炵幇锛坓en-stubs.js 浠?preload.js + 鍓嶇璋冪敤娓呭崟瀵规瘮鐢熸垚锛夈€?
+// 瑕嗙洊鍓嶇璋冪敤浣?Go 绔己澶辩殑鏂规硶锛岃繑鍥炲畨鍏ㄧ┖鎬?闄嶇骇锛岄槻 not-a-function 宕╂簝銆?
 
 func (a *App) AcceptDeliveryToTab() error { return nil }
 func (a *App) AcceptMemorySuggestion() error { return nil }
@@ -69,7 +69,7 @@ func (a *App) HeartbeatSaveConfig() error { return nil }
 func (a *App) HeartbeatTriggerNow() error { return nil }
 func (a *App) HistoryContentForTab() error { return nil }
 func (a *App) HistorySliceForTab(_tabID string, _req map[string]any) map[string]any {
-	// 返回 HistorySlice 结构（前端读 .entries/.hasOlder/.error 等，不能返回 null）
+	// 杩斿洖 HistorySlice 缁撴瀯锛堝墠绔 .entries/.hasOlder/.error 绛夛紝涓嶈兘杩斿洖 null锛?
 	return map[string]any{
 		"entries": []any{}, "nextCursor": "", "hasOlder": false,
 		"totalTurns": 0, "startTurn": 0, "endTurn": 0, "stale": false,
@@ -77,40 +77,39 @@ func (a *App) HistorySliceForTab(_tabID string, _req map[string]any) map[string]
 	}
 }
 
-// ListProjectGroups 项目分组（旧版前端名；新版用 GetProjectGroups）。
+// ListProjectGroups 椤圭洰鍒嗙粍锛堟棫鐗堝墠绔悕锛涙柊鐗堢敤 GetProjectGroups锛夈€?
 func (a *App) ListProjectGroups(_scope, _workspaceRoot string) []map[string]any {
 	return []map[string]any{}
 }
 
-// GetProjectGroups 项目分组快照（返回 {groups, revision, applied}）。
+// GetProjectGroups 椤圭洰鍒嗙粍蹇収锛堣繑鍥?{groups, revision, applied}锛夈€?
 func (a *App) GetProjectGroups(_scope, _workspaceRoot string) map[string]any {
 	return map[string]any{"groups": []any{}, "revision": 0, "applied": true}
 }
 
-// ExternalOpenersForTab 外部打开器（返回 {openers, preferred, workspaceOpenable}）。
+// ExternalOpenersForTab 澶栭儴鎵撳紑鍣紙杩斿洖 {openers, preferred, workspaceOpenable}锛夈€?
 func (a *App) ExternalOpenersForTab(_tabID string) map[string]any {
 	return map[string]any{"openers": []any{}, "preferred": "", "workspaceOpenable": true}
 }
 
-// OpenWorkspaceInExternalOpenerForTab 用外部打开器打开工作区。
+// OpenWorkspaceInExternalOpenerForTab 鐢ㄥ閮ㄦ墦寮€鍣ㄦ墦寮€宸ヤ綔鍖恒€?
 func (a *App) OpenWorkspaceInExternalOpenerForTab(_tabID, _id string) error { return nil }
 
-// ReorderTopics 会话排序。
+// ReorderTopics 浼氳瘽鎺掑簭銆?
 func (a *App) ReorderTopics(_scope, _workspaceRoot string, _orderedTopicIDs []string) error { return nil }
 
-// SaveSessionGroups 保存会话分组。
+// SaveSessionGroups 淇濆瓨浼氳瘽鍒嗙粍銆?
 func (a *App) SaveSessionGroups(_scope, _workspaceRoot string, _groups []map[string]any) error { return nil }
 
-// SaveSessionGroupsVersioned 保存会话分组（版本化）。
+// SaveSessionGroupsVersioned 淇濆瓨浼氳瘽鍒嗙粍锛堢増鏈寲锛夈€?
 func (a *App) SaveSessionGroupsVersioned(_scope, _workspaceRoot string, _expectedRevision uint64, _groups []map[string]any) map[string]any {
 	return map[string]any{"groups": []any{}, "revision": 0, "applied": true}
 }
 
-// SetPreferredExternalOpener 设置首选外部打开器。
+// SetPreferredExternalOpener 璁剧疆棣栭€夊閮ㄦ墦寮€鍣ㄣ€?
 func (a *App) SetPreferredExternalOpener(_id string) error { return nil }
 func (a *App) ImportThemePack() error { return nil }
 func (a *App) InstallMCPServer() error { return nil }
-func (a *App) InstallPlugin(_source string, _options map[string]any) error { return nil }
 func (a *App) InvokeExtensionAction() error { return nil }
 func (a *App) IsolatedWorktreeAvailability() error { return nil }
 func (a *App) ListRemoteDir() []any { return []any{} }
@@ -118,17 +117,13 @@ func (a *App) ListTaskEventPage(_req map[string]any) error { return nil }
 func (a *App) ListTaskEventsForTab() error { return nil }
 func (a *App) ListTaskPage() error { return nil }
 func (a *App) ListTasksForTab() error { return nil }
-func (a *App) MCPMarketplace(_query string) []any { return []any{} }
-func (a *App) MCPMarketplaceResolve(_registryName string) error { return nil }
 func (a *App) OpenChannelSessionPageForTab() error { return nil }
 func (a *App) OpenRemoteWorkspace() error { return nil }
 func (a *App) OpenTaskSessionByKey(_req map[string]any) error { return nil }
 func (a *App) OpenTaskSessionForTab() error { return nil }
 func (a *App) PickBlankProjectParent() error { return nil }
-func (a *App) PickPluginFolder() error { return nil }
 func (a *App) PickSkillFolder() error { return nil }
 func (a *App) PickThemeBackground() error { return nil }
-func (a *App) PlanPluginInstall(_source string, _options map[string]any) error { return nil }
 func (a *App) PollBotConnectionInstall() error { return nil }
 func (a *App) PreviewRewindForTab() error { return nil }
 func (a *App) PreviewSession() map[string]any { return nil }
@@ -146,7 +141,6 @@ func (a *App) RemoteServerLogs() map[string]any { return nil }
 func (a *App) RemoteServerStatus() map[string]any { return nil }
 func (a *App) RemoveMCPServer() error { return nil }
 func (a *App) RemovePermissionRule() error { return nil }
-func (a *App) RemovePlugin(_name string) error { return nil }
 func (a *App) RemoveProviderAccesses() error { return nil }
 func (a *App) RemoveRemoteForward() error { return nil }
 func (a *App) RemoveRemoteHost() error { return nil }
@@ -182,7 +176,6 @@ func (a *App) SetInboxPaused() error { return nil }
 func (a *App) SetMCPServerEnabled() error { return nil }
 func (a *App) SetNetwork() error { return nil }
 func (a *App) SetPermissionMode() error { return nil }
-func (a *App) SetPluginEnabled(_name string, _enabled bool) error { return nil }
 func (a *App) SetProviderWebSearch() error { return nil }
 func (a *App) SetReasoningLanguage() error { return nil }
 func (a *App) SetSandbox() error { return nil }
@@ -213,7 +206,6 @@ func (a *App) TrySubagentProfile() error { return nil }
 func (a *App) UndoRewindForTab() error { return nil }
 func (a *App) UpdateInboxItem() error { return nil }
 func (a *App) UpdateMCPServer() error { return nil }
-func (a *App) UpdatePlugin(_name string) error { return nil }
 func (a *App) UpdateRemoteHost() error { return nil }
 func (a *App) UpdateSubagentProfile() error { return nil }
 func (a *App) UpgradeDeepSeekProviderAccess() error { return nil }
