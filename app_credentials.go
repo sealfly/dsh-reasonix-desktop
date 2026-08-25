@@ -123,6 +123,6 @@ func (a *App) FetchProviderModels(config map[string]any) []any {
 }
 
 // FetchAllProviderModels 返回全部 provider 的模型列表（结构同 modelsRefs）。
-func (a *App) FetchAllProviderModels() []any {
+func (a *App) FetchAllProviderModels(_a1 any) []any {
 	return a.modelsRefs("")
 }

@@ -76,7 +76,7 @@ func (a *App) MemoryForTab(_tabID string) map[string]any { return a.Memory() }
 func (a *App) MemoryRevisions() []any { return []any{} }
 
 // MemoryRevisionsForTab 指定会话记忆修订。
-func (a *App) MemoryRevisionsForTab(_tabID string) []any { return []any{} }
+func (a *App) MemoryRevisionsForTab(_a1 any, _a2 any) []any { return []any{} }
 
 // MemorySuggestions 记忆建议。
 func (a *App) MemorySuggestions() map[string]any {
@@ -275,13 +275,13 @@ func (a *App) NewSessionForTab(_tabID string) map[string]any {
 }
 
 // OpenGlobalTab 打开全局标签。
-func (a *App) OpenGlobalTab() map[string]any { return a.NewSessionForTab("") }
+func (a *App) OpenGlobalTab(_a1 any) map[string]any { return a.NewSessionForTab("") }
 
 // OpenProjectTab 打开项目标签。
-func (a *App) OpenProjectTab(_root string) map[string]any { return a.NewSessionForTab("") }
+func (a *App) OpenProjectTab(_a1 any, _a2 any) map[string]any { return a.NewSessionForTab("") }
 
 // OpenTopicSession 打开话题会话。
-func (a *App) OpenTopicSession(_scope, _workspaceRoot, _topicID string) map[string]any {
+func (a *App) OpenTopicSession(_a1 any, _a2 any, _a3 any, _a4 any) map[string]any {
 	return a.NewSessionForTab("")
 }
 
@@ -304,7 +304,7 @@ func (a *App) RemoveWorkspace(_root string) error { return nil }
 func (a *App) RevealPath(_path string) {}
 
 // RevealWorkspacePathForTab 显示会话工作区路径。
-func (a *App) RevealWorkspacePathForTab(_tabID string) {}
+func (a *App) RevealWorkspacePathForTab(_a1 any, _a2 any) {}
 
 // RevealWorkspaceWriterForTab 显示写入者。
 func (a *App) RevealWorkspaceWriterForTab(_tabID string) {}
@@ -313,10 +313,10 @@ func (a *App) RevealWorkspaceWriterForTab(_tabID string) {}
 func (a *App) OpenLocalPath(_path string) {}
 
 // OpenLocalPathInExternalOpener 用外部打开器打开。
-func (a *App) OpenLocalPathInExternalOpener(_path string) {}
+func (a *App) OpenLocalPathInExternalOpener(_a1 any, _a2 any) {}
 
 // OpenWorkspacePathForTab 打开会话工作区路径。
-func (a *App) OpenWorkspacePathForTab(_tabID string) {}
+func (a *App) OpenWorkspacePathForTab(_a1 any, _a2 any) {}
 
 // PickWorkspace 选择工作区（无 UI 选择器，空）。
 func (a *App) PickWorkspace() string { return "" }
@@ -325,10 +325,10 @@ func (a *App) PickWorkspace() string { return "" }
 func (a *App) PickExportFile() map[string]any { return nil }
 
 // SaveExportFile 保存导出文件。
-func (a *App) SaveExportFile(_path, _content string) error { return nil }
+func (a *App) SaveExportFile(_a1 any, _a2 any, _a3 any) error { return nil }
 
 // SaveExportImageFiles 保存导出图片。
-func (a *App) SaveExportImageFiles(_paths []string) error { return nil }
+func (a *App) SaveExportImageFiles(_a1 any, _a2 any) error { return nil }
 
 // ReadFileForTab 读文件。
 func (a *App) ReadFileForTab(_tabID, _path string) string { return "" }
@@ -361,7 +361,7 @@ func (a *App) ResolveWorkspacePathForTab(_tabID string) string { return "" }
 func (a *App) CheckUpdate() map[string]any { return map[string]any{"available": false, "version": ""} }
 
 // ApplyUpdateRequest 应用更新。
-func (a *App) ApplyUpdateRequest(_version string) error { return nil }
+func (a *App) ApplyUpdateRequest(_a1 any, _a2 any, _a3 any) error { return nil }
 
 // AbandonPendingUpdate 放弃待处理更新。
 func (a *App) AbandonPendingUpdate() {}
@@ -379,7 +379,7 @@ func (a *App) RecordUIPerf(_event string, _ms float64) {}
 func (a *App) ReloadSettings() {}
 
 // ReloadRuntime 重新加载运行时。
-func (a *App) ReloadRuntime() {}
+func (a *App) ReloadRuntime(_a1 any) {}
 
 // ReloadUserConfig 重新加载用户配置。
 func (a *App) ReloadUserConfig() {}

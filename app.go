@@ -33,7 +33,9 @@ func (a *App) startup(ctx context.Context) {
 }
 
 // domReady 在前端 DOM 就绪后调用。
-func (a *App) domReady(ctx context.Context) {}
+func (a *App) domReady(ctx context.Context) {
+	a.ctx = ctx
+}
 
 // shutdown 在应用关闭时调用（清理终端子进程）。
 func (a *App) shutdown(ctx context.Context) {

@@ -30,46 +30,78 @@ func (a *App) tabMeta(s dshSession, idx int) map[string]any {
 			}
 		}
 	}
+	wsName := filepathBase(cwd)
 	return map[string]any{
 		"id":            s.SessionID,
 		"tabId":         s.SessionID,
+		"topicId":       s.SessionID,
+		"sessionPath":   s.SessionID + ".jsonl",
+		"scope":         "global",
 		"title":         title,
+		"topicTitle":    title,
+		"label":         title,
 		"cwd":           cwd,
 		"workspaceRoot": cwd,
+		"workspaceName": wsName,
+		"workspacePath": cwd,
 		"running":       s.Running,
+		"ready":         true,
 		"readOnly":      false,
 		"active":        idx == 0,
 		"order":         idx,
 	}
 }
 
+// filepathBase 返回路径最后一段（跨平台，避免引入 path/filepath 冲突）。
+func filepathBase(p string) string {
+	for i := len(p) - 1; i >= 0; i-- {
+		if p[i] == '/' || p[i] == '\\' {
+			if i+1 < len(p) {
+				return p[i+1:]
+			}
+			return p
+		}
+	}
+	return p
+}
+
 // Tabs 返回当前所有会话的 TabMeta 列表（前端启动/刷新时读）。
 func (a *App) Tabs() []any {
+	resumeLog("Tabs called")
 	if a.dsh == nil {
 		return []any{}
 	}
 	raw, err := a.dsh.RPC("session.list", map[string]any{})
 	if err != nil {
+		resumeLog("Tabs err=%v", err)
 		return []any{}
 	}
 	var list struct {
 		Items []dshSession `json:"items"`
 	}
 	if err := DecodeRPC(raw, &list); err != nil {
+		resumeLog("Tabs decode err=%v", err)
 		return []any{}
 	}
 	tabs := make([]any, 0, len(list.Items))
 	for i, s := range list.Items {
 		tabs = append(tabs, a.tabMeta(s, i))
 	}
+	resumeLog("Tabs: %d sessions", len(tabs))
 	return tabs
 }
 
 // ListTabs 同 Tabs（兼容前端 bridge.ts 的方法名）。
-func (a *App) ListTabs() []any { return a.Tabs() }
+func (a *App) ListTabs() []any {
+	resumeLog("ListTabs called")
+	return a.Tabs()
+}
 
 // ListSessions 同 Tabs（部分前端路径用 ListSessions）。
-func (a *App) ListSessions() []any { return a.Tabs() }
+func (a *App) ListSessions() []any {
+	resumeLog("ListSessions called")
+	return a.Tabs()
+}
 
 // CreateSession 创建会话（DSH session.create 透传）。
 func (a *App) CreateSession(workspaceRoot, preset string) (map[string]any, error) {
