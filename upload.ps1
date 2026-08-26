@@ -1,7 +1,12 @@
-# 用 GitHub Git Data API 推送本地提交（git push 被墙，api.github.com 可达）
-# 推送 8d2ffa0..master 的 5 个提交，force 更新 master（本地链含远程链全部内容，tree 已验证一致）
+# upload.ps1 — GitHub Git Data API 推送通道（git push 被墙时的替代）。
+# 改造版：基于远程当前 master 动态推送 —— 找出本地"内容不在远程"的提交，
+# 重建为挂在远程 head 之后的新提交链，快进更新 master（不覆盖远程历史）。
+# 用法：pwsh -File upload.ps1
+
 $ErrorActionPreference = "Stop"
 $repo = "sealfly/dsh-reasonix-desktop"
+# 仓库根 = 脚本所在目录（可移植：clone 到任意路径都可运行，无需改路径）
+$workdir = $PSScriptRoot
 $token = (gh auth token).Trim()
 $h = @{ Authorization = "Bearer $token"; Accept = "application/vnd.github+json" }
 
@@ -37,7 +42,7 @@ function Get-GitBytes($gitArgs) {
   $psi = New-Object System.Diagnostics.ProcessStartInfo
   $psi.FileName = "git"
   $psi.Arguments = ($gitArgs -join ' ')
-  $psi.WorkingDirectory = "C:\Users\chenz\Desktop\dsh-reasonix-wails"
+  $psi.WorkingDirectory = $workdir
   $psi.UseShellExecute = $false
   $psi.RedirectStandardOutput = $true
   $psi.RedirectStandardError = $true
@@ -55,119 +60,117 @@ function Get-GitText($gitArgs) {
   return [System.Text.Encoding]::UTF8.GetString($bytes).TrimEnd("`r","`n")
 }
 
-# 1) 远程已有 blob 集合 = 本地 8d2ffa0（=远程同 commit）与 b7a3048（=远程 6cc1e558 同 tree）的 blob（内容寻址，SHA 一致）
-$remoteShas = @{}
-foreach ($base in @('8d2ffa079c32d96ebc47febeae9edf346b2faad0','b7a3048ef3742048e62c40022df4fa4144ebbc5b')) {
-  $ls = Get-GitText "ls-tree -r $base"
-  foreach ($line in ($ls -split "`n")) {
+# ===== 1) 远程当前 master =====
+$ref = ghget "/repos/$repo/git/ref/heads/master"
+$remoteHead = $ref.object.sha
+Write-Output "远程 master: $remoteHead"
+
+# ===== 2) 远程已有对象集合（内容寻址判据）=====
+$rc = ghget "/repos/$repo/commits/$remoteHead"
+$remoteTrees = @{}
+$remoteBlobs = @{}
+# 远程 master tree 递归（当前工作树的所有 blob/tree）
+$rt = ghget "/repos/$repo/git/trees/$($rc.commit.tree.sha)?recursive=1"
+foreach ($e in $rt.tree) {
+  if ($e.type -eq 'blob') { $remoteBlobs[$e.sha] = $true }
+  elseif ($e.type -eq 'tree') { $remoteTrees[$e.sha] = $true }
+}
+# 远程链所有提交的顶层 tree（历史 tree 也视为已有——内容寻址判 base 用）
+$chain = ghget "/repos/$repo/commits?per_page=100&sha=master"
+foreach ($citem in $chain) { $remoteTrees[$citem.commit.tree.sha] = $true }
+Write-Output "远程已有: blob $($remoteBlobs.Count) tree $($remoteTrees.Count)"
+
+# ===== 3) 本地提交列表，找"内容已在远程"的 base =====
+$commits = (Get-GitText "log --format=%H master") -split "`n" | Where-Object { $_.Trim() -ne '' }
+$toPush = @()
+$base = $null
+foreach ($c in $commits) {
+  $treeSha = (Get-GitText "rev-parse ${c}^{tree}").Trim()
+  if ($remoteTrees.ContainsKey($treeSha)) {
+    $base = $c
+    break
+  }
+  $toPush = @($c) + $toPush
+}
+if (-not $base) { throw "未找到内容已在远程的基础提交（远程 head 的 tree 不覆盖任何本地提交）" }
+Write-Output "base（内容已在远程）: $($base.Substring(0,10))"
+Write-Output "待推送提交（旧→新）: $(($toPush | ForEach-Object { $_.Substring(0,10) }) -join ' ')"
+
+# ===== 4) 上传缺失 blob =====
+# 本地 base 的 blob 视为远程已有（内容寻址：base tree 在远程）；待推提交的 blob 全集减之
+$baseBlobs = @{}
+foreach ($line in ((Get-GitText "ls-tree -r $base") -split "`n")) {
+  if ($line.Trim() -eq '') { continue }
+  $meta = ($line -split "`t")[0] -split '\s+'
+  if ($meta[1] -eq 'blob') { $remoteBlobs[$meta[2]] = $true; $baseBlobs[$meta[2]] = $true }
+}
+$allBlobs = @{}
+foreach ($c in $toPush) {
+  foreach ($line in ((Get-GitText "ls-tree -r $c") -split "`n")) {
     if ($line.Trim() -eq '') { continue }
-    $parts = $line -split '\t'
-    $meta = $parts[0] -split '\s+'
-    if ($meta[1] -eq 'blob') { $remoteShas[$meta[2]] = $true }
+    $meta = ($line -split "`t")[0] -split '\s+'
+    if ($meta[1] -eq 'blob') { $allBlobs[$meta[2]] = $true }
   }
 }
-Write-Output "远程已有 blob: $($remoteShas.Count)"
-
-# 2) 本地链 blob 全集（去重）
-$commitList = @(
-  'bb62a3a4a3216a627390355d7af4a33d43e6293f',
-  'ff43b227ae95a16905f4b2e00a075d497109971d',
-  '9baf05b583080a39068c2e90bd60fef12f5aea44',
-  'b7a3048ef3742048e62c40022df4fa4144ebbc5b',
-  'a69eaa26f34d51f800e6bcddbc986b6d1a76eecb'
-)
-$localBlobs = @{}
-foreach ($c in $commitList) {
-  $ls = Get-GitText "ls-tree -r $c"
-  foreach ($line in ($ls -split "`n")) {
-    if ($line.Trim() -eq '') { continue }
-    $parts = $line -split '\t'
-    $sha = ($parts[0] -split '\s+')[2]
-    $localBlobs[$sha] = $true
-  }
-}
-Write-Output "本地 blob 总数: $($localBlobs.Count)"
-
-# 3) 上传缺失 blob
-$missing = @($localBlobs.Keys | Where-Object { -not $remoteShas.ContainsKey($_) })
-Write-Output "需上传 blob: $($missing.Count)"
-$n = 0
+$missing = @($allBlobs.Keys | Where-Object { -not $remoteBlobs.ContainsKey($_) })
+Write-Output "缺失 blob: $($missing.Count)"
 foreach ($s in $missing) {
-  $n++
-  $bytes = Get-GitBytes "cat-file blob $s"
-  $b64 = [Convert]::ToBase64String($bytes)
-  $r = ghpost "/repos/$repo/git/blobs" @{ content = $b64; encoding = "base64" }
-  if ($r.sha -ne $s) { throw "blob SHA mismatch: expected $s got $($r.sha)" }
-  Write-Output "  [$n/$($missing.Count)] blob $($s.Substring(0,10)) $($bytes.Length) bytes OK"
+  $b64 = [Convert]::ToBase64String((Get-GitBytes "cat-file blob $s"))
+  ghpost "/repos/$repo/git/blobs" @{ content = $b64; encoding = "base64" } | Out-Null
+  Write-Output "  [blob] $($s.Substring(0,10)) OK"
 }
 
-# 4) 递归重建 tree
-function Build-TreeFromEntries($entries, $prefix) {
-  # entries: array of hashtables {path, sha, mode, type}
-  $dirs = @{}
-  $files = @()
-  foreach ($e in $entries) {
-    $rel = $e.path
-    if ($prefix.Length -gt 0) {
-      if (-not $rel.StartsWith($prefix)) { continue }
-      $rel = $rel.Substring($prefix.Length)
-    }
-    $rel = $rel.TrimStart('/')
-    if ($rel -match '/') {
-      $d = ($rel -split '/')[0]
-      if (-not $dirs.ContainsKey($d)) { $dirs[$d] = @() }
-      $dirs[$d] += $e
-    } else {
-      $files += $e
-    }
+# ===== 5) 递归重建 tree（远程/已创建命中则跳过）=====
+$createdTrees = @{}
+function Build-Tree($commit, $dir) {
+  if ($dir -eq '') {
+    $shaLine = (Get-GitText "rev-parse ${commit}^{tree}").Trim()
+  } else {
+    $shaLine = (Get-GitText "rev-parse ${commit}:${dir}").Trim()
   }
-  $items = @()
-  foreach ($f in $files) {
-    $name = $f.path
-    if ($prefix.Length -gt 0) { $name = $name.Substring($prefix.Length).TrimStart('/') }
-    $items += @{ path = $name; mode = $f.mode; type = 'blob'; sha = $f.sha }
+  if ($remoteTrees.ContainsKey($shaLine) -or $createdTrees.ContainsKey($shaLine)) {
+    return $shaLine
   }
-  foreach ($d in ($dirs.Keys | Sort-Object)) {
-    $childPrefix = $prefix + $d + '/'
-    $childSha = Build-TreeFromEntries $dirs[$d] $childPrefix
-    $items += @{ path = $d; mode = '040000'; type = 'tree'; sha = $childSha }
-  }
-  if ($items.Count -eq 0) { return $null }
-  $r = ghpost "/repos/$repo/git/trees" @{ tree = $items }
-  return $r.sha
-}
-
-# 5) 逐提交创建 tree + commit
-$parentSha = '8d2ffa079c32d96ebc47febeae9edf346b2faad0'
-foreach ($c in $commitList) {
-  Write-Output "--- 提交 $($c.Substring(0,8))"
-  # 该提交的 entries
-  $ls = Get-GitText "ls-tree -r $c"
+  $list = if ($dir -eq '') { Get-GitText "ls-tree $commit" } else { Get-GitText "ls-tree ${commit}:${dir}" }
   $entries = @()
-  foreach ($line in ($ls -split "`n")) {
+  foreach ($line in ($list -split "`n")) {
     if ($line.Trim() -eq '') { continue }
-    $parts = $line -split '\t'
+    $parts = $line -split "`t"
     $meta = $parts[0] -split '\s+'
-    $entries += @{ path = $parts[1]; sha = $meta[2]; mode = $meta[0]; type = $meta[1] }
+    $name = $parts[1]
+    if ($meta[1] -eq 'tree') {
+      $subDir = if ($dir -eq '') { $name } else { "$dir/$name" }
+      $sub = Build-Tree $commit $subDir
+      $entries += @{ path = $name; mode = $meta[0]; type = "tree"; sha = $sub }
+    } else {
+      $entries += @{ path = $name; mode = $meta[0]; type = $meta[1]; sha = $meta[2] }
+    }
   }
-  $rootTree = Build-TreeFromEntries $entries ""
-  Write-Output "  根 tree: $rootTree"
-  $msg = Get-GitText "log -1 --format=%B $c"
-  $an = Get-GitText "log -1 --format=%an $c"; $ae = Get-GitText "log -1 --format=%ae $c"; $ad = Get-GitText "log -1 --format=%aI $c"
-  $cn = Get-GitText "log -1 --format=%cn $c"; $ce = Get-GitText "log -1 --format=%ce $c"; $cd = Get-GitText "log -1 --format=%cI $c"
-  $body = @{
-    message = $msg
-    tree = $rootTree
-    parents = @($parentSha)
-    author = @{ name = $an; email = $ae; date = $ad }
-    committer = @{ name = $cn; email = $ce; date = $cd }
-  }
-  $commit = ghpost "/repos/$repo/git/commits" $body
-  Write-Output "  新 commit: $($commit.sha)"
-  $parentSha = $commit.sha
+  $t = ghpost "/repos/$repo/git/trees" @{ tree = $entries }
+  $createdTrees[$t.sha] = $true
+  return $t.sha
 }
 
-# 6) force 更新 master
-$ref = ghpatch "/repos/$repo/git/refs/heads/master" @{ sha = $parentSha; force = $true }
-Write-Output "master 已更新: $($ref.object.sha)"
+# ===== 6) 逐提交创建 commit（parent 链挂到远程 head 之后）=====
+$prev = $remoteHead
+foreach ($c in $toPush) {
+  $treeSha = Build-Tree $c ''
+  $msg = (Get-GitText "log -1 --format=%B $c").Trim()
+  $au = (Get-GitText "log -1 --format=%an|%ae|%aI $c").Split('|')
+  $co = (Get-GitText "log -1 --format=%cn|%ce|%cI $c").Split('|')
+  $body = @{
+    message   = $msg
+    tree      = $treeSha
+    parents   = @($prev)
+    author    = @{ name = $au[0]; email = $au[1]; date = $au[2] }
+    committer = @{ name = $co[0]; email = $co[1]; date = $co[2] }
+  }
+  $nc = ghpost "/repos/$repo/git/commits" $body
+  Write-Output "提交 $($c.Substring(0,10)) -> $($nc.sha.Substring(0,10))"
+  $prev = $nc.sha
+}
+
+# ===== 7) 快进更新 master =====
+ghpatch "/repos/$repo/git/refs/heads/master" @{ sha = $prev; force = $true } | Out-Null
+Write-Output "master 已更新: $prev"
 Write-Output "完成"
