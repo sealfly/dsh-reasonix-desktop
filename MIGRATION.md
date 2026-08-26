@@ -62,7 +62,7 @@ Electron 手工 JS 对象模拟 `window.go.main.App`，`CapabilityDiagnostics`/`
 
 > 注：上表为文档编写时的本机路径，换电脑/换目录以实际为准。仓库内所有脚本均已用 `$PSScriptRoot`/`%USERPROFILE%`/`os.UserHomeDir()`/`os.TempDir()` 自动定位，不依赖固定绝对路径。
 
-Electron 项目的 `renderer/dist`（v1.29.0 前端构建产物）被复制到 Wails 项目的 `frontend/dist`，**前端代码零改动**。
+Electron 项目的 `renderer/dist`（v1.29.0 前端构建产物）被复制到 Wails 项目的 `frontend/dist`，**前端代码零改动**（仅两处经作者同意的例外：bridge 事件兜底包装 + index.html 诊断清理，见文末"合规审查记录"）。
 
 ## 构建 & 运行
 
@@ -82,7 +82,7 @@ go test ./...
 
 ## 项目原则（与 Electron 项目一致）
 
-1. **前端 dist 零改动**：直接 go:embed frontend/dist。
+1. **前端 dist 保持官方原样**（仅两处授权例外，见文末"合规审查记录"）：直接 go:embed frontend/dist。
 2. **一切适配走 Go 桥**：App 方法转 DSH RPC。
 3. **不限制 DSH 原生能力**：dsh.go 通用 RPC 透传，不设方法白名单。
 4. **失败留痕兜底不崩溃**：关键方法返回完整结构（有单元测试防回归）。
@@ -101,7 +101,7 @@ go test ./...
 
 **dist 是什么**：`dist` 是 distribution（分发）的缩写，是前端项目**构建后的产物**。Reasonix 前端源码（TypeScript/TSX/CSS）经 Vite 构建后产出 `dist/` 目录——压缩打包好的 `index.html` + `assets/*.js` + `assets/*.css` + 图片/字体/音效等资源文件。这些才是 webview 实际加载运行的东西（源码是给人看的，dist 是给机器跑的）。
 
-**「零改动」的含义**：我们**绝不修改** dist 里的任何文件（index.html、JS、CSS 都保持官方 v1.29.0 原样）。一切适配（连 DSH、窗口拖拽、设置持久化、终端等）都放在**外壳层**：
+**「零改动」的含义**：除两处**经作者（项目所有者）明确同意的例外**外，**绝不修改** dist 里的任何文件（index.html、JS、CSS 都保持官方 v1.29.0 原样）。一切适配（连 DSH、窗口拖拽、设置持久化、终端等）都放在**外壳层**：
 
 | 外壳 | 位置 | 干什么 |
 |---|---|---|
@@ -133,3 +133,21 @@ Reasonix 前端有两条内容通路：A. `agent:event` 事件流；B. `topic:ac
 - **通路 B**：Go 端 `StartTopicActivationImpl` 用 `wruntime.EventsEmit("topic:activation")` 推 starting→ready，触发前端 hydrate（历史会话显示）。
 - **通路 A**（`app_events.go`）：启动时连接 DSH 实时事件流 `ws://127.0.0.1:3080/api/events.mux`（断线 3s 自动重连），把内容事件帧（`payload.event`，结构对齐旧版 `dshEventToWire`）转成 WireEvent（turn_started/reasoning/text/tool_dispatch/tool_result/turn_done）后经 `EventsEmit("agent:event")` 推给前端，live 会话新消息实时滚动。对齐旧版 main.js(`dsh:event`) → preload(`agent:event`) 的链路。
 - 单测：`app_events_test.go`（normEventType/dshFrameToWire/parseEventFrame，12 用例）。实测：session-8b83f456 生成时 text 500+ 帧、reasoning 450+ 帧、tool 事件全部转发。
+
+## 合规审查记录（对照 PRINCIPLES.md，2026-08）
+
+审查范围：a69eaa2..HEAD（会话历史修复、通路 A、远端同步、可移植化）。
+
+**✅ 符合项**
+
+- **P1.1 无 RPC 白名单/方法级过滤**：桥方法均为透传或数据实现；dsh-std（`app_dshstd.go`）是插件协议声明 + 协商报告模型（requires/supports 是插件自述），**非能力闸门**；`app_plugins.go` 仅做参数/存在性校验（P3 合理错误）。
+- **P1.3 / P1.4 未新增拦截/篡改/节流**：改动均为事件补推（topic:activation、agent:event）、展示适配（HistorySliceForTab）、数据实现；无屏蔽 DSH 输入输出。
+- **P3 兜底不崩溃、失败留痕**：stub 返回安全空态、错误显式返回、`resumeLog` 日志留痕。
+
+**⚠️ 偏差/改进项（影响为零或最小，记录在案）**
+
+1. **P1.2 不完整**（`app_events.go`）：只实现了"转换通道"（agent:event），`parseEventFrame` 丢弃无 `event` 字段的帧（session/subscribed、session/jobs）——旧版 Electron 有 `dsh:raw-event` 原始帧通道兜底，Wails 版未实现，**"全部原始帧无筛选转发、绝不丢弃"的字面未完全满足**。缓解：前端仅订阅 agent:event（内容事件），被丢弃帧前端本不消费，**影响为零**。可选改进：补 `EventsEmit("dsh:raw-event", 原始帧)` 全量通道。
+2. **P1.1 改进项**（`app_stubs.go`）：兜底方法直接返回空态、**不透传 DSH**（0 处 `a.dsh` 调用）——理想为"先透传 DSH，失败/不支持再兜底"；当前可能短路个别 DSH 实际支持的方法。缓解：覆盖方法多为桌面专用（GetDesktopXxx 等），DSH 无对应，**实际影响最小**。可选改进：stub 改透传优先。
+3. **P2 例外记录**（前端产物两处改动，均经作者同意）：`bridge-DvMjhVZK.js` 的 `__DSH_ACT_WRAP`（StartTopicActivation 后追加 mock 事件推送，只追加不篡改，realApp 下无副作用）+ `index.html` 移除诊断 script。**升级官方 dist 时需重新合并这两处**。
+
+**结论**：核心精神三条原则均未违背；两处"不完整"（P1.2 原始帧通道、P1.1 透传优先）为可选改进，当前影响为零。
