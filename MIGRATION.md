@@ -57,8 +57,10 @@ Electron 手工 JS 对象模拟 `window.go.main.App`，`CapabilityDiagnostics`/`
 
 | 项目 | 路径 | 角色 |
 |---|---|---|
-| **dsh-reasonix-desktop**（Electron） | `C:\Users\chenz\Desktop\dsh-reasonix-desktop` | 旧版，fault-layout-ghost 分支保存了排查现场 |
-| **dsh-reasonix-wails**（Wails） | `C:\Users\chenz\Desktop\dsh-reasonix-wails` | 新版，本迁移的成果 |
+| **dsh-reasonix-desktop**（Electron） | `%USERPROFILE%\Desktop\dsh-reasonix-desktop`（本机现场为 `C:\Users\chenz\Desktop\dsh-reasonix-desktop`） | 旧版，fault-layout-ghost 分支保存了排查现场 |
+| **dsh-reasonix-wails**（Wails） | `%USERPROFILE%\Desktop\dsh-reasonix-wails`（本机现场为 `C:\Users\chenz\Desktop\dsh-reasonix-wails`） | 新版，本迁移的成果 |
+
+> 注：上表为文档编写时的本机路径，换电脑/换目录以实际为准。仓库内所有脚本均已用 `$PSScriptRoot`/`%USERPROFILE%`/`os.UserHomeDir()`/`os.TempDir()` 自动定位，不依赖固定绝对路径。
 
 Electron 项目的 `renderer/dist`（v1.29.0 前端构建产物）被复制到 Wails 项目的 `frontend/dist`，**前端代码零改动**。
 

@@ -1,10 +1,41 @@
-# 生成缺失的 Go stub 方法
-$new = "C:\Users\chenz\Desktop\DSH-deskop\reasonix-desktop\desktop\frontend\src"
-$preloadFile = "C:\Users\chenz\Desktop\dsh-reasonix-desktop\src\preload.js"
-$outFile = "C:\Users\chenz\Desktop\dsh-reasonix-wails\app_stubs2.go"
+﻿# 生成缺失的 Go stub 方法（一次性工具：从 Electron 旧版前端/preload 对比生成）。
+# 可移植：所有路径参数化，默认从 $PSScriptRoot 与 %USERPROFILE% 推导；
+# 换电脑后路径变化时传参数即可：.\gen-stubs.ps1 -ReasonixFrontendSrc <...> -PreloadFile <...>
+
+param(
+  # 旧版前端 src 目录（含 app.xxx( 调用的 ts/tsx）
+  [string]$ReasonixFrontendSrc = "",
+  # 旧版 Electron preload.js
+  [string]$PreloadFile = "",
+  # 本仓库 Go 源码目录（默认脚本所在目录）
+  [string]$GoSrcDir = "",
+  # 输出文件
+  [string]$OutFile = "",
+  # preload 方法清单（名\t参数串，由 preload 分析脚本生成）
+  [string]$PreloadMethodsTxt = ""
+)
+
+$ErrorActionPreference = "Stop"
+if (-not $GoSrcDir) { $GoSrcDir = $PSScriptRoot }
+if (-not $OutFile) { $OutFile = Join-Path $GoSrcDir "app_stubs2.go" }
+if (-not $PreloadMethodsTxt) { $PreloadMethodsTxt = Join-Path $env:TEMP "preload-methods.txt" }
+# 旧版仓库默认位置：本机旧存档（换电脑请用 -ReasonixFrontendSrc / -PreloadFile 指定）
+if (-not $ReasonixFrontendSrc) { $ReasonixFrontendSrc = Join-Path $env:USERPROFILE "Desktop\DSH-deskop\reasonix-desktop\desktop\frontend\src" }
+if (-not $PreloadFile) { $PreloadFile = Join-Path $env:USERPROFILE "Desktop\dsh-reasonix-desktop\src\preload.js" }
+
+foreach ($p in @(
+  @{ Name = "ReasonixFrontendSrc"; Path = $ReasonixFrontendSrc; Need = "前端 ts 源码" },
+  @{ Name = "PreloadFile"; Path = $PreloadFile; Need = "旧版 preload.js" },
+  @{ Name = "PreloadMethodsTxt"; Path = $PreloadMethodsTxt; Need = "preload 方法清单" }
+)) {
+  if (-not (Test-Path $p.Path)) {
+    Write-Error "缺少 $($p.Name)（$($p.Need)）：$($p.Path)`n请用 -$($p.Name) 参数指定实际路径"
+    exit 1
+  }
+}
 
 # 前端调用的方法
-$frontendMethods = Get-ChildItem $new -Recurse -Include *.ts,*.tsx |
+$frontendMethods = Get-ChildItem $ReasonixFrontendSrc -Recurse -Include *.ts,*.tsx |
   Where-Object { $_.FullName -notmatch '__tests__|bridge.ts' } |
   Select-String -Pattern 'app\.[A-Z][A-Za-z0-9]+\(' -AllMatches |
   ForEach-Object { $_.Matches } |
@@ -12,12 +43,12 @@ $frontendMethods = Get-ChildItem $new -Recurse -Include *.ts,*.tsx |
   Sort-Object -Unique
 
 # Go 已实现
-$goMethods = Select-String -Path "C:\Users\chenz\Desktop\dsh-reasonix-wails\*.go" -Pattern 'func \(a \*App\) ([A-Z][A-Za-z0-9]+)\(' |
+$goMethods = Select-String -Path (Join-Path $GoSrcDir "*.go") -Pattern 'func \(a \*App\) ([A-Z][A-Za-z0-9]+)\(' |
   ForEach-Object { $_.Matches[0].Groups[1].Value } | Sort-Object -Unique
 
 # preload 方法定义（名 -> 参数串）
 $preloadDef = @{}
-Get-Content "$env:TEMP\preload-methods.txt" | ForEach-Object {
+Get-Content $PreloadMethodsTxt | ForEach-Object {
   $parts = $_ -split "`t", 2
   if ($parts.Count -eq 2) { $preloadDef[$parts[0]] = $parts[1] }
 }
@@ -81,6 +112,6 @@ foreach ($m in $missing) {
   }
 }
 
-$lines | Out-File -FilePath $outFile -Encoding UTF8
-Write-Host "已生成 $outFile"
+$lines | Out-File -FilePath $OutFile -Encoding UTF8
+Write-Host "已生成 $OutFile"
 Write-Host "共 $($lines.Count) 行"

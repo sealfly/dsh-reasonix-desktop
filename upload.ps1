@@ -1,4 +1,4 @@
-# upload.ps1 — GitHub Git Data API 推送通道（git push 被墙时的替代）。
+﻿# upload.ps1 — GitHub Git Data API 推送通道（git push 被墙时的替代）。
 # 改造版：基于远程当前 master 动态推送 —— 找出本地"内容不在远程"的提交，
 # 重建为挂在远程 head 之后的新提交链，快进更新 master（不覆盖远程历史）。
 # 用法：pwsh -File upload.ps1
