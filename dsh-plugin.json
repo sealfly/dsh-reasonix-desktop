@@ -1,0 +1,85 @@
+{
+  "$schema": "https://dsh-std.dev/schemas/dsh-plugin-0.15.schema.json",
+  "manifestVersion": "0.15",
+  "id": "com.dsh-reasonix/desktop",
+  "name": "DSH-ReasonixUI",
+  "version": "0.2.0",
+  "description": "DSH-Reasonix 桌面客户端（Wails）——dsh-std 合规 Host",
+  "facets": {
+    "host": {
+      "entry": "dsh-reasonix-ui",
+      "apiVersion": "host.dsh/v1alpha1"
+    }
+  },
+  "requires": {
+    "contracts": [
+      {
+        "apiVersion": "core.dsh/v1alpha1",
+        "kind": "Negotiation",
+        "optional": false
+      },
+      {
+        "apiVersion": "connection.dsh/v1alpha1",
+        "kind": "Connection",
+        "optional": false
+      },
+      {
+        "apiVersion": "session.dsh/v1alpha1",
+        "kind": "Session",
+        "optional": false
+      }
+    ]
+  },
+  "supports": {
+    "contracts": [
+      {
+        "apiVersion": "command.dsh/v1",
+        "kind": "CommandRuntime"
+      },
+      {
+        "apiVersion": "tool.dsh/v1",
+        "kind": "Tool"
+      },
+      {
+        "apiVersion": "model.dsh/v1",
+        "kind": "ModelCatalog"
+      },
+      {
+        "apiVersion": "presentation.dsh/v1alpha1",
+        "kind": "Presentation"
+      },
+      {
+        "apiVersion": "manifest.dsh/v1alpha1",
+        "kind": "Manifest"
+      }
+    ]
+  },
+  "permissions": [
+    {
+      "name": "network",
+      "scope": "127.0.0.1:3080",
+      "reason": "连接 DSH 后端"
+    },
+    {
+      "name": "filesystem",
+      "scope": "workspace",
+      "reason": "读取工作区文件"
+    }
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "id": "dsh-reasonix.open-settings",
+        "title": "打开设置"
+      },
+      {
+        "id": "dsh-reasonix.plugin-market",
+        "title": "插件市场"
+      },
+      {
+        "id": "dsh-reasonix.new-session",
+        "title": "新建会话"
+      }
+    ]
+  }
+}

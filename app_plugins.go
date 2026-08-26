@@ -330,9 +330,12 @@ func (a *App) InstallPlugin(source string, options map[string]any) (string, erro
 	}
 	mgr.saveInstalled(list)
 	// 返回安装计划（前端 parsePluginInstallPlan 读取）
+	// dsh-std 兼容性预检：模拟插件声明（plugin 支持其市场类别协议），与本端协商
+	negotiation := negotiatePluginCompatibility(inst.Name, mp.Category)
 	plan := map[string]any{
 		"ok": true, "status": "done", "kind": "plugin",
 		"name": inst.Name, "source": inst.Source,
+		"dshStd": negotiation,
 		"actions": []any{map[string]any{
 			"kind": "plugin", "action": "install_plugin_package",
 			"name": inst.Name, "source": inst.Source, "status": "done",
@@ -340,6 +343,58 @@ func (a *App) InstallPlugin(source string, options map[string]any) (string, erro
 	}
 	b, _ := json.Marshal(plan)
 	return string(b), nil
+}
+
+// negotiatePluginCompatibility 生成插件与本端的 dsh-std 协商摘要。
+// 根据插件市场分类推断插件声明的协议（ui→presentation, tools→tool, model→model, 等）。
+func negotiatePluginCompatibility(pluginName, category string) map[string]any {
+	// 插件支持的协议（按分类推断；实际安装时会读取真实 dsh-plugin.json）
+	pluginSupports := []ProtocolSupport{}
+	switch category {
+	case "ui", "theme", "fun":
+		pluginSupports = append(pluginSupports,
+			ProtocolSupport{ApiReference: ApiReference{APIVersion: "presentation.dsh/v1alpha1", Kind: "Presentation"}})
+	case "tools":
+		pluginSupports = append(pluginSupports,
+			ProtocolSupport{ApiReference: ApiReference{APIVersion: "tool.dsh/v1", Kind: "Tool"}})
+	case "model":
+		pluginSupports = append(pluginSupports,
+			ProtocolSupport{ApiReference: ApiReference{APIVersion: "model.dsh/v1", Kind: "ModelCatalog"}})
+	case "session":
+		pluginSupports = append(pluginSupports,
+			ProtocolSupport{ApiReference: ApiReference{APIVersion: "session.dsh/v1alpha1", Kind: "Session"}})
+	case "command":
+		pluginSupports = append(pluginSupports,
+			ProtocolSupport{ApiReference: ApiReference{APIVersion: "command.dsh/v1", Kind: "CommandRuntime"}})
+	default:
+		pluginSupports = append(pluginSupports,
+			ProtocolSupport{ApiReference: ApiReference{APIVersion: "tool.dsh/v1", Kind: "Tool"}})
+	}
+	decls := []ProtocolDeclaration{
+		dshStdDeclarations(),
+		{Participant: ParticipantIdentity{ID: pluginName}, Supports: pluginSupports},
+	}
+	report := Negotiate(decls)
+	return map[string]any{
+		"compatible": report.Compatible,
+		"protocols": func() []any {
+			out := []any{}
+			for _, p := range report.Protocols {
+				out = append(out, map[string]any{
+					"apiVersion": p.APIVersion, "kind": p.Kind,
+					"participants": p.Participants, "issues": p.Issues,
+				})
+			}
+			return out
+		}(),
+		"issues": func() []any {
+			out := []any{}
+			for _, i := range report.Issues {
+				out = append(out, map[string]any{"code": i.Code, "severity": i.Severity, "message": i.Message})
+			}
+			return out
+		}(),
+	}
 }
 
 // PlanPluginInstall 安装前预览（dry-run）。返回计划 JSON。
