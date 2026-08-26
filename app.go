@@ -30,6 +30,7 @@ func (a *App) startup(ctx context.Context) {
 	a.dsh = NewDshClient(3080)
 	a.st = NewSettings()
 	a.term = NewTerminalManager()
+	a.startEventStream()
 }
 
 // domReady 在前端 DOM 就绪后调用。
