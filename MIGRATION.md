@@ -120,6 +120,7 @@ go test ./...
 
 ## 剩余可选工作（不影响核心目标）
 
+- **⚠️ 实时事件流通路（agent:event）未实现**：Reasonix 前端有两条内容通路——A. `agent:event` 事件流（DSH 实时/历史事件回放，前端从流重建会话内容）；B. `topic:activation` → hydrate → `HistorySliceForTab` 拉历史。Wails 版只实现了通路 B（已修复：Go 端 `EventsEmit("topic:activation")` 推 starting→ready）；**通路 A 缺失**——桥没有把 DSH 实时事件流转发到前端（Electron 旧版用 `webContents.send('dsh:event')` → preload `eventsEmit('agent:event')` 实现）。**影响**：历史会话正常；点开**正在运行（live）**的会话时，新消息的实时滚动不完整（前端靠轮询兜底）。**下一步方案**：Go 端订阅 DSH 实时事件流（turn/text/reasoning/tool），转成 WireEvent 结构后用 `wruntime.EventsEmit(ctx, "agent:event", wire)` 推给前端（事件名/结构对齐 Electron 旧版 preload 的 `replayHistory` 输出）。
 - MCP/远程/任务目录等低频方法的完整数据实现（当前返回空态，前端降级）
 - closeBehavior 的 background 模式（当前简化为 quit）
 - 质量地板/窗口缩放的持久化落盘（当前内存）
