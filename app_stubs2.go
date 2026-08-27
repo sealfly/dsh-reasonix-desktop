@@ -54,8 +54,32 @@ func (a *App) DiagnoseBotConnection(_a1 any) error { return nil }
 func (a *App) DisconnectRemoteHost() error { return nil }
 func (a *App) DismissTodoBatchForTab() error { return nil }
 func (a *App) EnqueueInboxSteer(_a1 any, _a2 any, _a3 any, _a4 any) error { return nil }
-func (a *App) EnsureBlankSurface(_a1 any, _a2 any) error { return nil }
-func (a *App) EnsureBlankTab(_a1 any, _a2 any) error { return nil }
+// EnsureBlankSurface 新建空白会话（单面布局；前端"新建对话"入口），返回 tabMeta（新会话）。
+func (a *App) EnsureBlankSurface(scope string, workspaceRoot string) map[string]any {
+	return a.blankSessionMeta(scope, workspaceRoot)
+}
+
+// EnsureBlankTab 新建空白标签（前端"新建对话"入口），返回 tabMeta（新会话）。
+func (a *App) EnsureBlankTab(scope string, workspaceRoot string) map[string]any {
+	return a.blankSessionMeta(scope, workspaceRoot)
+}
+
+// blankSessionMeta 创建新会话并返回 tabMeta（应用默认审批；失败返回空 map 兜底，P3）。
+func (a *App) blankSessionMeta(scope, workspaceRoot string) map[string]any {
+	root := workspaceRoot
+	if scope != "project" {
+		root = ""
+	}
+	if root == "" {
+		root = homeDir()
+	}
+	s, err := a.CreateSession(root, "")
+	if err != nil {
+		return map[string]any{}
+	}
+	a.applyDefaultApproval(s)
+	return s
+}
 func (a *App) ExportThemePack() string { return "" }
 func (a *App) Forget(_name string) error { return nil }
 func (a *App) ForgetForTab(_tabID string, _name string) error { return nil }
