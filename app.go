@@ -8,6 +8,8 @@ import (
 	"context"
 	"runtime"
 
+	"golang.org/x/sys/windows"
+
 	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -31,6 +33,33 @@ func (a *App) startup(ctx context.Context) {
 	a.st = NewSettings()
 	a.term = NewTerminalManager()
 	a.startEventStream()
+	a.startShowEventListener()
+}
+
+// startShowEventListener 监听命名事件 "Local\DSH-ReasonixUI-Show"：
+// background 模式下另一实例运行时触发该事件，本实例收到后显示并聚焦窗口。
+func (a *App) startShowEventListener() {
+	go func() {
+		name, err := windows.UTF16PtrFromString(`Local\DSH-ReasonixUI-Show`)
+		if err != nil {
+			return
+		}
+		h, err := windows.CreateEvent(nil, 0, 0, name)
+		if err != nil {
+			resumeLog("show-event create failed: %v", err)
+			return
+		}
+		for {
+			if _, werr := windows.WaitForSingleObject(h, 0xFFFFFFFF); werr != nil {
+				return
+			}
+			if a.ctx != nil {
+				wruntime.WindowShow(a.ctx)
+				wruntime.WindowUnminimise(a.ctx)
+				wruntime.WindowExecJS(a.ctx, "window.focus()")
+			}
+		}
+	}()
 }
 
 // domReady 在前端 DOM 就绪后调用。
@@ -70,8 +99,15 @@ func (a *App) ToggleMaximiseMainWindow() {
 }
 
 // CloseMainWindow 关闭主窗口（= 退出应用；closeBehavior 的 background 模式暂简化为 quit）。
+// CloseMainWindow 关闭主窗口：按 closeBehavior 决定 quit（退出）或 background（隐藏保持后台）。
 func (a *App) CloseMainWindow() {
 	if a.ctx == nil {
+		return
+	}
+	if a.st != nil && a.st.CloseBehavior() == "background" {
+		// background：隐藏窗口，进程与 DSH 保持运行；再次运行 exe（单实例）触发显示事件恢复窗口。
+		resumeLog("close: background mode -> hide window (rerun exe to restore)")
+		wruntime.WindowHide(a.ctx)
 		return
 	}
 	wruntime.Quit(a.ctx)

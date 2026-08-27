@@ -181,11 +181,17 @@ func (a *App) SetTrayLocale(_locale string) error { return nil }
 // SetDisplayMode 显示模式。
 func (a *App) SetDisplayMode(_mode string) error { return nil }
 
-// SetStatusBarStyle 状态栏样式。
-func (a *App) SetStatusBarStyle(_style string) error { return nil }
+// SetStatusBarStyle 状态栏样式（icon/text，持久化）。
+func (a *App) SetStatusBarStyle(style string) error {
+	a.st.SetStatusBarStyle(style)
+	return nil
+}
 
-// SetStatusBarItems 状态栏项目。
-func (a *App) SetStatusBarItems(_items []string) error { return nil }
+// SetStatusBarItems 状态栏显示项（持久化）。
+func (a *App) SetStatusBarItems(items []string) error {
+	a.st.SetStatusBarItems(items)
+	return nil
+}
 
 // SetDefaultModel 默认模型。
 func (a *App) SetDefaultModel(_ref string) error { return nil }
@@ -211,8 +217,11 @@ func (a *App) SetMaxParallelWriters(_n int) error { return nil }
 // SetCompactRatio 压缩比例。
 func (a *App) SetCompactRatio(_ratio float64) error { return nil }
 
-// SetDefaultToolApprovalMode 默认工具审批模式。
-func (a *App) SetDefaultToolApprovalMode(_mode string) error { return nil }
+// SetDefaultToolApprovalMode 默认工具审批模式（ask/auto/yolo，持久化；新会话自动应用）。
+func (a *App) SetDefaultToolApprovalMode(mode string) error {
+	a.st.SetDefaultToolApprovalMode(mode)
+	return nil
+}
 
 // SetAutoPlan 自动规划。
 func (a *App) SetAutoPlan(_mode string) error { return nil }
@@ -271,7 +280,65 @@ func (a *App) NewSessionForTab(_tabID string) map[string]any {
 	if err != nil {
 		return map[string]any{}
 	}
+	a.applyDefaultApproval(s)
 	return s
+}
+
+// applyDefaultApproval 新会话自动应用默认审批（ask/auto/yolo）。
+// auto（默认）不干预（对齐旧版语义：DSH 默认）；ask/yolo 经 DSH commands/execute
+// /permission <preset> 设置；失败仅日志，不阻断会话创建（P3：兜底不崩溃）。
+func (a *App) applyDefaultApproval(meta map[string]any) {
+	mode := ""
+	if a.st != nil {
+		mode = a.st.DefaultToolApprovalMode()
+	}
+	if mode == "" || mode == "auto" {
+		return
+	}
+	sid, _ := meta["tabId"].(string)
+	if sid == "" {
+		sid, _ = meta["id"].(string)
+	}
+	if sid == "" || a.dsh == nil {
+		return
+	}
+	perm := modeToPermission(mode)
+	if perm == "" {
+		return
+	}
+	apply := func(p string) error {
+		_, err := a.dsh.RPC("commands/execute", map[string]any{
+			"args": map[string]any{"agentId": sid, "line": "/permission " + p},
+		})
+		return err
+	}
+	if err := apply(perm); err != nil {
+		// ask 的 read-only preset 在默认配置可能不存在，回退 workspace-write（对齐旧版）。
+		if mode == "ask" {
+			if err2 := apply("workspace-write"); err2 != nil {
+				resumeLog("applyDefaultApproval: %v; fallback failed: %v", err, err2)
+				return
+			}
+			resumeLog("applyDefaultApproval: session %s -> ask (fallback workspace-write)", sid)
+			return
+		}
+		resumeLog("applyDefaultApproval: %v", err)
+		return
+	}
+	resumeLog("applyDefaultApproval: session %s -> %s (%s)", sid, mode, perm)
+}
+
+// modeToPermission 审批模式 → DSH /permission preset（对齐旧版 MODE_TO_PERMISSION）。
+func modeToPermission(mode string) string {
+	switch mode {
+	case "ask":
+		return "read-only"
+	case "auto":
+		return "workspace-write"
+	case "yolo":
+		return "danger-full-access"
+	}
+	return ""
 }
 
 // OpenGlobalTab 打开全局标签。

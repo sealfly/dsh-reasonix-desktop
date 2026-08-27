@@ -19,8 +19,11 @@ type desktopSettings struct {
 	Currency         string `json:"currency"`         // CNY/USD/""（空=跟随语言）
 	ReasoningMode    string `json:"reasoningMode"`    // hidden/summary/auto/expanded
 	Zoom             float64 `json:"zoom"`            // 窗口缩放 0.5–2.0
-	CloseBehavior    string `json:"closeBehavior"`    // quit/background
-	Language         string `json:"language"`         // zh/en
+	CloseBehavior    string   `json:"closeBehavior"`    // quit/background
+	Language         string   `json:"language"`         // zh/en
+	StatusBarStyle   string   `json:"statusBarStyle"`   // icon/text
+	StatusBarItems   []string `json:"statusBarItems"`   // workspace/model/context/usage/cache/cost...
+	DefaultToolApprovalMode string `json:"defaultToolApprovalMode"` // ask/auto/yolo
 }
 
 // Settings 是设置持久化的句柄（内存缓存 + JSON 文件）。
@@ -42,6 +45,9 @@ func NewSettings() *Settings {
 			Zoom:          1.0,
 			CloseBehavior: "quit",
 			Language:      "zh",
+			StatusBarStyle: "text",
+			StatusBarItems: []string{"workspace", "model", "context", "usage", "cache", "cost"},
+			DefaultToolApprovalMode: "auto",
 		},
 	}
 	if raw, err := os.ReadFile(s.path); err == nil {
@@ -139,5 +145,40 @@ func (s *Settings) SetLanguage(v string) {
 		v = "zh"
 	}
 	s.data.Language = v
+	s.save()
+}
+
+func (s *Settings) StatusBarStyle() string { return s.data.StatusBarStyle }
+func (s *Settings) SetStatusBarStyle(v string) {
+	if v != "icon" {
+		v = "text"
+	}
+	s.data.StatusBarStyle = v
+	s.save()
+}
+
+func (s *Settings) StatusBarItems() []string { return s.data.StatusBarItems }
+func (s *Settings) SetStatusBarItems(v []string) {
+	items := []string{}
+	for _, x := range v {
+		if x != "" {
+			items = append(items, x)
+		}
+	}
+	if len(items) == 0 {
+		items = []string{"workspace", "model", "context", "usage", "cache", "cost"}
+	}
+	s.data.StatusBarItems = items
+	s.save()
+}
+
+func (s *Settings) DefaultToolApprovalMode() string { return s.data.DefaultToolApprovalMode }
+func (s *Settings) SetDefaultToolApprovalMode(v string) {
+	switch v {
+	case "ask", "yolo":
+		s.data.DefaultToolApprovalMode = v
+	default:
+		s.data.DefaultToolApprovalMode = "auto"
+	}
 	s.save()
 }

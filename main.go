@@ -17,11 +17,46 @@ import (
 	"embed"
 	"os"
 
+	gwsys "golang.org/x/sys/windows"
+
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/windows"
 )
+
+// 单实例互斥体与显示事件（closeBehavior=background 时：关窗隐藏进程保留，
+// 再次运行 exe 会触发旧实例显示窗口并退出新实例）。
+const (
+	showEventName = `Local\DSH-ReasonixUI-Show`
+	mutexName     = `Local\DSH-ReasonixUI-Single`
+)
+
+// alreadyRunning 检查是否已有实例在运行（创建互斥体，ERROR_ALREADY_EXISTS 即已有）。
+func alreadyRunning() bool {
+	name, err := gwsys.UTF16PtrFromString(mutexName)
+	if err != nil {
+		return false
+	}
+	_, err = gwsys.CreateMutex(nil, false, name)
+	if err == gwsys.ERROR_ALREADY_EXISTS {
+		return true
+	}
+	// 首次创建成功：句柄由进程持有至退出（不关闭），保证互斥。
+	return false
+}
+
+// requestShow 触发旧实例的显示事件（background 恢复窗口用）。
+func requestShow() {
+	name, err := gwsys.UTF16PtrFromString(showEventName)
+	if err != nil {
+		return
+	}
+	if h, err := gwsys.CreateEvent(nil, 0, 0, name); err == nil && h != 0 {
+		_ = gwsys.SetEvent(h)
+		_ = gwsys.CloseHandle(h)
+	}
+}
 
 // assets embeds the built frontend (Reasonix v1.29.0 dist, copied from the
 // Electron project's renderer/dist). 前端构建产物零改动地嵌入。
@@ -31,6 +66,12 @@ var assets embed.FS
 
 func main() {
 	app := NewApp()
+
+	// 单实例：已有实例（background 模式隐藏）时请求其显示窗口后退出本实例。
+	if alreadyRunning() {
+		requestShow()
+		return
+	}
 
 	err := wails.Run(&options.App{
 		Title:     "DSH-ReasonixUI",
