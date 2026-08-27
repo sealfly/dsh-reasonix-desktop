@@ -5,3 +5,108 @@ import{t as e}from"./array-BKHaHXxq.js";import{c as t}from"./i18n-BFpIrKUj.js";i
 try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__win.go||!__win.go.main||!__win.go.main.App)return;var __app=__win.go.main.App;var __orig=__app.StartTopicActivation;if(typeof __orig!=='function')return;__app.StartTopicActivation=function(__req){var __res=__orig.apply(this,arguments);if(__res&&typeof __res.then==='function'){return __res.then(function(__r){try{if(__r&&__r.requestId){var __rid=__r.requestId,__tid=__r.tabId;__emitMockTopicActivation({requestId:__rid,tabId:__tid,phase:'starting'});(typeof Promise!=='undefined'?Promise.resolve():__win.Promise.resolve()).then(function(){try{__emitMockTopicActivation({requestId:__rid,tabId:__tid,phase:'ready'})}catch(__e){}});__win.setTimeout(function(){try{__emitMockTopicActivation({requestId:__rid,tabId:__tid,phase:'ready'})}catch(__e){}},0)}}catch(__e){}return __r})}return __res}})()}catch(__e){}
 
 
+
+;/* __DSH_PLUGIN_MARKET: minimal DSH plugin-market UI injected into the Settings > Plugins page.
+   Pure DOM injection; the Reasonix frontend has no plugin-market surface, so this adds a
+   "browse market" toggle that calls window.go.main.App.PluginMarket / InstallPlugin. */
+;(function(){
+  if (typeof window === 'undefined' || !document) return;
+  var INJECTED = '__dshPluginMarketInjected';
+  var panel = null;
+  function app(){ try { return window.go && window.go.main && window.go.main.App; } catch(e){ return null; } }
+  function injectIntoPluginPage(){
+    var installer = document.querySelector('.cap-plugin-installer');
+    if (!installer) return;
+    if (installer.getAttribute(INJECTED)) return;
+    installer.setAttribute(INJECTED, '1');
+    var root = document.createElement('div');
+    root.style.cssText = 'margin:12px 0;padding:10px;border:1px solid rgba(128,128,128,.35);border-radius:8px;';
+    var head = document.createElement('div');
+    head.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;';
+    var title = document.createElement('span');
+    title.textContent = 'DSH 插件市场';
+    title.style.cssText = 'font-weight:600;';
+    var toggle = document.createElement('button');
+    toggle.textContent = '浏览市场';
+    toggle.className = 'btn btn--small';
+    head.appendChild(title); head.appendChild(toggle);
+    root.appendChild(head);
+    panel = document.createElement('div');
+    panel.style.display = 'none';
+    root.appendChild(panel);
+    if (installer.parentNode) installer.parentNode.insertBefore(root, installer);
+    toggle.addEventListener('click', function(){
+      if (panel.style.display === 'none') { loadMarket('', ''); panel.style.display = 'block'; toggle.textContent = '收起'; }
+      else { panel.style.display = 'none'; toggle.textContent = '浏览市场'; }
+    });
+  }
+  function loadMarket(query, category){
+    var A = app(); if (!A || !panel) return;
+    panel.innerHTML = '<div style="padding:6px;opacity:.7">加载市场…</div>';
+    A.PluginMarket(query || '', category || '').then(function(data){
+      renderMarket(data || {});
+    }).catch(function(e){
+      panel.innerHTML = '<div style="padding:6px;color:#e06c75">市场加载失败: ' + (e && e.message || e) + '</div>';
+    });
+  }
+  function renderMarket(data){
+    var items = data.items || [];
+    var cats = data.categories || [];
+    var bar = document.createElement('div');
+    bar.style.cssText = 'display:flex;gap:6px;margin-bottom:8px;';
+    var search = document.createElement('input');
+    search.placeholder = '搜索插件…';
+    search.style.cssText = 'flex:1;padding:4px 8px;border-radius:6px;border:1px solid rgba(128,128,128,.4);background:transparent;color:inherit;';
+    var sel = document.createElement('select');
+    sel.style.cssText = 'padding:4px;border-radius:6px;border:1px solid rgba(128,128,128,.4);background:transparent;color:inherit;';
+    var optAll = document.createElement('option'); optAll.value = ''; optAll.textContent = '全部分类'; sel.appendChild(optAll);
+    for (var ci = 0; ci < cats.length; ci++) {
+      var c = cats[ci];
+      var o = document.createElement('option'); o.value = c.id; o.textContent = (c.zh || c.en || c.id); sel.appendChild(o);
+    }
+    var go = document.createElement('button'); go.textContent = '搜索'; go.className = 'btn btn--small';
+    bar.appendChild(search); bar.appendChild(sel); bar.appendChild(go);
+    var list = document.createElement('div');
+    list.style.cssText = 'display:flex;flex-direction:column;gap:6px;max-height:320px;overflow:auto;';
+    for (var i = 0; i < items.length; i++) {
+      (function(it){
+        var row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 8px;border-radius:6px;border:1px solid rgba(128,128,128,.2);';
+        var info = document.createElement('div');
+        info.style.cssText = 'flex:1;min-width:0;';
+        var nm = document.createElement('div');
+        nm.textContent = it.name + (it.stars ? ' ⭐' + it.stars : '');
+        nm.style.cssText = 'font-weight:600;';
+        var ds = document.createElement('div');
+        ds.textContent = (it.descriptionZh || it.description || '');
+        ds.style.cssText = 'font-size:12px;opacity:.75;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+        info.appendChild(nm); info.appendChild(ds);
+        var inst = document.createElement('button');
+        inst.textContent = '安装'; inst.className = 'btn btn--primary btn--small';
+        inst.addEventListener('click', function(){ installPlugin(it, inst); });
+        row.appendChild(info); row.appendChild(inst);
+        list.appendChild(row);
+      })(items[i]);
+    }
+    if (!items.length) list.innerHTML = '<div style="padding:6px;opacity:.7">无匹配插件</div>';
+    panel.innerHTML = '';
+    panel.appendChild(bar); panel.appendChild(list);
+    go.addEventListener('click', function(){ loadMarket(search.value, sel.value); });
+    search.addEventListener('keydown', function(e){ if (e.key === 'Enter') loadMarket(search.value, sel.value); });
+  }
+  function installPlugin(it, btn){
+    var A = app(); if (!A) return;
+    var src = it.install || it.url || it.name;
+    btn.textContent = '安装中…';
+    A.InstallPlugin(src, {name: it.name}).then(function(plan){
+      try { var p = JSON.parse(plan); btn.textContent = (p && p.ok) ? '已安装' : '失败'; }
+      catch(e){ btn.textContent = '完成'; }
+      setTimeout(function(){ if (panel) loadMarket('', ''); }, 800);
+    }).catch(function(){
+      btn.textContent = '失败';
+    });
+  }
+  var obs = new MutationObserver(function(){ injectIntoPluginPage(); });
+  try { obs.observe(document.documentElement, {childList: true, subtree: true}); } catch(e){}
+  injectIntoPluginPage();
+})();

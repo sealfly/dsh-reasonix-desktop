@@ -105,3 +105,61 @@ func TestPluginDoctor(t *testing.T) {
 		t.Fatalf("PluginDoctor 对未安装插件应返回 error 字段")
 	}
 }
+
+// ===== dsh-std inventory 解析 =====
+
+func TestPluginNameFromItem(t *testing.T) {
+	if got := pluginNameFromItem(map[string]any{"name": "mcp-server"}); got != "mcp-server" {
+		t.Fatalf("top-level name -> %q", got)
+	}
+	if got := pluginNameFromItem(map[string]any{"manifest": map[string]any{"name": "tool-plugin"}}); got != "tool-plugin" {
+		t.Fatalf("manifest name -> %q", got)
+	}
+	if got := pluginNameFromItem(map[string]any{"description": "x"}); got != "" {
+		t.Fatalf("no name -> %q, want empty", got)
+	}
+	if got := pluginNameFromItem(map[string]any{"manifest": "not-a-map"}); got != "" {
+		t.Fatalf("malformed manifest -> %q", got)
+	}
+}
+
+func TestDSHPluginToView(t *testing.T) {
+	it := map[string]any{
+		"name":        "dsh-tools",
+		"description": "DSH 工具插件",
+		"version":     "1.2.0",
+		"enabled":     false,
+		"manifest": map[string]any{
+			"apiVersion":  "tool.dsh/v1",
+			"kind":        "Tool",
+			"description": "manifest desc",
+			"version":     "9.9.9",
+		},
+	}
+	v := dshPluginToView(it, "dsh-tools")
+	if v["name"] != "dsh-tools" || v["manifestKind"] != "dsh-std" {
+		t.Fatalf("name/manifestKind wrong: %v %v", v["name"], v["manifestKind"])
+	}
+	if v["enabled"] != false {
+		t.Fatalf("enabled = %v, want false", v["enabled"])
+	}
+	if v["apiVersion"] != "tool.dsh/v1" || v["kind"] != "Tool" {
+		t.Fatalf("apiVersion/kind = %v/%v", v["apiVersion"], v["kind"])
+	}
+	if v["description"] != "DSH 工具插件" {
+		t.Fatalf("description = %v", v["description"])
+	}
+	if v["version"] != "1.2.0" {
+		t.Fatalf("version = %v", v["version"])
+	}
+}
+
+func TestDSHPluginToViewMissingManifest(t *testing.T) {
+	v := dshPluginToView(map[string]any{"name": "bare"}, "bare")
+	if v["manifestKind"] != "dsh-std" {
+		t.Fatalf("manifestKind = %v", v["manifestKind"])
+	}
+	if len(v["warnings"].([]any)) == 0 {
+		t.Fatalf("expected missing-manifest warning")
+	}
+}

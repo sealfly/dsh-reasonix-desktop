@@ -227,13 +227,92 @@ func sanitizeName(s string) string {
 
 // Plugins 返回已安装插件列表（DSH inventory + 本地清单合并）。
 // 前端 CapabilitiesPanel 读取；失败时返回空数组（前端正常降级）。
+// DSH 插件（dsh-std）标记 manifestKind="dsh-std"，本地清单状态（enabled）按名称覆盖。
 func (a *App) Plugins() []any {
-	list := getPluginManager().loadInstalled()
 	out := []any{}
-	for _, p := range list {
+	enabledBy := map[string]bool{}
+	// 1. 本地清单（UI 安装/启用状态）——先收集状态
+	local := getPluginManager().loadInstalled()
+	for _, p := range local {
+		enabledBy[p.Name] = p.Enabled
+	}
+	// 2. DSH 后端真实插件（dsh-std 协议，dynamicCordisRunner/inventory）
+	seen := map[string]bool{}
+	if a.dsh != nil {
+		if raw, err := a.dsh.RPC("dynamicCordisRunner/inventory", map[string]any{"args": map[string]any{}}); err == nil {
+			var items []map[string]any
+			if DecodeRPC(raw, &items) == nil {
+				for _, it := range items {
+					name := pluginNameFromItem(it)
+					if name == "" {
+						continue
+					}
+					seen[name] = true
+					v := dshPluginToView(it, name)
+					if en, ok := enabledBy[name]; ok {
+						v["enabled"] = en // 本地状态覆盖
+					}
+					out = append(out, v)
+				}
+			}
+		}
+	}
+	// 3. 本地清单中 DSH 未报告的（市场安装记录）补充显示
+	for _, p := range local {
+		if seen[p.Name] {
+			continue
+		}
 		out = append(out, installedToView(p))
 	}
 	return out
+}
+
+// pluginNameFromItem 从 DSH inventory 条目提取插件名（顶层 name 或 manifest.name）。
+func pluginNameFromItem(it map[string]any) string {
+	if n, ok := it["name"].(string); ok && n != "" {
+		return n
+	}
+	if m, ok := it["manifest"].(map[string]any); ok {
+		if n, ok := m["name"].(string); ok && n != "" {
+			return n
+		}
+	}
+	return ""
+}
+
+// dshPluginToView 把 DSH inventory 条目转成前端插件视图（dsh-std）。
+func dshPluginToView(it map[string]any, name string) map[string]any {
+	desc, _ := it["description"].(string)
+	version, _ := it["version"].(string)
+	enabled := true
+	if v, ok := it["enabled"].(bool); ok {
+		enabled = v
+	}
+	manifest := map[string]any{}
+	if m, ok := it["manifest"].(map[string]any); ok {
+		manifest = m
+		if desc == "" {
+			desc, _ = m["description"].(string)
+		}
+		if version == "" {
+			version, _ = m["version"].(string)
+		}
+	}
+	apiVersion, _ := manifest["apiVersion"].(string)
+	kind, _ := manifest["kind"].(string)
+	warnings := []any{}
+	if apiVersion == "" || kind == "" {
+		warnings = append(warnings, "missing dsh-std manifest apiVersion/kind")
+	}
+	return map[string]any{
+		"name": name, "root": "dsh://" + name, "version": version,
+		"description": desc, "source": "dsh", "manifestKind": "dsh-std",
+		"apiVersion": apiVersion, "kind": kind,
+		"enabled": enabled, "skills": 0, "commands": 0, "agents": 0, "hooks": 0,
+		"mcpServers": 0, "skillDetails": []any{}, "agentDetails": []any{},
+		"commandDetails": []any{}, "hookDetails": []any{}, "mcpServerDetails": []any{},
+		"warnings": warnings,
+	}
 }
 
 // PluginMarket 插件市场：搜索 GitHub dsh-market 目录。
