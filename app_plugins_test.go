@@ -163,3 +163,100 @@ func TestDSHPluginToViewMissingManifest(t *testing.T) {
 		t.Fatalf("expected missing-manifest warning")
 	}
 }
+
+// TestPluginMarketInstallFlow 模拟前端市场 UI 完整闭环：
+// 浏览市场 → 选一个 install 字段完整的插件 → 安装 → 已安装列表出现 → 卸载。
+func TestPluginMarketInstallFlow(t *testing.T) {
+	a := newTestApp()
+	// 1. 浏览市场（前端"浏览市场"按钮 → PluginMarket("","")）
+	market := a.PluginMarket("", "")
+	if market == nil {
+		t.Fatalf("PluginMarket 返回 nil")
+	}
+	items := market["items"].([]any)
+	if len(items) == 0 {
+		t.Fatalf("市场为空")
+	}
+	// 2. 挑一个 install 字段完整的（前端注入代码用 it.install || it.url || it.name）
+	var picked map[string]any
+	for _, it := range items {
+		m := it.(map[string]any)
+		if src, ok := m["install"].(string); ok && src != "" {
+			picked = m
+			break
+		}
+	}
+	if picked == nil {
+		t.Fatalf("市场条目均无 install 字段")
+	}
+	name, _ := picked["name"].(string)
+	src, _ := picked["install"].(string)
+	t.Logf("选中: %s  src=%s", name, src)
+	// 3. 安装（前端"安装"按钮 → InstallPlugin(src, {name}))
+	plan, err := a.InstallPlugin(src, map[string]any{"name": name})
+	if err != nil {
+		t.Fatalf("InstallPlugin 失败: %v", err)
+	}
+	if !strings.Contains(plan, name) {
+		t.Fatalf("安装计划不含插件名: %s", plan)
+	}
+	// 4. 已安装列表出现（前端 reload → Plugins()）
+	found := false
+	for _, p := range a.Plugins() {
+		m := p.(map[string]any)
+		if m["name"] == name {
+			found = true
+			if m["enabled"] != true {
+				t.Fatalf("安装后应默认启用")
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("安装后 Plugins() 不含 %s", name)
+	}
+	// 5. 卸载（前端"卸载"）
+	if err := a.RemovePlugin(name); err != nil {
+		t.Fatalf("RemovePlugin 失败: %v", err)
+	}
+	for _, p := range a.Plugins() {
+		if m := p.(map[string]any); m["name"] == name {
+			t.Fatalf("卸载后仍存在: %s", name)
+		}
+	}
+}
+
+// TestPluginMarketItemsComplete 市场条目关键字段完整性（前端安装依赖 install/url/name）。
+func TestPluginMarketItemsComplete(t *testing.T) {
+	a := newTestApp()
+	market := a.PluginMarket("", "")
+	items := market["items"].([]any)
+	if len(items) == 0 {
+		t.Fatalf("市场为空")
+	}
+	noName, noInstall := 0, 0
+	for _, it := range items {
+		m := it.(map[string]any)
+		if n, _ := m["name"].(string); n == "" {
+			noName++
+		}
+		if s, _ := m["install"].(string); s == "" {
+			noInstall++
+		}
+	}
+	total := len(items)
+	if noName > 0 {
+		t.Fatalf("%d/%d 条目缺 name", noName, total)
+	}
+	// install 缺失的条目必须能靠 url/name 兜底
+	for _, it := range items {
+		m := it.(map[string]any)
+		if s, _ := m["install"].(string); s == "" {
+			u, _ := m["url"].(string)
+			n, _ := m["name"].(string)
+			if u == "" && n == "" {
+				t.Fatalf("条目既无 install 也无 url/name 兜底: %v", m)
+			}
+		}
+	}
+	t.Logf("总数=%d install缺失=%d（可兜底）", total, noInstall)
+}
