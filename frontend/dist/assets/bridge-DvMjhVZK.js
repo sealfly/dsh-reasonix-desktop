@@ -6,114 +6,206 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
 
 
 
-;/* __DSH_PLUGIN_MARKET: minimal DSH plugin-market UI injected into the Settings > Plugins page.
-   Pure DOM injection; the Reasonix frontend has no plugin-market surface, so this adds a
-   "browse market" toggle that calls window.go.main.App.PluginMarket / InstallPlugin. */
+
+;/* __DSH_PLUGIN_MARKET v2 — MarketTab 风格移植（借鉴 dsh-plugin-market, MIT）:
+   搜索 / 分类 chips / 卡片(风险/已装/安装/卸载/详情) / 加载更多分页。
+   数据: MarketPage(query, category, page) — 浏览 500 条缓存后本地切页, 搜索分页缓存, 翻页零重复调用。 */
 ;(function(){
   if (typeof window === 'undefined' || !document) return;
   var INJECTED = '__dshPluginMarketInjected';
-  var panel = null;
+  var S = { query:'', category:'', page:1, total:0, hasMore:false, loading:false, items:[], expanded:null, installed:{}, busy:false };
+  var panel=null, listEl=null, moreEl=null, totalEl=null, msgEl=null, chipsEl=null;
   function app(){ try { return window.go && window.go.main && window.go.main.App; } catch(e){ return null; } }
+  var CSS = [
+    '.dsh-mkt{margin:12px 0;padding:10px;border:1px solid rgba(128,128,128,.35);border-radius:8px}',
+    '.dsh-mkt__head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}',
+    '.dsh-mkt__head b{font-weight:600}',
+    '.dsh-mkt__search{display:flex;gap:6px;margin-bottom:8px}',
+    '.dsh-mkt__search input{flex:1;padding:5px 8px;border-radius:6px;border:1px solid rgba(128,128,128,.4);background:transparent;color:inherit}',
+    '.dsh-mkt__chips{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px}',
+    '.dsh-mkt__chip{border:1px solid rgba(128,128,128,.35);border-radius:999px;padding:2px 10px;background:transparent;color:inherit;font-size:12px;cursor:pointer}',
+    '.dsh-mkt__chip[data-on="true"]{background:rgba(64,150,255,.25);border-color:rgba(64,150,255,.6)}',
+    '.dsh-mkt__title{display:flex;align-items:center;gap:8px;margin-bottom:6px}',
+    '.dsh-mkt__title span{font-size:12px;opacity:.7}',
+    '.dsh-mkt__list{display:flex;flex-direction:column;gap:6px;max-height:380px;overflow:auto}',
+    '.dsh-mkt__card{border:1px solid rgba(128,128,128,.22);border-radius:6px;padding:6px 8px}',
+    '.dsh-mkt__card[data-open="true"]{border-color:rgba(64,150,255,.5)}',
+    '.dsh-mkt__row{display:flex;align-items:center;justify-content:space-between;gap:8px}',
+    '.dsh-mkt__nm{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+    '.dsh-mkt__meta{font-size:12px;opacity:.8;white-space:nowrap}',
+    '.dsh-mkt__desc{font-size:12px;opacity:.7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:2px 0 0 0}',
+    '.dsh-mkt__foot{display:flex;align-items:center;gap:6px;margin-top:4px;flex-wrap:wrap}',
+    '.dsh-mkt__tag{font-size:11px;border-radius:4px;padding:1px 6px;border:1px solid rgba(128,128,128,.35)}',
+    '.dsh-mkt__tag[data-level="high"]{border-color:#e06c75;color:#e06c75}',
+    '.dsh-mkt__tag[data-level="medium"]{border-color:#d19a66;color:#d19a66}',
+    '.dsh-mkt__tag[data-level="low"]{border-color:#98c379;color:#98c379}',
+    '.dsh-mkt__detail{font-size:12px;margin-top:4px;padding-top:4px;border-top:1px dashed rgba(128,128,128,.3);word-break:break-all}',
+    '.dsh-mkt__more{width:100%;margin-top:8px;text-align:center;padding:4px;border-radius:6px;border:1px dashed rgba(128,128,128,.4);background:transparent;color:inherit;cursor:pointer}',
+    '.dsh-mkt__msg{font-size:12px;opacity:.8}',
+    '.dsh-mkt__busy{opacity:.6;pointer-events:none}',
+    '.dsh-mkt a{color:#61afef}'
+  ].join('');
   function injectIntoPluginPage(){
     var installer = document.querySelector('.cap-plugin-installer');
     if (!installer) return;
     if (installer.getAttribute(INJECTED)) return;
     installer.setAttribute(INJECTED, '1');
+    if (!document.getElementById('dsh-mkt-css')) {
+      var st = document.createElement('style'); st.id = 'dsh-mkt-css'; st.textContent = CSS; document.head.appendChild(st);
+    }
     var root = document.createElement('div');
-    root.style.cssText = 'margin:12px 0;padding:10px;border:1px solid rgba(128,128,128,.35);border-radius:8px;';
-    var head = document.createElement('div');
-    head.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;';
-    var title = document.createElement('span');
-    title.textContent = 'DSH 插件市场';
-    title.style.cssText = 'font-weight:600;';
-    var toggle = document.createElement('button');
-    toggle.textContent = '浏览市场';
-    toggle.className = 'btn btn--small';
-    head.appendChild(title); head.appendChild(toggle);
-    root.appendChild(head);
-    panel = document.createElement('div');
-    panel.style.display = 'none';
-    root.appendChild(panel);
+    root.className = 'dsh-mkt';
+    root.innerHTML =
+      '<div class="dsh-mkt__head"><b>DSH 插件市场</b><span class="dsh-mkt__msg"></span></div>' +
+      '<div class="dsh-mkt__search"><input type="search" placeholder="搜索插件…" aria-label="搜索"><button class="btn btn--small">搜索</button></div>' +
+      '<div class="dsh-mkt__chips"><button class="dsh-mkt__chip" data-on="true">全部</button></div>' +
+      '<div class="dsh-mkt__title"><b>目录</b><span></span></div>' +
+      '<div class="dsh-mkt__list"></div>' +
+      '<button class="dsh-mkt__more" style="display:none">加载更多</button>';
     if (installer.parentNode) installer.parentNode.insertBefore(root, installer);
-    toggle.addEventListener('click', function(){
-      if (panel.style.display === 'none') { loadMarket('', ''); panel.style.display = 'block'; toggle.textContent = '收起'; }
-      else { panel.style.display = 'none'; toggle.textContent = '浏览市场'; }
-    });
+    panel = root;
+    msgEl = root.querySelector('.dsh-mkt__msg');
+    chipsEl = root.querySelector('.dsh-mkt__chips');
+    totalEl = root.querySelector('.dsh-mkt__title span');
+    listEl = root.querySelector('.dsh-mkt__list');
+    moreEl = root.querySelector('.dsh-mkt__more');
+    var input = root.querySelector('.dsh-mkt__search input');
+    var btn = root.querySelector('.dsh-mkt__search button');
+    var debounce = null;
+    function onQuery(){ clearTimeout(debounce); debounce = setTimeout(function(){ S.query = input.value.trim(); loadPage(1); }, 220); }
+    input.addEventListener('input', onQuery);
+    btn.addEventListener('click', function(){ S.query = input.value.trim(); loadPage(1); });
+    input.addEventListener('keydown', function(e){ if (e.key === 'Enter'){ S.query = input.value.trim(); loadPage(1); } });
+    moreEl.addEventListener('click', function(){ if (S.hasMore && !S.loading) loadPage(S.page + 1); });
+    loadPage(1);
   }
-  function loadMarket(query, category){
+  function setMsg(m){ if (msgEl) msgEl.textContent = m || ''; }
+  function loadCategories(){
+    var A = app(); if (!A || !chipsEl) return;
+    A.PluginMarket('', '').then(function(d){
+      var cats = (d && d.categories) || [];
+      var html = '<button class="dsh-mkt__chip" data-on="' + (S.category === '' ? 'true' : 'false') + '">全部</button>';
+      for (var i = 0; i < cats.length; i++) {
+        var c = cats[i];
+        html += '<button class="dsh-mkt__chip" data-on="' + (S.category === c.id ? 'true' : 'false') + '" data-cat="' + esc(c.id) + '">' + esc(c.zh || c.en || c.id) + '</button>';
+      }
+      chipsEl.innerHTML = html;
+      var chips = chipsEl.querySelectorAll('.dsh-mkt__chip[data-cat]');
+      for (var j = 0; j < chips.length; j++) {
+        (function(chip){ chip.addEventListener('click', function(){
+          S.category = chip.getAttribute('data-cat');
+          loadPage(1);
+        }); })(chips[j]);
+      }
+      var allChip = chipsEl.querySelector('.dsh-mkt__chip:not([data-cat])');
+      if (allChip) allChip.addEventListener('click', function(){ S.category = ''; loadPage(1); });
+    }).catch(function(){});
+  }
+  function loadPage(page){
     var A = app(); if (!A || !panel) return;
-    panel.innerHTML = '<div style="padding:6px;opacity:.7">加载市场…</div>';
-    A.PluginMarket(query || '', category || '').then(function(data){
-      renderMarket(data || {});
+    S.loading = true; panel.className = 'dsh-mkt dsh-mkt__busy';
+    setMsg('加载中…');
+    A.MarketPage(S.query, S.category, page).then(function(d){
+      d = d || {};
+      S.page = page;
+      S.total = d.total || 0;
+      S.hasMore = !!d.hasMore;
+      if (page === 1) S.items = [];
+      S.items = S.items.concat(d.items || []);
+      if (totalEl) totalEl.textContent = '共 ' + S.total + ' 个';
+      renderList();
+      if (moreEl) moreEl.style.display = S.hasMore ? 'block' : 'none';
+      setMsg('');
+      S.loading = false; panel.className = 'dsh-mkt';
+      loadCategories();
+      loadInstalled();
     }).catch(function(e){
-      panel.innerHTML = '<div style="padding:6px;color:#e06c75">市场加载失败: ' + (e && e.message || e) + '</div>';
+      setMsg('加载失败: ' + (e && e.message || e));
+      S.loading = false; panel.className = 'dsh-mkt';
     });
   }
-  function renderMarket(data){
-    var items = data.items || [];
-    var cats = data.categories || [];
-    var bar = document.createElement('div');
-    bar.style.cssText = 'display:flex;gap:6px;margin-bottom:8px;';
-    var search = document.createElement('input');
-    search.placeholder = '搜索插件…';
-    search.style.cssText = 'flex:1;padding:4px 8px;border-radius:6px;border:1px solid rgba(128,128,128,.4);background:transparent;color:inherit;';
-    var sel = document.createElement('select');
-    sel.style.cssText = 'padding:4px;border-radius:6px;border:1px solid rgba(128,128,128,.4);background:transparent;color:inherit;';
-    var optAll = document.createElement('option'); optAll.value = ''; optAll.textContent = '全部分类'; sel.appendChild(optAll);
-    for (var ci = 0; ci < cats.length; ci++) {
-      var c = cats[ci];
-      var o = document.createElement('option'); o.value = c.id; o.textContent = (c.zh || c.en || c.id); sel.appendChild(o);
-    }
-    var go = document.createElement('button'); go.textContent = '搜索'; go.className = 'btn btn--small';
-    bar.appendChild(search); bar.appendChild(sel); bar.appendChild(go);
-    var list = document.createElement('div');
-    list.style.cssText = 'display:flex;flex-direction:column;gap:6px;max-height:320px;overflow:auto;';
-    for (var i = 0; i < items.length; i++) {
-      (function(it){
-        var row = document.createElement('div');
-        row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 8px;border-radius:6px;border:1px solid rgba(128,128,128,.2);';
-        var info = document.createElement('div');
-        info.style.cssText = 'flex:1;min-width:0;';
-        var nm = document.createElement('div');
-        var riskTag = it.risk === 'high' ? '🔴' : (it.risk === 'medium' ? '🟡' : '🟢');
-        nm.textContent = riskTag + ' ' + it.name + (it.stars ? ' ⭐' + it.stars : '');
-        nm.style.cssText = 'font-weight:600;';
-        var ds = document.createElement('div');
-        ds.textContent = (it.descriptionZh || it.description || '');
-        ds.style.cssText = 'font-size:12px;opacity:.75;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-        info.appendChild(nm); info.appendChild(ds);
-        var inst = document.createElement('button');
-        inst.textContent = '安装'; inst.className = 'btn btn--primary btn--small';
-        inst.addEventListener('click', function(){ installPlugin(it, inst); });
-        row.appendChild(info); row.appendChild(inst);
-        list.appendChild(row);
-      })(items[i]);
-    }
-    if (!items.length) list.innerHTML = '<div style="padding:6px;opacity:.7">无匹配插件</div>';
-    panel.innerHTML = '';
-    if (data.total) {
-      var totalLine = document.createElement('div');
-      totalLine.style.cssText = 'font-size:12px;opacity:.7;margin-bottom:6px;';
-      totalLine.textContent = '目录共 ' + data.total + ' 个插件' + (data.source === 'imsai' ? '（在线目录）' : '（离线目录）');
-      panel.appendChild(totalLine);
-    }
-    panel.appendChild(bar); panel.appendChild(list);
-    go.addEventListener('click', function(){ loadMarket(search.value, sel.value); });
-    search.addEventListener('keydown', function(e){ if (e.key === 'Enter') loadMarket(search.value, sel.value); });
-  }
-  function installPlugin(it, btn){
+  function loadInstalled(){
     var A = app(); if (!A) return;
-    var src = it.install || it.url || it.name;
+    A.Plugins().then(function(list){
+      list = list || [];
+      S.installed = {};
+      for (var i = 0; i < list.length; i++) if (list[i] && list[i].name) S.installed[list[i].name] = true;
+      renderList();
+    }).catch(function(){});
+  }
+  function riskEmoji(r){ return r === 'high' ? '🔴' : (r === 'medium' ? '🟡' : '🟢'); }
+  function riskName(r){ return r === 'high' ? '高' : (r === 'medium' ? '中' : '低'); }
+  function renderList(){
+    if (!listEl) return;
+    var html = '';
+    for (var i = 0; i < S.items.length; i++) {
+      (function(it){
+        var id = it.name || it.id || '';
+        var open = S.expanded === id;
+        var inst = S.installed[id];
+        var risk = it.risk || 'low';
+        html += '<div class="dsh-mkt__card" data-open="' + open + '">' +
+          '<div class="dsh-mkt__row">' +
+            '<span class="dsh-mkt__nm">' + esc(riskEmoji(risk)) + ' ' + esc(id) + (it.stars ? ' <span class="dsh-mkt__meta">★' + it.stars + '</span>' : '') + '</span>' +
+            '<button class="btn btn--small" data-toggle="' + esc(id) + '">' + (open ? '收起' : '详情') + '</button>' +
+          '</div>' +
+          '<p class="dsh-mkt__desc">' + esc(it.descriptionZh || it.description || '') + '</p>' +
+          '<div class="dsh-mkt__foot">' +
+            '<span class="dsh-mkt__tag" data-level="' + esc(risk) + '">' + riskName(risk) + ' 风险</span>' +
+            (it.owner ? '<span class="dsh-mkt__tag">' + esc(it.owner) + '</span>' : '') +
+            '<span style="flex:1"></span>' +
+            (inst ? '<button class="btn btn--small" data-uninstall="' + esc(id) + '">卸载</button>'
+                  : '<button class="btn btn--primary btn--small" data-install="' + esc(id) + '">安装</button>') +
+            (it.url ? '<a class="btn btn--small" href="' + esc(it.url) + '" target="_blank" rel="noopener">仓库</a>' : '') +
+          '</div>' +
+          (open ? '<div class="dsh-mkt__detail"><code>' + esc(it.install || it.url || '') + '</code></div>' : '') +
+        '</div>';
+      })(S.items[i]);
+    }
+    listEl.innerHTML = html || '<div style="padding:6px;opacity:.7">无匹配插件</div>';
+    listEl.querySelectorAll('[data-toggle]').forEach(function(b){ b.addEventListener('click', function(){
+      var id = b.getAttribute('data-toggle');
+      S.expanded = S.expanded === id ? null : id;
+      renderList();
+    }); });
+    listEl.querySelectorAll('[data-install]').forEach(function(b){ b.addEventListener('click', function(){
+      installPlugin(b.getAttribute('data-install'), b);
+    }); });
+    listEl.querySelectorAll('[data-uninstall]').forEach(function(b){ b.addEventListener('click', function(){
+      removePlugin(b.getAttribute('data-uninstall'), b);
+    }); });
+  }
+  function esc(s){ return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  function findItem(id){
+    for (var i = 0; i < S.items.length; i++) {
+      var it = S.items[i];
+      if ((it.name || it.id || '') === id) return it;
+    }
+    return null;
+  }
+  function installPlugin(id, btn){
+    var A = app(); var it = findItem(id); if (!A || !it) return;
     btn.textContent = '安装中…';
-    A.InstallPlugin(src, {name: it.name}).then(function(plan){
-      try { var p = JSON.parse(plan); btn.textContent = (p && p.ok) ? '已安装' : '失败'; }
-      catch(e){ btn.textContent = '完成'; }
-      setTimeout(function(){ if (panel) loadMarket('', ''); }, 800);
-    }).catch(function(){
-      btn.textContent = '失败';
-    });
+    var src = it.install || it.url || id;
+    A.InstallPlugin(src, { name: id }).then(function(plan){
+      try {
+        var p = JSON.parse(plan);
+        btn.textContent = (p && p.ok) ? '已安装' : '失败';
+        if (p && p.ok) S.installed[id] = true;
+      } catch(e){ btn.textContent = '完成'; S.installed[id] = true; }
+      setTimeout(function(){ renderList(); }, 700);
+    }).catch(function(){ btn.textContent = '失败'; });
+  }
+  function removePlugin(id, btn){
+    var A = app(); if (!A) return;
+    btn.textContent = '卸载中…';
+    A.RemovePlugin(id).then(function(){
+      delete S.installed[id];
+      btn.textContent = '已卸载';
+      setTimeout(function(){ renderList(); }, 700);
+    }).catch(function(){ btn.textContent = '失败'; });
   }
   var obs = new MutationObserver(function(){ injectIntoPluginPage(); });
-  try { obs.observe(document.documentElement, {childList: true, subtree: true}); } catch(e){}
+  try { obs.observe(document.documentElement, { childList: true, subtree: true }); } catch(e){}
   injectIntoPluginPage();
 })();

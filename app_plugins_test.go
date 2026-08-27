@@ -228,6 +228,48 @@ func TestPluginMarketOfflineHasSource(t *testing.T) {
 	}
 }
 
+// TestMarketPagePagination 分页契约（离线模式 → embed 本地分页）。
+func TestMarketPagePagination(t *testing.T) {
+	a := newTestApp()
+	p1 := a.MarketPage("", "", 1)
+	if p1["page"].(int) != 1 {
+		t.Fatalf("page = %v, want 1", p1["page"])
+	}
+	if p1["total"].(int) < 1000 {
+		t.Fatalf("embed total 应 >= 1000 (实际 %v)", p1["total"])
+	}
+	if !p1["hasMore"].(bool) {
+		t.Fatalf("2961 条应有更多页")
+	}
+	items1 := p1["items"].([]any)
+	if len(items1) == 0 || len(items1) > 100 {
+		t.Fatalf("page1 条数异常: %d", len(items1))
+	}
+	// page 2 应接续（不重叠）
+	p2 := a.MarketPage("", "", 2)
+	if len(p2["items"].([]any)) == 0 {
+		t.Fatalf("page2 空")
+	}
+	// 超界页 → 空 + hasMore=false
+	p999 := a.MarketPage("", "", 999)
+	if p999["hasMore"].(bool) {
+		t.Fatalf("超界页 hasMore 应为 false")
+	}
+	// page <= 0 归一为 1
+	p0 := a.MarketPage("", "", 0)
+	if p0["page"].(int) != 1 {
+		t.Fatalf("page<=0 应归一为 1")
+	}
+	// 搜索分页（离线 embed 搜索）
+	sp := a.MarketPage("sidebar", "", 1)
+	if len(sp["items"].([]any)) == 0 {
+		t.Fatalf("搜索 sidebar 应命中")
+	}
+	if sp["total"].(int) < 1 {
+		t.Fatalf("搜索 total 异常")
+	}
+}
+
 // TestPluginMarketInstallFlow 模拟前端市场 UI 完整闭环：
 // 浏览市场 → 选一个 install 字段完整的插件 → 安装 → 已安装列表出现 → 卸载。
 func TestPluginMarketInstallFlow(t *testing.T) {
