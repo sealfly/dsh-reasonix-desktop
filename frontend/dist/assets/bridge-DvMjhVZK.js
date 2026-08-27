@@ -75,7 +75,8 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
         var info = document.createElement('div');
         info.style.cssText = 'flex:1;min-width:0;';
         var nm = document.createElement('div');
-        nm.textContent = it.name + (it.stars ? ' ⭐' + it.stars : '');
+        var riskTag = it.risk === 'high' ? '🔴' : (it.risk === 'medium' ? '🟡' : '🟢');
+        nm.textContent = riskTag + ' ' + it.name + (it.stars ? ' ⭐' + it.stars : '');
         nm.style.cssText = 'font-weight:600;';
         var ds = document.createElement('div');
         ds.textContent = (it.descriptionZh || it.description || '');
@@ -90,6 +91,12 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
     }
     if (!items.length) list.innerHTML = '<div style="padding:6px;opacity:.7">无匹配插件</div>';
     panel.innerHTML = '';
+    if (data.total) {
+      var totalLine = document.createElement('div');
+      totalLine.style.cssText = 'font-size:12px;opacity:.7;margin-bottom:6px;';
+      totalLine.textContent = '目录共 ' + data.total + ' 个插件' + (data.source === 'imsai' ? '（在线目录）' : '（离线目录）');
+      panel.appendChild(totalLine);
+    }
     panel.appendChild(bar); panel.appendChild(list);
     go.addEventListener('click', function(){ loadMarket(search.value, sel.value); });
     search.addEventListener('keydown', function(e){ if (e.key === 'Enter') loadMarket(search.value, sel.value); });

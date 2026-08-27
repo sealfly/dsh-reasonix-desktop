@@ -315,10 +315,14 @@ func dshPluginToView(it map[string]any, name string) map[string]any {
 	}
 }
 
-// PluginMarket 插件市场：搜索 GitHub dsh-market 目录。
+// PluginMarket 插件市场：优先 imsai 动态源（联网最新），失败/离线回退 GitHub dsh-market 目录。
 // query 为关键词（匹配名称/作者/描述），category 为分类过滤（空=全部）。
-// 返回 {items, categories, count, updated} 结构。
+// 返回 {items, categories, count, updated} 结构；动态源额外带 source/risk 字段。
 func (a *App) PluginMarket(query, category string) map[string]any {
+	if result, ok := dynamicMarket(query, category); ok {
+		return result
+	}
+	// 离线回退：go:embed registry.json（2961 条）
 	reg := getPluginManager().loadMarket()
 	items := []any{}
 	q := strings.ToLower(strings.TrimSpace(query))
@@ -336,6 +340,7 @@ func (a *App) PluginMarket(query, category string) map[string]any {
 			"name": p.Name, "owner": p.Owner, "url": p.URL,
 			"category": p.Category, "description": p.En, "descriptionZh": p.Zh,
 			"stars": p.Stars, "install": p.Install, "npm": p.Npm,
+			"risk": riskLevel(p.En + " " + p.Name),
 		})
 	}
 	// 分类展示结构（中英文）
@@ -351,6 +356,7 @@ func (a *App) PluginMarket(query, category string) map[string]any {
 	return map[string]any{
 		"items": items, "categories": cats,
 		"count": len(items), "total": len(reg.Plugins), "updated": reg.Updated,
+		"source": "embed",
 	}
 }
 

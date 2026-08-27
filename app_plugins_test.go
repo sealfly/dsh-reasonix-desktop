@@ -3,9 +3,15 @@
 package main
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
+
+// 测试强制离线：PluginMarket 不触发 imsai 网络请求（走 embed 回退，稳定可复现）。
+func init() {
+	_ = os.Setenv("DSH_MARKET_OFFLINE", "1")
+}
 
 func TestPluginsReturnsArray(t *testing.T) {
 	a := newTestApp()
@@ -161,6 +167,64 @@ func TestDSHPluginToViewMissingManifest(t *testing.T) {
 	}
 	if len(v["warnings"].([]any)) == 0 {
 		t.Fatalf("expected missing-manifest warning")
+	}
+}
+
+// ===== imsai 动态源（app_market_api.go）=====
+
+func TestRiskLevel(t *testing.T) {
+	cases := []struct {
+		text string
+		want string
+	}{
+		{"deletes files with rm -rf", "high"},
+		{"root access and credential storage", "high"},
+		{"fetches remote data over http", "medium"},
+		{"network upload via ssh tunnel", "medium"},
+		{"shows a sidebar panel for todos", "low"},
+		{"", "low"},
+	}
+	for _, c := range cases {
+		if got := riskLevel(c.text); got != c.want {
+			t.Fatalf("riskLevel(%q) = %q, want %q", c.text, got, c.want)
+		}
+	}
+}
+
+func TestImsaiToItem(t *testing.T) {
+	it := imsaiToItem(imsaiPlugin{
+		ID: "owner/repo", Name: "demo", Owner: "owner",
+		URL: "https://github.com/owner/repo", Category: "ui",
+		Description: "a sidebar panel", Install: "dsh plugin --profile web add demo", Stars: 5,
+	})
+	if it["name"] != "demo" || it["owner"] != "owner" {
+		t.Fatalf("name/owner wrong: %v %v", it["name"], it["owner"])
+	}
+	if it["risk"] != "low" {
+		t.Fatalf("risk = %v, want low", it["risk"])
+	}
+	if it["install"] != "dsh plugin --profile web add demo" {
+		t.Fatalf("install 未透传")
+	}
+	// name 缺失时回退 ID
+	it2 := imsaiToItem(imsaiPlugin{ID: "owner/repo/sub"})
+	if it2["name"] != "owner/repo/sub" {
+		t.Fatalf("name 回退 ID 失败: %v", it2["name"])
+	}
+}
+
+func TestPluginMarketOfflineHasSource(t *testing.T) {
+	a := newTestApp()
+	v := a.PluginMarket("", "")
+	if v["source"] != "embed" {
+		t.Fatalf("离线模式 source = %v, want embed", v["source"])
+	}
+	items := v["items"].([]any)
+	if len(items) == 0 {
+		t.Fatalf("离线市场为空")
+	}
+	if m := items[0].(map[string]any); m["risk"] == nil {
+		t.Fatalf("离线条目缺 risk 字段")
 	}
 }
 
