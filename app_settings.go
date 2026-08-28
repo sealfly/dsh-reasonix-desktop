@@ -60,9 +60,12 @@ func (a *App) GetActiveThemePack() map[string]any {
 // ===== 设置视图 =====
 
 // Settings 返回设置面板的数据（前端 SettingsPanel 重读）。
+// providers 从 DSH session.models 的 groups 生成——否则设置-模型-接入-供应商
+// 页显示空（前端 SettingsPanel 读 view.providers 渲染已有供应商）。
 func (a *App) Settings() map[string]any {
 	return map[string]any{
-		"providers":                 []any{},
+		"providers":                 a.providerViews(),
+		"officialProviders":         a.officialProviderViews(),
 		"defaultModel":              "deepseek-v4-flash",
 		"plannerModel":              "deepseek-v4-flash",
 		"subagentModel":             "deepseek-v4-flash",
@@ -78,6 +81,78 @@ func (a *App) Settings() map[string]any {
 		"reasoningDisplayMode":      a.st.ReasoningMode(),
 		"reasoningDisplayModeExplicit": a.st.ReasoningMode() != "",
 		"bot":                       mockBotSettings(),
+	}
+}
+
+// providerViews 从 DSH session.models 的 groups 生成 ProviderView 列表。
+// DSH 的 provider（deepseek-official/xtoken）即前端"供应商接入"页的已有供应商。
+func (a *App) providerViews() []any {
+	m := a.modelsView("")
+	if m == nil {
+		return []any{}
+	}
+	out := []any{}
+	for _, g := range m.Groups {
+		out = append(out, a.providerViewFromGroup(g))
+	}
+	return out
+}
+
+// officialProviderViews 官方供应商（builtIn）——前端"官方接入"引导区。
+func (a *App) officialProviderViews() []any {
+	m := a.modelsView("")
+	if m == nil {
+		return []any{}
+	}
+	out := []any{}
+	for _, g := range m.Groups {
+		if g.ID == "deepseek-official" {
+			out = append(out, a.providerViewFromGroup(g))
+		}
+	}
+	return out
+}
+
+// providerViewFromGroup 把 DSH 模型分组转成 ProviderView（字段对齐前端 normalizeProviderView）。
+func (a *App) providerViewFromGroup(g dshModelGroup) map[string]any {
+	kind := "custom"
+	builtIn := false
+	if g.ID == "deepseek-official" {
+		kind = "deepseek"
+		builtIn = true
+	}
+	models := []any{}
+	efforts := []any{}
+	defEffort := ""
+	for _, mod := range g.Models {
+		models = append(models, mod.ID)
+		if mod.Reasoning != nil && len(efforts) == 0 && len(mod.Reasoning.Efforts) > 0 {
+			for _, e := range mod.Reasoning.Efforts {
+				efforts = append(efforts, e.ID)
+			}
+			defEffort = mod.Reasoning.DefaultEffort
+		}
+	}
+	return map[string]any{
+		"name":              g.ID,
+		"builtIn":           builtIn,
+		"added":             true,
+		"kind":              kind,
+		"baseUrl":           "",
+		"chatUrl":           "",
+		"requestUrl":        "",
+		"models":            models,
+		"visionModels":      []any{},
+		"modelsUrl":         "",
+		"apiKeyEnv":         "",
+		"keySet":            true, // DSH 已配置可用
+		"requiresKey":       false,
+		"configured":        true,
+		"keySource":         "dsh",
+		"supportedEfforts":  efforts,
+		"defaultEffort":     defEffort,
+		"webSearch":         false,
+		"reasoningProtocol": "streamed",
 	}
 }
 
