@@ -118,7 +118,7 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
       S.page = page;
       S.total = d.total || 0;
       S.hasMore = !!d.hasMore;
-      S.totalPages = d.totalPages || Math.max(1, Math.ceil(S.total / 100));
+      S.totalPages = d.totalPages || Math.max(1, Math.ceil(S.total / 50));
       if (page === 1) S.items = [];
       S.items = S.items.concat(d.items || []);
       if (totalEl) totalEl.textContent = '共 ' + S.total + ' 个 · 第 ' + S.page + '/' + S.totalPages + ' 页';

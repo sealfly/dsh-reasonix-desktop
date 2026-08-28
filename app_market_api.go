@@ -28,7 +28,7 @@ const (
 	imsaiListBase   = "https://deepseek1024.com/api/v1/plugins"
 	imsaiTimeout    = 6 * time.Second
 	imsaiCacheTTL   = 5 * time.Minute
-	marketPageSize  = 100
+	marketPageSize  = 50
 )
 
 // imsaiPlugin imsai 返回的插件条目（search 与 list 共用字段子集）。

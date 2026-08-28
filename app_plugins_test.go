@@ -297,10 +297,10 @@ func TestMarketPagePagination(t *testing.T) {
 	if sp["total"].(int) < 1 {
 		t.Fatalf("搜索 total 异常")
 	}
-	// totalPages 供页码式翻页
+	// totalPages 供页码式翻页（每页 50，2961 条 → 60 页）
 	tp := p1["totalPages"].(int)
-	if tp < 30 {
-		t.Fatalf("2961 条应约 30 页, 实际 %d", tp)
+	if tp != 60 {
+		t.Fatalf("2961 条每页50应约 60 页, 实际 %d", tp)
 	}
 }
 
