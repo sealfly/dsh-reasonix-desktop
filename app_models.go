@@ -212,6 +212,8 @@ func (a *App) SetModel(ref string) error { return a.setModel("", ref) }
 func (a *App) SetModelForTab(tabID, ref string) error { return a.setModel(tabID, ref) }
 
 // setModel 调 DSH session.selectModel（provider/model 拆分自 ref）。
+// 切模型时带上当前档位（若目标模型支持）——否则 DSH 会把档位重置为默认值，
+// 造成前端显示"档位跳来跳去"。
 func (a *App) setModel(tabID, ref string) error {
 	if a.dsh == nil || ref == "" {
 		return nil
@@ -224,10 +226,49 @@ func (a *App) setModel(tabID, ref string) error {
 	if provider == "" || model == "" {
 		return nil
 	}
-	_, err := a.dsh.RPC("session.selectModel", map[string]any{
-		"sessionId": sid, "provider": provider, "model": model,
-	})
+	effort := ""
+	if m := a.modelsView(tabID); m != nil && m.Current != nil {
+		effort = effortForTarget(m, provider, model, m.Current.ReasoningEffort)
+	}
+	payload := map[string]any{"sessionId": sid, "provider": provider, "model": model}
+	if effort != "" {
+		payload["reasoningEffort"] = effort
+	}
+	_, err := a.dsh.RPC("session.selectModel", payload)
 	return err
+}
+
+// effortForTarget 判断目标模型是否支持当前档位：
+//   - 目标模型无档位能力 → 返回 ""（不带，DSH 用默认）
+//   - 目标支持当前档位 → 返回当前档位（切模型保持档位不跳）
+//   - 目标不支持当前档位 → 返回 ""（用目标默认档位）
+// 带不支持的档位切模型会让 DSH 报错拒绝切换，所以必须校验。
+func effortForTarget(m *dshModelsView, provider, model, curEffort string) string {
+	if curEffort == "" || m == nil {
+		return ""
+	}
+	for i := range m.Groups {
+		g := &m.Groups[i]
+		if g.ID != provider {
+			continue
+		}
+		for j := range g.Models {
+			mod := &g.Models[j]
+			if mod.ID != model {
+				continue
+			}
+			if mod.Reasoning == nil {
+				return ""
+			}
+			for _, e := range mod.Reasoning.Efforts {
+				if e.ID == curEffort {
+					return curEffort
+				}
+			}
+			return ""
+		}
+	}
+	return ""
 }
 
 // splitRef 把 "provider/model" 拆成两部分（无斜杠时 model=provider）。

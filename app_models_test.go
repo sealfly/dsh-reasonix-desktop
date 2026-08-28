@@ -87,3 +87,36 @@ func TestCurrentReasoningNoEffort(t *testing.T) {
 		t.Fatalf("无 reasoning 模型应返回 false")
 	}
 }
+
+// TestEffortForTarget 切模型时档位保持策略。
+func TestEffortForTarget(t *testing.T) {
+	m := &dshModelsView{
+		Groups: []dshModelGroup{
+			{ID: "deepseek-official", Models: []dshModel{
+				{ID: "deepseek-v4-flash", Reasoning: &dshReasoning{Efforts: []dshEffort{{ID: "off"}, {ID: "low"}, {ID: "high"}, {ID: "max"}}}},
+				{ID: "deepseek-v4-pro", Reasoning: &dshReasoning{Efforts: []dshEffort{{ID: "off"}, {ID: "high"}, {ID: "max"}}}}, // 无 low
+			}},
+			{ID: "xtoken", Models: []dshModel{{ID: "glm-5"}}}, // 无档位
+		},
+	}
+	// 目标支持当前档位 → 保持
+	if got := effortForTarget(m, "deepseek-official", "deepseek-v4-flash", "max"); got != "max" {
+		t.Fatalf("支持档位应保持, got %q", got)
+	}
+	// 目标不支持当前档位（pro 无 low）→ 不带（用默认）
+	if got := effortForTarget(m, "deepseek-official", "deepseek-v4-pro", "low"); got != "" {
+		t.Fatalf("不支持档位应返回空, got %q", got)
+	}
+	// 目标无档位能力 → 不带
+	if got := effortForTarget(m, "xtoken", "glm-5", "max"); got != "" {
+		t.Fatalf("无档位模型应返回空, got %q", got)
+	}
+	// 当前无档位 → 不带
+	if got := effortForTarget(m, "deepseek-official", "deepseek-v4-flash", ""); got != "" {
+		t.Fatalf("无当前档位应返回空, got %q", got)
+	}
+	// 找不到目标 → 不带
+	if got := effortForTarget(m, "nope", "x", "max"); got != "" {
+		t.Fatalf("找不到目标应返回空, got %q", got)
+	}
+}
