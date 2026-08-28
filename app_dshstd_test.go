@@ -101,7 +101,7 @@ func TestParseDshPluginManifestValid(t *testing.T) {
 		"id": "com.example/test",
 		"name": "Test Plugin",
 		"version": "1.0.0",
-		"facets": {"host": {"entry": "index.js", "apiVersion": "host.dsh/v1alpha1"}},
+		"facets": {"host": {"entry": "index.js", "apiVersion": "v1alpha1"}},
 		"requires": {"contracts": [{"apiVersion": "tool.dsh/v1", "kind": "Tool"}]},
 		"supports": {"contracts": [{"apiVersion": "command.dsh/v1", "kind": "CommandRuntime"}]}
 	}`
@@ -113,9 +113,13 @@ func TestParseDshPluginManifestValid(t *testing.T) {
 	if man["id"] != "com.example/test" {
 		t.Fatalf("id 解析错误: %v", man["id"])
 	}
-	contracts := man["contracts"].([]any)
-	if len(contracts) != 2 {
-		t.Fatalf("应有2个契约: %v", contracts)
+	reqs := man["requires"].([]any)
+	if len(reqs) != 1 {
+		t.Fatalf("requires 应有1个契约: %v", reqs)
+	}
+	sups := man["supports"].([]any)
+	if len(sups) != 1 {
+		t.Fatalf("supports 应有1个契约: %v", sups)
 	}
 }
 
@@ -238,5 +242,143 @@ func TestParseDshPluginManifestVersionChecks(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("应报 unsupported-manifestVersion: %+v", r2["issues"])
+	}
+}
+
+func TestParseDshPluginManifestRejectedFields(t *testing.T) {
+	// provides / requires.services / contributes.panels 在 v0.15 直接拒绝
+	cases := []string{
+		`{"manifestVersion":"0.15","id":"com.example/t","name":"T","version":"1.0.0","provides":{"contracts":[]}}`,
+		`{"manifestVersion":"0.15","id":"com.example/t","name":"T","version":"1.0.0","services":{}}`,
+		`{"manifestVersion":"0.15","id":"com.example/t","name":"T","version":"1.0.0","requires":{"services":[]}}`,
+		`{"manifestVersion":"0.15","id":"com.example/t","name":"T","version":"1.0.0","contributes":{"panels":[]}}`,
+	}
+	for _, m := range cases {
+		r := ParseDshPluginManifest([]byte(m))
+		if r["valid"] != false {
+			t.Fatalf("应拒绝: %s", m)
+		}
+	}
+}
+
+func TestParseDshPluginManifestOptionalFallback(t *testing.T) {
+	// optional contract 必须带 fallback
+	m := `{"$schema":"https://dsh-std.dev/schemas/dsh-plugin-0.15.schema.json","manifestVersion":"0.15","id":"com.example/t","name":"T","version":"1.0.0",
+		"facets":{"host":{"entry":"index.js","apiVersion":"v1alpha1"}},
+		"requires":{"contracts":[{"apiVersion":"tool.dsh/v1","kind":"Tool","optional":true}]}}`
+	r := ParseDshPluginManifest([]byte(m))
+	found := false
+	for _, i := range r["issues"].([]any) {
+		if i.(map[string]any)["code"] == "missing-fallback" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("optional 无 fallback 应报 missing-fallback: %+v", r["issues"])
+	}
+	// 带 fallback 则通过
+	m2 := `{"$schema":"https://dsh-std.dev/schemas/dsh-plugin-0.15.schema.json","manifestVersion":"0.15","id":"com.example/t","name":"T","version":"1.0.0",
+		"facets":{"host":{"entry":"index.js","apiVersion":"v1alpha1"}},
+		"requires":{"contracts":[{"apiVersion":"tool.dsh/v1","kind":"Tool","optional":true,"fallback":"manual tool calls only"}]}}`
+	r2 := ParseDshPluginManifest([]byte(m2))
+	if r2["valid"] != true {
+		t.Fatalf("带 fallback 应有效: %+v", r2["issues"])
+	}
+}
+
+func TestAdmitPluginFiveStates(t *testing.T) {
+	// compatible: 合法 manifest（无 requires）
+	m := `{"$schema":"https://dsh-std.dev/schemas/dsh-plugin-0.15.schema.json","manifestVersion":"0.15","id":"com.example/t","name":"T","version":"1.0.0",
+		"facets":{"host":{"entry":"index.js","apiVersion":"v1alpha1"}}}`
+	parsed := ParseDshPluginManifest([]byte(m))
+	state, comp, _ := AdmitPlugin(parsed)
+	if state != StateCompatible || !comp {
+		t.Fatalf("应 compatible: %v %v", state, comp)
+	}
+	// rejected: parse 失败
+	state, comp, _ = AdmitPlugin(ParseDshPluginManifest([]byte(`{bad`)))
+	if state != StateRejected || comp {
+		t.Fatalf("应 rejected: %v %v", state, comp)
+	}
+	// unknown: 注册表外坐标
+	m2 := `{"$schema":"https://dsh-std.dev/schemas/dsh-plugin-0.15.schema.json","manifestVersion":"0.15","id":"com.example/t","name":"T","version":"1.0.0",
+		"requires":{"contracts":[{"apiVersion":"galaxy.dsh/v1","kind":"WarpDrive"}]}}`
+	state, comp, _ = AdmitPlugin(ParseDshPluginManifest([]byte(m2)))
+	if state != StateUnknown {
+		t.Fatalf("注册表外坐标应 unknown: %v", state)
+	}
+	if comp {
+		t.Fatalf("unknown 不应 compatible")
+	}
+	// compatible_degraded: optional 无支持（目录内但本 Host 不支持 → workspace）
+	m3 := `{"$schema":"https://dsh-std.dev/schemas/dsh-plugin-0.15.schema.json","manifestVersion":"0.15","id":"com.example/t","name":"T","version":"1.0.0",
+		"requires":{"contracts":[{"apiVersion":"workspace.dsh/v1alpha1","kind":"Workspace","optional":true,"fallback":"no workspace"}]}}`
+	state, comp, _ = AdmitPlugin(ParseDshPluginManifest([]byte(m3)))
+	if state != StateCompatibleDegraded || !comp {
+		t.Fatalf("optional 无支持应 compatible_degraded: %v %v", state, comp)
+	}
+	// rejected: required 无支持
+	m4 := `{"$schema":"https://dsh-std.dev/schemas/dsh-plugin-0.15.schema.json","manifestVersion":"0.15","id":"com.example/t","name":"T","version":"1.0.0",
+		"requires":{"contracts":[{"apiVersion":"commands.dsh/v1alpha1","kind":"Command"}]}}`
+	state, comp, _ = AdmitPlugin(ParseDshPluginManifest([]byte(m4)))
+	if state != StateRejected || comp {
+		t.Fatalf("required 无支持应 rejected: %v %v", state, comp)
+	}
+}
+
+func TestDshStdHostDescriptor(t *testing.T) {
+	a := newTestApp()
+	h := a.DshStdHostDescriptor()
+	if h["id"] != "com.dsh-reasonix/desktop" {
+		t.Fatalf("id 错误: %v", h["id"])
+	}
+	runtimeMap, ok := h["runtime"].(map[string]any)
+	if !ok || runtimeMap["headless"] != false {
+		t.Fatalf("runtime 错误: %+v", h["runtime"])
+	}
+	if _, ok := runtimeMap["generationId"].(string); !ok {
+		t.Fatalf("缺少 generationId")
+	}
+	trust, ok := h["trust"].(map[string]any)
+	if !ok || trust["level"] != "trusted-in-process" {
+		t.Fatalf("trust 错误: %+v", h["trust"])
+	}
+	perms := h["permissions"].([]any)
+	if len(perms) < 5 {
+		t.Fatalf("权限注册表应至少 5 项: %v", perms)
+	}
+}
+
+func TestDshStdAdmitBridge(t *testing.T) {
+	a := newTestApp()
+	// 合法 manifest → compatible
+	good := `{"$schema":"https://dsh-std.dev/schemas/dsh-plugin-0.15.schema.json","manifestVersion":"0.15","id":"com.example/t","name":"T","version":"1.0.0",
+		"facets":{"host":{"entry":"index.js","apiVersion":"v1alpha1"}}}`
+	r := a.DshStdAdmit(good)
+	if r["state"] != "compatible" {
+		t.Fatalf("应 compatible: %+v", r)
+	}
+	// 非法 → rejected
+	bad := `{bad json`
+	r2 := a.DshStdAdmit(bad)
+	if r2["state"] != "rejected" {
+		t.Fatalf("应 rejected: %+v", r2)
+	}
+}
+
+func TestDshStdCapabilitiesAdmission(t *testing.T) {
+	a := newTestApp()
+	c := a.DshStdCapabilities()
+	ad := c["admission"].(map[string]any)
+	if ad["baseline"] != "Community v0.15" {
+		t.Fatalf("baseline 错误: %v", ad["baseline"])
+	}
+	trust := ad["trust"].(map[string]any)
+	if trust["level"] != "trusted-in-process" {
+		t.Fatalf("trust 错误: %v", trust)
+	}
+	perms := ad["permissions"].([]any)
+	if len(perms) < 5 {
+		t.Fatalf("权限注册表应至少 5 项")
 	}
 }
