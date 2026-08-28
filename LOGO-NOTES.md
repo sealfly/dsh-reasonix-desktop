@@ -2,6 +2,17 @@
 
 > 此文件记录 logo SVG 的最终正确布局，防止将来误改。修改 logo 前必读。
 
+> ## ⛔ 升级规则（重要）：logo 类文件不参与官方对照更新
+>
+> 对照 Reasonix 官方源码升级前端时，**以下文件一律保留本地定制版本，不参与官方对照/替换**：
+> - `frontend/dist/assets/logo-wordmark-*.svg`（字标，本地布局见下）
+> - `frontend/dist/assets/logo-C8rTDnTH.svg`（方形图标）
+> - `frontend/dist/index.html` 中的 **boot-shell 内联 SVG**（加载页 logo，aria-label="DSH-Reasonix"）
+> - `frontend/dist/index.html` 中的 **boot-shell 名称**（`boot-shell__name`=DSH-Reasonix）
+>
+> 升级流程：官方 dist 覆盖后，**从旧 dist 备份恢复以上 logo/品牌内容**（文件名/内容均为本地定制版）。
+> 备份位置参考：`$env:TEMP\dsh-dist-backup-v1290`（v1.29.0 定制版，含 DSH boot SVG 550 字节）。
+
 ## 字母顺序（唯一正确）
 
 **DSH-** 前缀 + **R-e-a-s-o-n-i-x**（拼写为 "DSH-Reasonix"）
