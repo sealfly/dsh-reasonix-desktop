@@ -42,3 +42,19 @@
 
 - 未实现的方法返回安全兜底，前端不崩溃；需要时逐个映射。
 - 提交/调用失败不静默：console 有痕迹，调用方拿得到结果（`{ ok: false, error }` 或抛错）。
+
+## 原则 4：遵循 dsh-std 协议（DSH 标准协议）
+
+- 本项目作为 DSH 生态前端，桥接层必须遵循 **dsh-std 协议**（DSH 标准协议）：
+  能力协商（`DshStdNegotiate`）、准入（`DshStdAdmit`）、能力清单（`DshStdCapabilities`）、
+  宿主描述（`DshStdHostDescriptor`）、清单解析（`DshStdParseManifest`）、自描述（`DshStdSelfManifest`）。
+- 协议版本升级时，桥接层需同步对齐；新增 DSH 能力不得绕过协议直接硬编码。
+- 协议相关实现集中在 `app_dshstd.go`，改动必须带测试（`app_dshstd_test.go`）。
+
+## 原则 5：社区准入性（dsh-ecosystem-spec Admission）
+
+- 本项目遵循 **dsh-ecosystem-spec 的 Admission v0.15 规范**，保持社区生态准入合规：
+  - 宿主/前端元数据（名称、版本、协议版本、能力声明）必须与 Admission 要求一致；
+  - 接入 DSH 生态时必须通过 Admission 校验（自描述 + 能力协商）；
+  - 规范升级时评估并同步，不落后于社区准入要求。
+- 社区准入性不是一次性动作：每次协议/规范升级、每次对外发布都要复核。
