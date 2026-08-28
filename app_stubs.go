@@ -39,9 +39,6 @@ func (a *App) ListThemePacks() []any { return []any{} }
 // ThemePacks 同 ListThemePacks。
 func (a *App) ThemePacks() []any { return []any{} }
 
-// MCPServers MCP 服务器列表（DSH 无 MCP 配置，空）。
-func (a *App) MCPServers() []any { return []any{} }
-
 // RemoteHosts 远程主机列表（未实现，空）。
 func (a *App) RemoteHosts() []any { return []any{} }
 

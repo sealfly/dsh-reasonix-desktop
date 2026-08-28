@@ -193,7 +193,6 @@ func (a *App) RememberForTab(_tabID string, _scope string, _note string) error {
 func (a *App) RemoteLastWorkspace() map[string]any { return nil }
 func (a *App) RemoteServerLogs() map[string]any { return nil }
 func (a *App) RemoteServerStatus() map[string]any { return nil }
-func (a *App) RemoveMCPServer(_a1 any) error { return nil }
 func (a *App) RemovePermissionRule(_a1 any, _a2 any) error { return nil }
 func (a *App) RemoveProviderAccesses(_a1 any) error { return nil }
 func (a *App) RemoveRemoteForward() error { return nil }
@@ -259,7 +258,6 @@ func (a *App) ToolResultForTab() error { return nil }
 func (a *App) TrySubagentProfile(_a1 any, _a2 any) error { return nil }
 func (a *App) UndoRewindForTab() error { return nil }
 func (a *App) UpdateInboxItem() error { return nil }
-func (a *App) UpdateMCPServer(_a1 any, _a2 any) error { return nil }
 func (a *App) UpdateRemoteHost() error { return nil }
 func (a *App) UpdateSubagentProfile(_a1 any, _a2 any, _a3 any) error { return nil }
 func (a *App) UpgradeDeepSeekProviderAccess(_a1 any) error { return nil }

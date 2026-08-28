@@ -1,0 +1,293 @@
+ce as T,clearLegacyThemePreference as U,h as V,getResolvedTheme as W,normalizeThemeStyleForTheme as X,normalizeThemePreference as Y,readLegacyThemePreference as Z,openExternal as _,installBreadcrumbConsoleHook as _t,onProjectTreeChanged as a,mergedFetchedProviderModels as at,modeHasAutoApproveTools as b,onRemoteServer as c,providerIsConfigured as ct,onSessionRecovered as d,providerModelContextWindowIsSmall as dt,normalizeStatusBarItems as et,onTabMeta as f,providerRequiresKey as ft,onUpdaterProgress as g,dumpBreadcrumbs as gt,onTopicActivation as h,addBreadcrumb as ht,onFilesDropped as i,mergeProviderModelContextWindows as it,clearThemePack as j,cancelThemePreview as k,onRemoteStatus as l,providerModelCandidates as lt,onTerminalOutput as m,invalidateSharedQuery as mt,installWailsNonFileDragErrorSuppression as n,createLatestRequestGate as nt,onReady as o,providerApiKeyEnvForSave as ot,onTerminalExit as p,onProjectTreeChangedV2 as pt,initTheme as q,onEvent as r,inferredVisionModels as rt,onRemoteForwards as s,providerDefaultModel as st,J as t,apiKeyEnvFromProviderName as tt,onRuntimeRebuilt as u,providerModelContextWindowDrafts as ut,decisionSurfaceMockFromInput as v,snapshotBreadcrumbs as vt,normalizeToolApprovalMode as w,modeHasPlan as x,modeFromAxes as y,themePackKind as z};
+// __DSH_ACT_WRAP: 兜底模拟 topic activation 事件。主路径: Go StartTopicActivationImpl 已用
+// wruntime.EventsEmit 推 "topic:activation"(starting->ready), 前端 onTopicActivation 经
+// window.runtime.EventsOn 订阅。此处额外推 z(mock 订阅者), 兼容 mock 模式, realApp 下 z 无订阅者无副作用。
+try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__win.go||!__win.go.main||!__win.go.main.App)return;var __app=__win.go.main.App;var __orig=__app.StartTopicActivation;if(typeof __orig!=='function')return;__app.StartTopicActivation=function(__req){var __res=__orig.apply(this,arguments);if(__res&&typeof __res.then==='function'){return __res.then(function(__r){try{if(__r&&__r.requestId){var __rid=__r.requestId,__tid=__r.tabId;__emitMockTopicActivation({requestId:__rid,tabId:__tid,phase:'starting'});(typeof Promise!=='undefined'?Promise.resolve():__win.Promise.resolve()).then(function(){try{__emitMockTopicActivation({requestId:__rid,tabId:__tid,phase:'ready'})}catch(__e){}});__win.setTimeout(function(){try{__emitMockTopicActivation({requestId:__rid,tabId:__tid,phase:'ready'})}catch(__e){}},0)}}catch(__e){}return __r})}return __res}})()}catch(__e){}
+
+
+
+
+;/* __DSH_PLUGIN_MARKET v3 — MarketTab 风格（借鉴 dsh-plugin-market, MIT）:
+   传统页码翻页(1/2/3… 上一页/下一页) + 详情(README 功能简介 + 预览图)。
+   数据: MarketPage(query, category, page) 分页缓存（翻回已加载页零调用）,
+   MarketPluginDetail(url) 拉 GitHub README/预览图（按需点击才拉，缓存 10 分钟）。 */
+;(function(){
+  if (typeof window === 'undefined' || !document) return;
+  var INJECTED = '__dshPluginMarketInjected';
+  var S = { query:'', category:'', page:1, total:0, hasMore:false, totalPages:1, loading:false, items:[], expanded:null, installed:{}, details:{} };
+  var panel=null, listEl=null, pagesEl=null, totalEl=null, msgEl=null, chipsEl=null;
+  function app(){ try { return window.go && window.go.main && window.go.main.App; } catch(e){ return null; } }
+  var CSS = [
+    '.dsh-mkt{margin:12px 0;padding:10px;border:1px solid rgba(128,128,128,.35);border-radius:8px}',
+    '.dsh-mkt__head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}',
+    '.dsh-mkt__head b{font-weight:600}',
+    '.dsh-mkt__search{display:flex;gap:6px;margin-bottom:8px}',
+    '.dsh-mkt__search input{flex:1;padding:5px 8px;border-radius:6px;border:1px solid rgba(128,128,128,.4);background:transparent;color:inherit}',
+    '.dsh-mkt__chips{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px}',
+    '.dsh-mkt__chip{border:1px solid rgba(128,128,128,.35);border-radius:999px;padding:2px 10px;background:transparent;color:inherit;font-size:12px;cursor:pointer}',
+    '.dsh-mkt__chip[data-on="true"]{background:rgba(64,150,255,.25);border-color:rgba(64,150,255,.6)}',
+    '.dsh-mkt__title{display:flex;align-items:center;gap:8px;margin-bottom:6px}',
+    '.dsh-mkt__title span{font-size:12px;opacity:.7}',
+    '.dsh-mkt__list{display:flex;flex-direction:column;gap:6px;max-height:380px;overflow:auto}',
+    '.dsh-mkt__card{border:1px solid rgba(128,128,128,.22);border-radius:6px;padding:6px 8px}',
+    '.dsh-mkt__card[data-open="true"]{border-color:rgba(64,150,255,.5)}',
+    '.dsh-mkt__row{display:flex;align-items:center;justify-content:space-between;gap:8px}',
+    '.dsh-mkt__nm{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+    '.dsh-mkt__meta{font-size:12px;opacity:.8;white-space:nowrap}',
+    '.dsh-mkt__desc{font-size:12px;opacity:.7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:2px 0 0 0}',
+    '.dsh-mkt__foot{display:flex;align-items:center;gap:6px;margin-top:4px;flex-wrap:wrap}',
+    '.dsh-mkt__tag{font-size:11px;border-radius:4px;padding:1px 6px;border:1px solid rgba(128,128,128,.35)}',
+    '.dsh-mkt__tag[data-level="high"]{border-color:#e06c75;color:#e06c75}',
+    '.dsh-mkt__tag[data-level="medium"]{border-color:#d19a66;color:#d19a66}',
+    '.dsh-mkt__tag[data-level="low"]{border-color:#98c379;color:#98c379}',
+    '.dsh-mkt__detail{font-size:12px;margin-top:4px;padding-top:4px;border-top:1px dashed rgba(128,128,128,.3)}',
+    '.dsh-mkt__img{max-width:100%;max-height:140px;border-radius:6px;margin:6px 0;display:block;object-fit:contain}',
+    '.dsh-mkt__about{font-size:12px;opacity:.85;margin:4px 0;white-space:pre-wrap;word-break:break-word}',
+    '.dsh-mkt__status{font-size:12px;opacity:.7}',
+    '.dsh-mkt__detail-foot{display:flex;align-items:center;gap:6px;margin-top:4px;flex-wrap:wrap;font-size:11px;word-break:break-all}',
+    '.dsh-mkt__pages{display:flex;gap:4px;margin-top:8px;flex-wrap:wrap;align-items:center;justify-content:center}',
+    '.dsh-mkt__pg{border:1px solid rgba(128,128,128,.35);border-radius:4px;padding:2px 8px;background:transparent;color:inherit;font-size:12px;cursor:pointer}',
+    '.dsh-mkt__pg[disabled]{opacity:.4;cursor:default}',
+    '.dsh-mkt__pg--on{background:rgba(64,150,255,.25);border-color:rgba(64,150,255,.6)}',
+    '.dsh-mkt__pg-ell{font-size:12px;opacity:.6;padding:0 2px}',
+    '.dsh-mkt__msg{font-size:12px;opacity:.8}',
+    '.dsh-mkt__busy{opacity:.6;pointer-events:none}',
+    '.dsh-mkt a{color:#61afef}'
+  ].join('');
+  function injectIntoPluginPage(){
+    var installer = document.querySelector('.cap-plugin-installer');
+    if (!installer) return;
+    if (installer.getAttribute(INJECTED)) return;
+    installer.setAttribute(INJECTED, '1');
+    if (!document.getElementById('dsh-mkt-css')) {
+      var st = document.createElement('style'); st.id = 'dsh-mkt-css'; st.textContent = CSS; document.head.appendChild(st);
+    }
+    var root = document.createElement('div');
+    root.className = 'dsh-mkt';
+    root.innerHTML =
+      '<div class="dsh-mkt__head"><b>DSH 插件市场</b><span class="dsh-mkt__msg"></span></div>' +
+      '<div class="dsh-mkt__search"><input type="search" placeholder="搜索插件…" aria-label="搜索"><button class="btn btn--small">搜索</button></div>' +
+      '<div class="dsh-mkt__chips"><button class="dsh-mkt__chip" data-on="true">全部</button></div>' +
+      '<div class="dsh-mkt__title"><b>目录</b><span></span></div>' +
+      '<div class="dsh-mkt__list"></div>' +
+      '<div class="dsh-mkt__pages"></div>';
+    if (installer.parentNode) installer.parentNode.insertBefore(root, installer);
+    panel = root;
+    msgEl = root.querySelector('.dsh-mkt__msg');
+    chipsEl = root.querySelector('.dsh-mkt__chips');
+    totalEl = root.querySelector('.dsh-mkt__title span');
+    listEl = root.querySelector('.dsh-mkt__list');
+    pagesEl = root.querySelector('.dsh-mkt__pages');
+    var input = root.querySelector('.dsh-mkt__search input');
+    var btn = root.querySelector('.dsh-mkt__search button');
+    var debounce = null;
+    function onQuery(){ clearTimeout(debounce); debounce = setTimeout(function(){ S.query = input.value.trim(); loadPage(1); }, 220); }
+    input.addEventListener('input', onQuery);
+    btn.addEventListener('click', function(){ S.query = input.value.trim(); loadPage(1); });
+    input.addEventListener('keydown', function(e){ if (e.key === 'Enter'){ S.query = input.value.trim(); loadPage(1); } });
+    loadPage(1);
+  }
+  function setMsg(m){ if (msgEl) msgEl.textContent = m || ''; }
+  function loadCategories(){
+    var A = app(); if (!A || !chipsEl) return;
+    A.PluginMarket('', '').then(function(d){
+      var cats = (d && d.categories) || [];
+      var html = '<button class="dsh-mkt__chip" data-on="' + (S.category === '' ? 'true' : 'false') + '">全部</button>';
+      for (var i = 0; i < cats.length; i++) {
+        var c = cats[i];
+        html += '<button class="dsh-mkt__chip" data-on="' + (S.category === c.id ? 'true' : 'false') + '" data-cat="' + esc(c.id) + '">' + esc(c.zh || c.en || c.id) + '</button>';
+      }
+      chipsEl.innerHTML = html;
+      var chips = chipsEl.querySelectorAll('.dsh-mkt__chip[data-cat]');
+      for (var j = 0; j < chips.length; j++) {
+        (function(chip){ chip.addEventListener('click', function(){
+          S.category = chip.getAttribute('data-cat');
+          loadPage(1);
+        }); })(chips[j]);
+      }
+      var allChip = chipsEl.querySelector('.dsh-mkt__chip:not([data-cat])');
+      if (allChip) allChip.addEventListener('click', function(){ S.category = ''; loadPage(1); });
+    }).catch(function(){});
+  }
+  function loadPage(page){
+    var A = app(); if (!A || !panel) return;
+    S.loading = true; panel.className = 'dsh-mkt dsh-mkt__busy';
+    setMsg('加载中…');
+    A.MarketPage(S.query, S.category, page).then(function(d){
+      d = d || {};
+      S.page = page;
+      S.total = d.total || 0;
+      S.hasMore = !!d.hasMore;
+      S.totalPages = d.totalPages || Math.max(1, Math.ceil(S.total / 50));
+      if (page === 1) S.items = [];
+      S.items = S.items.concat(d.items || []);
+      if (totalEl) totalEl.textContent = '共 ' + S.total + ' 个 · 第 ' + S.page + '/' + S.totalPages + ' 页';
+      renderList();
+      renderPages();
+      setMsg('');
+      S.loading = false; panel.className = 'dsh-mkt';
+      loadCategories();
+      loadInstalled();
+    }).catch(function(e){
+      setMsg('加载失败: ' + (e && e.message || e));
+      S.loading = false; panel.className = 'dsh-mkt';
+    });
+  }
+  function renderPages(){
+    if (!pagesEl) return;
+    var tp = S.totalPages || 1;
+    var html = '<button class="dsh-mkt__pg" data-pg="' + (S.page - 1) + '"' + (S.page <= 1 ? ' disabled' : '') + '>上一页</button>';
+    var seq = buildPages(S.page, tp);
+    for (var i = 0; i < seq.length; i++) {
+      var p = seq[i];
+      if (p === '...') html += '<span class="dsh-mkt__pg-ell">…</span>';
+      else html += '<button class="dsh-mkt__pg' + (p === S.page ? ' dsh-mkt__pg--on' : '') + '" data-pg="' + p + '">' + p + '</button>';
+    }
+    html += '<button class="dsh-mkt__pg" data-pg="' + (S.page + 1) + '"' + (S.page >= tp ? ' disabled' : '') + '>下一页</button>';
+    pagesEl.innerHTML = html;
+    pagesEl.querySelectorAll('[data-pg]').forEach(function(b){ b.addEventListener('click', function(){
+      if (b.disabled) return;
+      var n = parseInt(b.getAttribute('data-pg'), 10);
+      if (n >= 1 && n <= tp) loadPage(n);
+    }); });
+  }
+  function buildPages(cur, total){
+    if (total <= 7) { var a = []; for (var i = 1; i <= total; i++) a.push(i); return a; }
+    var wanted = [1, total, cur - 1, cur, cur + 1];
+    var sorted = wanted.filter(function(x){ return x >= 1 && x <= total; }).sort(function(x, y){ return x - y; });
+    var out = []; var prev = 0;
+    for (var j = 0; j < sorted.length; j++) {
+      var v = sorted[j];
+      if (v === prev) continue;
+      if (v - prev > 1) out.push('...');
+      out.push(v);
+      prev = v;
+    }
+    return out;
+  }
+  function loadInstalled(){
+    var A = app(); if (!A) return;
+    A.Plugins().then(function(list){
+      list = list || [];
+      S.installed = {};
+      for (var i = 0; i < list.length; i++) if (list[i] && list[i].name) S.installed[list[i].name] = true;
+      renderList();
+    }).catch(function(){});
+  }
+  function riskEmoji(r){ return r === 'high' ? '🔴' : (r === 'medium' ? '🟡' : '🟢'); }
+  function riskName(r){ return r === 'high' ? '高' : (r === 'medium' ? '中' : '低'); }
+  function renderList(){
+    if (!listEl) return;
+    var html = '';
+    for (var i = 0; i < S.items.length; i++) {
+      (function(it){
+        var id = it.name || it.id || '';
+        var open = S.expanded === id;
+        var inst = S.installed[id];
+        var risk = it.risk || 'low';
+        html += '<div class="dsh-mkt__card" data-open="' + open + '">' +
+          '<div class="dsh-mkt__row">' +
+            '<span class="dsh-mkt__nm">' + esc(riskEmoji(risk)) + ' ' + esc(id) + (it.stars ? ' <span class="dsh-mkt__meta">★' + it.stars + '</span>' : '') + '</span>' +
+            '<button class="btn btn--small" data-toggle="' + esc(id) + '">' + (open ? '收起' : '详情') + '</button>' +
+          '</div>' +
+          '<p class="dsh-mkt__desc">' + esc(it.descriptionZh || it.description || '') + '</p>' +
+          '<div class="dsh-mkt__foot">' +
+            '<span class="dsh-mkt__tag" data-level="' + esc(risk) + '">' + riskName(risk) + ' 风险</span>' +
+            (it.owner ? '<span class="dsh-mkt__tag">' + esc(it.owner) + '</span>' : '') +
+            '<span style="flex:1"></span>' +
+            (inst ? '<button class="btn btn--small" data-uninstall="' + esc(id) + '">卸载</button>'
+                  : '<button class="btn btn--primary btn--small" data-install="' + esc(id) + '">安装</button>') +
+            (it.url ? '<a class="btn btn--small" href="' + esc(it.url) + '" target="_blank" rel="noopener">仓库</a>' : '') +
+          '</div>' +
+          (open ? renderDetail(it) : '') +
+        '</div>';
+      })(S.items[i]);
+    }
+    listEl.innerHTML = html || '<div style="padding:6px;opacity:.7">无匹配插件</div>';
+    listEl.querySelectorAll('[data-toggle]').forEach(function(b){ b.addEventListener('click', function(){
+      var id = b.getAttribute('data-toggle');
+      var it = findItem(id);
+      if (it) toggleDetail(id, it);
+    }); });
+    listEl.querySelectorAll('[data-install]').forEach(function(b){ b.addEventListener('click', function(){
+      installPlugin(b.getAttribute('data-install'), b);
+    }); });
+    listEl.querySelectorAll('[data-uninstall]').forEach(function(b){ b.addEventListener('click', function(){
+      removePlugin(b.getAttribute('data-uninstall'), b);
+    }); });
+  }
+  function toggleDetail(id, it){
+    if (S.expanded === id) { S.expanded = null; renderList(); return; }
+    S.expanded = id;
+    if (!S.details[id]) {
+      S.details[id] = { status: 'loading', data: null };
+      renderList();
+      var A = app();
+      if (A && it.url) {
+        A.MarketPluginDetail(it.url).then(function(d){
+          S.details[id] = { status: 'done', data: d || {} };
+          renderList();
+        }).catch(function(e){ S.details[id] = { status: 'done', data: { error: String((e && e.message) || e) } }; renderList(); });
+      } else {
+        S.details[id] = { status: 'done', data: { error: '无仓库地址' } };
+        renderList();
+      }
+    } else renderList();
+  }
+  function renderDetail(it){
+    var id = it.name || it.id || '';
+    var d = S.details[id];
+    if (!d) return '';
+    var html = '<div class="dsh-mkt__detail">';
+    if (d.status === 'loading') html += '<span class="dsh-mkt__status">加载详情…</span>';
+    else {
+      var data = d.data || {};
+      if (data.image && !data.error) html += '<img class="dsh-mkt__img" src="' + esc(data.image) + '" onerror="this.style.display=\'none\'" alt="">';
+      if (data.readme) html += '<div class="dsh-mkt__about">' + esc(simplifyReadme(data.readme)) + '</div>';
+      else if (data.error) html += '<span class="dsh-mkt__status">' + esc(data.error) + '</span>';
+      html += '<div class="dsh-mkt__detail-foot"><code>' + esc(it.install || it.url || '') + '</code>' +
+        (it.url ? ' <a href="' + esc(it.url) + '" target="_blank" rel="noopener">在 GitHub 查看 →</a>' : '') + '</div>';
+    }
+    html += '</div>';
+    return html;
+  }
+  function simplifyReadme(raw){
+    var s = String(raw || '').replace(/\r\n/g, '\n').replace(/^---\n[\s\S]*?\n---\n/, '').replace(/<!--[\s\S]*?-->/g, '');
+    s = s.replace(/!\[[^\]]*\]\([^)]*\)/g, '').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/[#>*_`~|]/g, '').replace(/\n{3,}/g, '\n\n');
+    s = s.replace(/\s+/g, ' ').trim();
+    return s.length > 500 ? s.slice(0, 500) + '…' : s;
+  }
+  function esc(s){ return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  function findItem(id){
+    for (var i = 0; i < S.items.length; i++) {
+      var it = S.items[i];
+      if ((it.name || it.id || '') === id) return it;
+    }
+    return null;
+  }
+  function installPlugin(id, btn){
+    var A = app(); var it = findItem(id); if (!A || !it) return;
+    btn.textContent = '安装中…';
+    var src = it.install || it.url || id;
+    A.InstallPlugin(src, { name: id }).then(function(plan){
+      try {
+        var p = JSON.parse(plan);
+        btn.textContent = (p && p.ok) ? '已安装' : '失败';
+        if (p && p.ok) S.installed[id] = true;
+      } catch(e){ btn.textContent = '完成'; S.installed[id] = true; }
+      setTimeout(function(){ renderList(); }, 700);
+    }).catch(function(){ btn.textContent = '失败'; });
+  }
+  function removePlugin(id, btn){
+    var A = app(); if (!A) return;
+    btn.textContent = '卸载中…';
+    A.RemovePlugin(id).then(function(){
+      delete S.installed[id];
+      btn.textContent = '已卸载';
+      setTimeout(function(){ renderList(); }, 700);
+    }).catch(function(){ btn.textContent = '失败'; });
+  }
+  var obs = new MutationObserver(function(){ injectIntoPluginPage(); });
+  try { obs.observe(document.documentElement, { childList: true, subtree: true }); } catch(e){}
+  injectIntoPluginPage();
+})();
