@@ -19,14 +19,50 @@ func (a *App) AnswerQuestionForTab(_a1 any, _a2 any, _a3 any) error { return nil
 func (a *App) ApproveTab(_a1 any, _a2 any, _a3 any, _a4 any, _a5 any) error { return nil }
 func (a *App) AttachmentDataURL() string { return "" }
 func (a *App) AuthenticateMCPServer(_a1 any) error { return nil }
-func (a *App) AvailableSubagentTools() []any { return []any{} }
+func (a *App) AvailableSubagentTools() []any {
+	// 贴合 DSH：子智能体是运行时派生的子会话，从 subagent.list 读真实条目。
+	entries := []any{}
+	if a.dsh != nil {
+		if raw, err := a.dsh.RPC("subagent.list", map[string]any{"parentSessionId": a.activeSessionID("")}); err == nil {
+			var list struct {
+				Entries []struct {
+					Kind     string `json:"kind"`
+					ID       string `json:"id"`
+					Mode     string `json:"mode"`
+					Activity string `json:"activity"`
+					Label    string `json:"label"`
+				} `json:"entries"`
+			}
+			if err := DecodeRPC(raw, &list); err == nil {
+				for _, e := range list.Entries {
+					entries = append(entries, map[string]any{
+						"id": e.ID, "kind": e.Kind, "mode": e.Mode,
+						"activity": e.Activity, "label": e.Label,
+					})
+				}
+			}
+		}
+	}
+	return entries
+}
 func (a *App) BalanceForTab() error { return nil }
 func (a *App) CancelJobForTab(_a1 any, _a2 any) error { return nil }
 func (a *App) CancelTab(_a1 any) error { return nil }
 func (a *App) CancelTabWithInboxItems(_a1 any, _a2 any) error { return nil }
 func (a *App) CancelTabWithInboxItemsResult(_a1 any, _a2 any) error { return nil }
 func (a *App) CancelTrySubagentProfile() error { return nil }
-func (a *App) Capabilities() map[string]any { return nil }
+func (a *App) Capabilities() map[string]any {
+	// 能力面板总览（MCP 服务器/技能/插件）——skills 接 DSH skill.list，
+	// servers/plugins 置空（DSH 的 MCP 是配置式插件，无运行时 RPC）。
+	sv := a.skillsView("")
+	return map[string]any{
+		"servers":                 []any{},
+		"skills":                  sv["skills"],
+		"skillRoots":              []any{},
+		"plugins":                 []any{},
+		"allowImplicitInvocation": true,
+	}
+}
 func (a *App) ChooseRecoveryBranch() error { return nil }
 func (a *App) CleanRecoveryLineage(_a1 any) error { return nil }
 func (a *App) CleanRemoteLegacyWorkbenchData() error { return nil }
@@ -152,7 +188,6 @@ func (a *App) PurgeTrashedSession(_a1 any) error { return nil }
 func (a *App) ReadInboxItem() error { return nil }
 func (a *App) ReadRemoteFile() error { return nil }
 func (a *App) ReconnectMCPServer(_a1 any) error { return nil }
-func (a *App) RefreshSkills() error { return nil }
 func (a *App) Remember(_scope string, _note string) error { return nil }
 func (a *App) RememberForTab(_tabID string, _scope string, _note string) error { return nil }
 func (a *App) RemoteLastWorkspace() map[string]any { return nil }

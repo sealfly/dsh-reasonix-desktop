@@ -243,10 +243,53 @@ func (a *App) StorageSettings() map[string]any {
 	}
 }
 
-// SkillsSettings 技能设置（设置面板"技能"页签）。
+// SkillsSettings 技能设置（设置面板"技能"页签）——贴合 DSH：
+// 从 skill.list（payload {sessionId}）读真实 skills。
+// DSH 无 skill 时返回空列表（前端 UI 正常显示空态）。
 func (a *App) SkillsSettings() map[string]any {
+	return a.skillsView("")
+}
+
+// RefreshSkills 刷新技能列表——DSH skill.list 无缓存，走一遍真实查询。
+func (a *App) RefreshSkills() error {
+	a.skillsView("")
+	return nil
+}
+
+// skillsView 从 DSH skill.list 读取并转成前端 SkillView 结构。
+func (a *App) skillsView(tabID string) map[string]any {
+	skills := []any{}
+	if a.dsh != nil {
+		sid := a.activeSessionID(tabID)
+		if sid != "" {
+			if raw, err := a.dsh.RPC("skill.list", map[string]any{"sessionId": sid}); err == nil {
+				var list struct {
+					Skills []struct {
+						Name           string `json:"name"`
+						Description    string `json:"description"`
+						WhenToUse      string `json:"whenToUse"`
+						ModelInvocable bool   `json:"modelInvocable"`
+					} `json:"skills"`
+				}
+				if err := DecodeRPC(raw, &list); err == nil {
+					for _, s := range list.Skills {
+						skills = append(skills, map[string]any{
+							"name":           s.Name,
+							"description":    s.Description,
+							"scope":          "dsh",
+							"runAs":          "agent",
+							"enabled":        true,
+							"invocation":     "manual",
+							"modelInvocable": s.ModelInvocable,
+							"whenToUse":      s.WhenToUse,
+						})
+					}
+				}
+			}
+		}
+	}
 	return map[string]any{
-		"skills":                  []any{},
+		"skills":                  skills,
 		"skillRoots":              []any{},
 		"allowImplicitInvocation": true,
 	}
