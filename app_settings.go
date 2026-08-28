@@ -272,13 +272,14 @@ func (a *App) skillsView(tabID string) map[string]any {
 					} `json:"skills"`
 				}
 				if err := DecodeRPC(raw, &list); err == nil {
+					prefs := getSkillPrefsManager()
 					for _, s := range list.Skills {
 						skills = append(skills, map[string]any{
 							"name":           s.Name,
 							"description":    s.Description,
 							"scope":          "dsh",
 							"runAs":          "agent",
-							"enabled":        true,
+							"enabled":        !prefs.isSkillDisabled(s.Name),
 							"invocation":     "manual",
 							"modelInvocable": s.ModelInvocable,
 							"whenToUse":      s.WhenToUse,
@@ -289,9 +290,10 @@ func (a *App) skillsView(tabID string) map[string]any {
 		}
 	}
 	return map[string]any{
-		"skills":                  skills,
+		// 合并本地子智能体 profile（runAs="subagent"，前端子智能体面板过滤该值）。
+		"skills":                  append(skills, subagentProfilesAsSkills()...),
 		"skillRoots":              []any{},
-		"allowImplicitInvocation": true,
+		"allowImplicitInvocation": getSkillPrefsManager().load().ImplicitInvocation,
 	}
 }
 

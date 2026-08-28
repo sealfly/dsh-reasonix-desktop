@@ -60,7 +60,7 @@ func (a *App) Capabilities() map[string]any {
 		"skills":                  sv["skills"],
 		"skillRoots":              []any{},
 		"plugins":                 []any{},
-		"allowImplicitInvocation": true,
+		"allowImplicitInvocation": getSkillPrefsManager().load().ImplicitInvocation,
 	}
 }
 func (a *App) ChooseRecoveryBranch() error { return nil }
@@ -80,11 +80,9 @@ func (a *App) ContextPanel() error { return nil }
 func (a *App) CopyThemePack(_a1 any, _a2 any, _a3 any) error { return nil }
 func (a *App) CreateBlankProject(_parentDir string, _projectName string) error { return nil }
 func (a *App) CreateIsolatedWorktree(_workspaceRoot string) error { return nil }
-func (a *App) CreateSubagentProfile(_a1 any) error { return nil }
 func (a *App) CreateTopic() error { return nil }
 func (a *App) DeleteInboxItem() error { return nil }
 func (a *App) DeleteRecoveryCopy(_a1 any) error { return nil }
-func (a *App) DeleteSubagentProfile(_a1 any, _a2 any) error { return nil }
 func (a *App) DeleteThemePack(_a1 any) error { return nil }
 func (a *App) DiagnoseBotConnection(_a1 any) error { return nil }
 func (a *App) DisconnectRemoteHost() error { return nil }
@@ -230,11 +228,7 @@ func (a *App) SetPermissionMode(_a1 any) error { return nil }
 func (a *App) SetProviderWebSearch(_a1 any, _a2 any) error { return nil }
 func (a *App) SetReasoningLanguage(_a1 any) error { return nil }
 func (a *App) SetSandbox(_a1 any, _a2 any, _a3 any, _a4 any, _a5 any) error { return nil }
-func (a *App) SetSkillEnabled(_a1 any, _a2 any) error { return nil }
-func (a *App) SetSkillImplicitInvocation(_a1 any) error { return nil }
 func (a *App) SetSkillPathEnabled(_a1 any, _a2 any) error { return nil }
-func (a *App) SetSubagentProfileEffort(_a1 any, _a2 any) error { return nil }
-func (a *App) SetSubagentProfileModel(_a1 any, _a2 any) error { return nil }
 func (a *App) StartBotConnectionInstall(_a1 any, _a2 any) error { return nil }
 func (a *App) StartTopicActivation(req map[string]any) map[string]any {
 	return a.StartTopicActivationImpl(req)
@@ -259,7 +253,6 @@ func (a *App) TrySubagentProfile(_a1 any, _a2 any) error { return nil }
 func (a *App) UndoRewindForTab() error { return nil }
 func (a *App) UpdateInboxItem() error { return nil }
 func (a *App) UpdateRemoteHost() error { return nil }
-func (a *App) UpdateSubagentProfile(_a1 any, _a2 any, _a3 any) error { return nil }
 func (a *App) UpgradeDeepSeekProviderAccess(_a1 any) error { return nil }
 func (a *App) UsageStats() error { return nil }
 func (a *App) WriteRemoteFile() error { return nil }
