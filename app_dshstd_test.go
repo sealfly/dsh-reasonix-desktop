@@ -173,3 +173,70 @@ func TestDshStdSelfManifest(t *testing.T) {
 		t.Fatalf("自清单应有效: %+v", r["issues"])
 	}
 }
+
+func TestValidSemver(t *testing.T) {
+	cases := map[string]bool{
+		"1.0.0":     true,
+		"0.15.1":    true,
+		"2.3.4-rc.1": true,
+		"1.0.0+build5": true,
+		"1.0":       false,
+		"v1.0.0":    false,
+		"1.0.0.0":   false,
+		"":          false,
+		"abc":       false,
+	}
+	for v, want := range cases {
+		if validSemver(v) != want {
+			t.Fatalf("validSemver(%q)=%v want=%v", v, validSemver(v), want)
+		}
+	}
+}
+
+func TestSupportedManifestVersion(t *testing.T) {
+	cases := map[string]bool{
+		"0.15": true,
+		"0.16": true,
+		"0.14": false,
+		"1.0":  false,
+		"":     false,
+	}
+	for v, want := range cases {
+		if isSupportedManifestVersion(v) != want {
+			t.Fatalf("isSupportedManifestVersion(%q)=%v want=%v", v, isSupportedManifestVersion(v), want)
+		}
+	}
+}
+
+func TestParseDshPluginManifestVersionChecks(t *testing.T) {
+	// 非法 semver 版本应报 invalid-version
+	m := `{"manifestVersion":"0.15","id":"com.example/t","name":"T","version":"1.0"}`
+	r := ParseDshPluginManifest([]byte(m))
+	if r["valid"] != false {
+		t.Fatalf("非法版本应无效")
+	}
+	found := false
+	for _, i := range r["issues"].([]any) {
+		if i.(map[string]any)["code"] == "invalid-version" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("应报 invalid-version: %+v", r["issues"])
+	}
+	// 不支持的 manifestVersion 应报 unsupported-manifestVersion
+	m2 := `{"manifestVersion":"2.0","id":"com.example/t","name":"T","version":"1.0.0"}`
+	r2 := ParseDshPluginManifest([]byte(m2))
+	if r2["valid"] != false {
+		t.Fatalf("不支持的 manifestVersion 应无效")
+	}
+	found = false
+	for _, i := range r2["issues"].([]any) {
+		if i.(map[string]any)["code"] == "unsupported-manifestVersion" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("应报 unsupported-manifestVersion: %+v", r2["issues"])
+	}
+}

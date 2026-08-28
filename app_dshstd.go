@@ -120,6 +120,31 @@ func protocolKey(ref ApiReference) string {
 	return ref.APIVersion + "\x00" + ref.Kind
 }
 
+// ===== 插件版本语义（dsh-std 版本管理：semver + manifestVersion 兼容） =====
+
+// semverRe 宽松 semver：x.y.z（可带 -prerelease / +build 后缀）。
+var semverRe = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$`)
+
+// validSemver 判断版本号是否为合法 semver（dsh-plugin.json 的 version 字段约定）。
+func validSemver(v string) bool {
+	return semverRe.MatchString(v)
+}
+
+// supportedManifestVersions DSH 生态当前接受的 dsh-plugin.json 清单格式版本
+// （Community v0.15 基线；0.15 系列兼容）。
+var supportedManifestVersions = []string{"0.15", "0.16", "0.17", "0.18"}
+
+// isSupportedManifestVersion 判断 manifestVersion 是否在支持的 0.x 系列内
+// （0.15 基线向上兼容，用于插件准入的版本协商）。
+func isSupportedManifestVersion(v string) bool {
+	for _, s := range supportedManifestVersions {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
 // sameProtocol 判断两个引用是否同一协议。
 func sameProtocol(a, b ApiReference) bool {
 	return a.APIVersion == b.APIVersion && a.Kind == b.Kind
@@ -290,6 +315,8 @@ func ParseDshPluginManifest(data []byte) map[string]any {
 	// 校验必填字段
 	if m.ManifestVersion == "" {
 		issues = append(issues, map[string]any{"code": "missing-field", "severity": "error", "message": "manifestVersion is required"})
+	} else if !isSupportedManifestVersion(m.ManifestVersion) {
+		issues = append(issues, map[string]any{"code": "unsupported-manifestVersion", "severity": "error", "message": "manifestVersion " + m.ManifestVersion + " is not supported (expected 0.15 series)"})
 	}
 	if m.ID == "" {
 		issues = append(issues, map[string]any{"code": "missing-field", "severity": "error", "message": "id is required"})
@@ -299,6 +326,8 @@ func ParseDshPluginManifest(data []byte) map[string]any {
 	}
 	if m.Version == "" {
 		issues = append(issues, map[string]any{"code": "missing-field", "severity": "error", "message": "version is required"})
+	} else if !validSemver(m.Version) {
+		issues = append(issues, map[string]any{"code": "invalid-version", "severity": "error", "message": "version " + m.Version + " is not a valid semver (expected x.y.z)"})
 	}
 	if m.Facets.Host.Entry == "" {
 		issues = append(issues, map[string]any{"code": "missing-field", "severity": "warning", "message": "facets.host.entry is missing (headless plugin)"})

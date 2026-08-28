@@ -236,21 +236,55 @@ func (a *App) Plugins() []any {
 	for _, p := range local {
 		enabledBy[p.Name] = p.Enabled
 	}
-	// 2. DSH 后端真实插件（dsh-std 协议，dynamicCordisRunner/inventory）
+	// 2. DSH 后端真实插件（pluginInventory/list——cordis loader 只读清单，Typert Remote 需 args 包装）
 	seen := map[string]bool{}
 	if a.dsh != nil {
+		if raw, err := a.dsh.RPC("pluginInventory/list", map[string]any{"args": map[string]any{}}); err == nil {
+			var list struct {
+				Entries []struct {
+					EntryID    string `json:"entryId"`
+					ModuleName string `json:"moduleName"`
+					Enabled    bool   `json:"enabled"`
+					FiberPhase string `json:"fiberPhase"`
+				} `json:"entries"`
+			}
+			if DecodeRPC(raw, &list) == nil {
+				for _, e := range list.Entries {
+					name := e.ModuleName
+					if name == "" {
+						name = e.EntryID
+					}
+					if name == "" {
+						continue
+					}
+					seen[name] = true
+					v := map[string]any{
+						"name": name, "root": "dsh://" + name,
+						"version": "", "description": "",
+						"source": "dsh", "manifestKind": "cordis",
+						"enabled": e.Enabled, "fiberPhase": e.FiberPhase,
+						"entryId": e.EntryID,
+					}
+					if en, ok := enabledBy[name]; ok {
+						v["enabled"] = en // 本地状态覆盖
+					}
+					out = append(out, v)
+				}
+			}
+		}
+		// 2b. 动态包（cordis_define 的内存级插件，当前进程存活期）——通常为空
 		if raw, err := a.dsh.RPC("dynamicCordisRunner/inventory", map[string]any{"args": map[string]any{}}); err == nil {
 			var items []map[string]any
 			if DecodeRPC(raw, &items) == nil {
 				for _, it := range items {
 					name := pluginNameFromItem(it)
-					if name == "" {
+					if name == "" || seen[name] {
 						continue
 					}
 					seen[name] = true
 					v := dshPluginToView(it, name)
 					if en, ok := enabledBy[name]; ok {
-						v["enabled"] = en // 本地状态覆盖
+						v["enabled"] = en
 					}
 					out = append(out, v)
 				}
