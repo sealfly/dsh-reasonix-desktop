@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -172,6 +173,34 @@ func TestDSHPluginToViewMissingManifest(t *testing.T) {
 
 // ===== imsai 动态源（app_market_api.go）=====
 
+// TestImsaiDescription 双语描述解析（对象/字符串/空）。
+func TestImsaiDescription(t *testing.T) {
+	// 官方格式：{en,zh} 对象
+	en, zh := imsaiDescription(json.RawMessage(`{"en":"English desc","zh":"中文描述"}`))
+	if en != "English desc" || zh != "中文描述" {
+		t.Fatalf("对象解析失败: %q / %q", en, zh)
+	}
+	// 旧格式：字符串
+	en2, zh2 := imsaiDescription(json.RawMessage(`"plain text"`))
+	if en2 != "plain text" || zh2 != "" {
+		t.Fatalf("字符串解析失败: %q / %q", en2, zh2)
+	}
+	// 空
+	en3, zh3 := imsaiDescription(nil)
+	if en3 != "" || zh3 != "" {
+		t.Fatalf("空解析失败")
+	}
+	// 完整条目解码（模拟真实 API 响应，验证不因对象描述失败）
+	item := imsaiPlugin{}
+	if err := json.Unmarshal([]byte(`{"id":"o/r","name":"demo","description":{"en":"E","zh":"中"},"stars":5}`), &item); err != nil {
+		t.Fatalf("对象描述解码失败: %v", err)
+	}
+	v := imsaiToItem(item)
+	if v["descriptionZh"] != "中" || v["description"] != "E" {
+		t.Fatalf("imsaiToItem 双语透传失败: %v / %v", v["description"], v["descriptionZh"])
+	}
+}
+
 func TestRiskLevel(t *testing.T) {
 	cases := []struct {
 		text string
@@ -195,7 +224,7 @@ func TestImsaiToItem(t *testing.T) {
 	it := imsaiToItem(imsaiPlugin{
 		ID: "owner/repo", Name: "demo", Owner: "owner",
 		URL: "https://github.com/owner/repo", Category: "ui",
-		Description: "a sidebar panel", Install: "dsh plugin --profile web add demo", Stars: 5,
+		Description: json.RawMessage(`"a sidebar panel"`), Install: "dsh plugin --profile web add demo", Stars: 5,
 	})
 	if it["name"] != "demo" || it["owner"] != "owner" {
 		t.Fatalf("name/owner wrong: %v %v", it["name"], it["owner"])

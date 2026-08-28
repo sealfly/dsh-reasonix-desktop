@@ -32,15 +32,37 @@ const (
 )
 
 // imsaiPlugin imsai 返回的插件条目（search 与 list 共用字段子集）。
+// 注意：description 可能是字符串（旧）或 {en,zh} 对象（官方双语描述）——用 RawMessage 兼容。
 type imsaiPlugin struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Owner       string `json:"owner"`
-	URL         string `json:"url"`
-	Category    string `json:"category"`
-	Description string `json:"description"`
-	Install     string `json:"install"`
-	Stars       int    `json:"stars"`
+	ID          string          `json:"id"`
+	Name        string          `json:"name"`
+	Owner       string          `json:"owner"`
+	URL         string          `json:"url"`
+	Category    string          `json:"category"`
+	Description json.RawMessage `json:"description"`
+	Install     string          `json:"install"`
+	Stars       int             `json:"stars"`
+}
+
+// imsaiDescription 解析 description（兼容字符串与 {en,zh} 对象）。
+func imsaiDescription(raw json.RawMessage) (en, zh string) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return "", ""
+	}
+	if raw[0] == '{' {
+		var d struct {
+			En string `json:"en"`
+			Zh string `json:"zh"`
+		}
+		if json.Unmarshal(raw, &d) == nil {
+			return d.En, d.Zh
+		}
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s, ""
+	}
+	return "", ""
 }
 
 type imsaiSearchResp struct {
@@ -124,6 +146,9 @@ func dynamicSearch(client *http.Client, query, category string) (map[string]any,
 
 // dynamicList 浏览（空查询）：500 条 npm 可安装，按分类缓存 5 分钟。
 func dynamicList(client *http.Client, category string) (map[string]any, bool) {
+	if os.Getenv("DSH_MARKET_OFFLINE") == "1" {
+		return nil, false
+	}
 	marketCacheMu.Lock()
 	if e, ok := marketCache[category]; ok && time.Since(e.at) < imsaiCacheTTL {
 		marketCacheMu.Unlock()
@@ -310,17 +335,18 @@ func imsaiGet(client *http.Client, url string, out any) error {
 	return json.NewDecoder(resp.Body).Decode(out)
 }
 
-// imsaiToItem imsai 条目 → 前端插件视图（含风险分级）。
+// imsaiToItem imsai 条目 → 前端插件视图（含风险分级 + 中英双语描述）。
 func imsaiToItem(p imsaiPlugin) map[string]any {
 	name := p.Name
 	if name == "" {
 		name = p.ID
 	}
+	en, zh := imsaiDescription(p.Description)
 	return map[string]any{
 		"name": name, "owner": p.Owner, "url": p.URL,
-		"category": p.Category, "description": p.Description,
-		"descriptionZh": "", "stars": p.Stars, "install": p.Install,
-		"npm": "", "risk": riskLevel(p.Description + " " + name),
+		"category": p.Category, "description": en,
+		"descriptionZh": zh, "stars": p.Stars, "install": p.Install,
+		"npm": "", "risk": riskLevel(en + " " + zh + " " + name),
 	}
 }
 
