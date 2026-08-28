@@ -101,13 +101,43 @@ func (a *App) ActiveWorkForTab(_tabID string) map[string]any {
 func (a *App) Meta() map[string]any { return a.MetaForTab("") }
 
 // MetaForTab 会话元数据（DSH session.list 投影）。
+// 注意：label 必须返回当前模型 ref——Composer 顶部用
+// `state.meta?.label ?? t("status.connecting")` 显示模型标签，label 缺失
+// 会永远显示"连接中"（切模型后 refreshMetaForTab 拉到无 label 的 meta）。
+// ready/runtime.phase 也必须有：useController 用
+// `meta.ready === true && (!meta.runtime || meta.runtime.phase === "ready")`
+// 判断 controllerReady。
 func (a *App) MetaForTab(tabID string) map[string]any {
 	s := a.findSession(tabID)
-	if s == nil {
-		return map[string]any{"cwd": homeDir(), "readOnly": false}
+	cwd := homeDir()
+	sessionPath := ""
+	proj := map[string]any{}
+	if s != nil {
+		cwd = s.Cwd
+		sessionPath = s.SessionID + ".jsonl"
+		proj = map[string]any{"values": projectionValues(s)}
 	}
-	v := projectionValues(s)
-	return map[string]any{"cwd": s.Cwd, "readOnly": false, "projections": map[string]any{"values": v}}
+	label := ""
+	if m := a.modelsView(tabID); m != nil && m.Current != nil {
+		label = m.Current.Provider + "/" + m.Current.Model
+	}
+	if label == "" {
+		label = "DSH"
+	}
+	return map[string]any{
+		"label":             label,
+		"ready":             true,
+		"runtime":           map[string]any{"phase": "ready", "epoch": "dshell"},
+		"eventChannel":      "dsh-events",
+		"sessionPath":       sessionPath,
+		"cwd":               cwd,
+		"workspaceRoot":     cwd,
+		"workspaceName":     filepathBase(cwd),
+		"workspacePath":     cwd,
+		"imageInputEnabled": true,
+		"readOnly":          false,
+		"projections":       proj,
+	}
 }
 
 // ListSessionsForTab 指定会话的会话列表（DSH 无子会话概念，返回空）。
