@@ -28,21 +28,35 @@
       "background:#1b1e24", "border:1px solid #333a45",
       "box-shadow:0 6px 24px rgba(0,0,0,.45)",
       "font:13px/1.4 -apple-system,'Segoe UI',system-ui,sans-serif",
-      "color:#e6e8eb", "max-width:420px"
+      "color:#e6e8eb", "max-width:460px"
     ].join(";");
     var text = document.createElement("span");
     text.style.cssText = "flex:1;min-width:0";
     text.textContent = "DSH 有新版可用：" + info.current + " → " + info.latest;
-    var btn = document.createElement("button");
-    btn.type = "button";
-    btn.textContent = "查看更新";
-    btn.style.cssText = [
+    var dl = document.createElement("button");
+    dl.type = "button";
+    dl.textContent = "下载更新";
+    dl.style.cssText = [
       "border:0", "border-radius:6px", "padding:5px 12px", "cursor:pointer",
       "background:#0153e5", "color:#fff", "font:600 12px/1 -apple-system,'Segoe UI',system-ui,sans-serif"
     ].join(";");
-    btn.onclick = function () {
+    dl.onclick = function () {
       try { localStorage.setItem(SHOWN_KEY, String(Date.now())); } catch (e) {}
-      openExternal(info.updateUrl || "https://github.com/sdkwork-ai/deepseek-harness-desktop/releases");
+      openExternal(info.downloadUrl || info.releaseUrl || info.updateUrl ||
+        "https://github.com/sdkwork-ai/deepseek-harness-desktop/releases");
+      wrap.remove();
+    };
+    var detail = document.createElement("button");
+    detail.type = "button";
+    detail.textContent = "详情";
+    detail.style.cssText = [
+      "border:1px solid #4a5260", "border-radius:6px", "padding:5px 10px", "cursor:pointer",
+      "background:none", "color:#c9d0d9", "font:600 12px/1 -apple-system,'Segoe UI',system-ui,sans-serif"
+    ].join(";");
+    detail.onclick = function () {
+      try { localStorage.setItem(SHOWN_KEY, String(Date.now())); } catch (e) {}
+      openExternal(info.releaseUrl || info.updateUrl ||
+        "https://github.com/sdkwork-ai/deepseek-harness-desktop/releases");
       wrap.remove();
     };
     var close = document.createElement("button");
@@ -55,7 +69,8 @@
       wrap.remove();
     };
     wrap.appendChild(text);
-    wrap.appendChild(btn);
+    wrap.appendChild(dl);
+    wrap.appendChild(detail);
     wrap.appendChild(close);
     (document.body || document.documentElement).appendChild(wrap);
   }

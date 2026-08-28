@@ -80,6 +80,27 @@ func TestDshUpdateCheckStructure(t *testing.T) {
 	}
 }
 
+// TestDshUpdateCheckUpdateChannel 验证更新通道实体（下载直链/详情页）可用：
+// 网络可用时 DshUpdateCheck 应带上 GitHub 最新 Release 的 Windows 安装包直链。
+func TestDshUpdateCheckUpdateChannel(t *testing.T) {
+	a := &App{}
+	info := a.DshUpdateCheck()
+	if dl, ok := info["downloadUrl"].(string); ok && dl != "" {
+		if !contains(dl, "win-x64.exe") && !contains(dl, "download/") {
+			t.Fatalf("downloadUrl 应指向 Windows 安装包直链: %q", dl)
+		}
+	} else {
+		t.Log("downloadUrl 未取到（网络不可用，跳过）")
+	}
+	if rel, ok := info["releaseUrl"].(string); ok && rel != "" {
+		if !contains(rel, "releases") {
+			t.Fatalf("releaseUrl 应为 Release 详情页: %q", rel)
+		}
+	} else {
+		t.Log("releaseUrl 未取到（网络不可用，跳过）")
+	}
+}
+
 func TestDshUpdateCheckLocatesLocalVersion(t *testing.T) {
 	a := &App{}
 	info := a.DshUpdateCheck()

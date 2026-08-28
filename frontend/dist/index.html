@@ -45,15 +45,14 @@
     </div>
   <script>/* __DSH_PLUGIN_MARKET v3 (moved from bridge chunk: v1.31.4 bridge is ESM with trailing export, appending breaks module syntax) */
 ce as T,clearLegacyThemePreference as U,h as V,getResolvedTheme as W,normalizeThemeStyleForTheme as X,normalizeThemePreference as Y,readLegacyThemePreference as Z,openExternal as _,installBreadcrumbConsoleHook as _t,onProjectTreeChanged as a,mergedFetchedProviderModels as at,modeHasAutoApproveTools as b,onRemoteServer as c,providerIsConfigured as ct,onSessionRecovered as d,providerModelContextWindowIsSmall as dt,normalizeStatusBarItems as et,onTabMeta as f,providerRequiresKey as ft,onUpdaterProgress as g,dumpBreadcrumbs as gt,onTopicActivation as h,addBreadcrumb as ht,onFilesDropped as i,mergeProviderModelContextWindows as it,clearThemePack as j,cancelThemePreview as k,onRemoteStatus as l,providerModelCandidates as lt,onTerminalOutput as m,invalidateSharedQuery as mt,installWailsNonFileDragErrorSuppression as n,createLatestRequestGate as nt,onReady as o,providerApiKeyEnvForSave as ot,onTerminalExit as p,onProjectTreeChangedV2 as pt,initTheme as q,onEvent as r,inferredVisionModels as rt,onRemoteForwards as s,providerDefaultModel as st,J as t,apiKeyEnvFromProviderName as tt,onRuntimeRebuilt as u,providerModelContextWindowDrafts as ut,decisionSurfaceMockFromInput as v,snapshotBreadcrumbs as vt,normalizeToolApprovalMode as w,modeHasPlan as x,modeFromAxes as y,themePackKind as z};
-// __DSH_ACT_WRAP: 鍏滃簳妯℃嫙 topic activation 浜嬩欢銆備富璺緞: Go StartTopicActivationImpl 宸茬敤
-// wruntime.EventsEmit 鎺?"topic:activation"(starting->ready), 鍓嶇 onTopicActivation 缁?// window.runtime.EventsOn 璁㈤槄銆傛澶勯澶栨帹 z(mock 璁㈤槄鑰?, 鍏煎 mock 妯″紡, realApp 涓?z 鏃犺闃呰€呮棤鍓綔鐢ㄣ€?try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__win.go||!__win.go.main||!__win.go.main.App)return;var __app=__win.go.main.App;var __orig=__app.StartTopicActivation;if(typeof __orig!=='function')return;__app.StartTopicActivation=function(__req){var __res=__orig.apply(this,arguments);if(__res&&typeof __res.then==='function'){return __res.then(function(__r){try{if(__r&&__r.requestId){var __rid=__r.requestId,__tid=__r.tabId;__emitMockTopicActivation({requestId:__rid,tabId:__tid,phase:'starting'});(typeof Promise!=='undefined'?Promise.resolve():__win.Promise.resolve()).then(function(){try{__emitMockTopicActivation({requestId:__rid,tabId:__tid,phase:'ready'})}catch(__e){}});__win.setTimeout(function(){try{__emitMockTopicActivation({requestId:__rid,tabId:__tid,phase:'ready'})}catch(__e){}},0)}}catch(__e){}return __r})}return __res}})()}catch(__e){}
+// __DSH_ACT_WRAP: 閸忔粌绨冲Ο鈩冨珯 topic activation 娴滃娆㈤妴鍌欏瘜鐠侯垰绶? Go StartTopicActivationImpl 瀹歌尙鏁?// wruntime.EventsEmit 閹?"topic:activation"(starting->ready), 閸撳秶顏?onTopicActivation 缂?// window.runtime.EventsOn 鐠併垽妲勯妴鍌涱劃婢跺嫰顤傛径鏍ㄥ腹 z(mock 鐠併垽妲勯懓?, 閸忕厧顔?mock 濡€崇础, realApp 娑?z 閺冪姾顓归梼鍛扳偓鍛￥閸擃垯缍旈悽銊ｂ偓?try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__win.go||!__win.go.main||!__win.go.main.App)return;var __app=__win.go.main.App;var __orig=__app.StartTopicActivation;if(typeof __orig!=='function')return;__app.StartTopicActivation=function(__req){var __res=__orig.apply(this,arguments);if(__res&&typeof __res.then==='function'){return __res.then(function(__r){try{if(__r&&__r.requestId){var __rid=__r.requestId,__tid=__r.tabId;__emitMockTopicActivation({requestId:__rid,tabId:__tid,phase:'starting'});(typeof Promise!=='undefined'?Promise.resolve():__win.Promise.resolve()).then(function(){try{__emitMockTopicActivation({requestId:__rid,tabId:__tid,phase:'ready'})}catch(__e){}});__win.setTimeout(function(){try{__emitMockTopicActivation({requestId:__rid,tabId:__tid,phase:'ready'})}catch(__e){}},0)}}catch(__e){}return __r})}return __res}})()}catch(__e){}
 
 
 
 
-;/* __DSH_PLUGIN_MARKET v3 鈥?MarketTab 椋庢牸锛堝€熼壌 dsh-plugin-market, MIT锛?
-   浼犵粺椤电爜缈婚〉(1/2/3鈥?涓婁竴椤?涓嬩竴椤? + 璇︽儏(README 鍔熻兘绠€浠?+ 棰勮鍥?銆?   鏁版嵁: MarketPage(query, category, page) 鍒嗛〉缂撳瓨锛堢炕鍥炲凡鍔犺浇椤甸浂璋冪敤锛?
-   MarketPluginDetail(url) 鎷?GitHub README/棰勮鍥撅紙鎸夐渶鐐瑰嚮鎵嶆媺锛岀紦瀛?10 鍒嗛挓锛夈€?*/
+;/* __DSH_PLUGIN_MARKET v3 閳?MarketTab 妞嬪孩鐗搁敍鍫濃偓鐔煎 dsh-plugin-market, MIT閿?
+   娴肩姷绮烘い鐢电垳缂堝銆?1/2/3閳?娑撳﹣绔存い?娑撳绔存い? + 鐠囷附鍎?README 閸旂喕鍏樼粻鈧禒?+ 妫板嫯顫嶉崶?閵?   閺佺増宓? MarketPage(query, category, page) 閸掑棝銆夌紓鎾崇摠閿涘牏鐐曢崶鐐插嚒閸旂姾娴囨い鐢告祩鐠嬪啰鏁ら敍?
+   MarketPluginDetail(url) 閹?GitHub README/妫板嫯顫嶉崶鎾呯礄閹稿娓堕悙鐟板毊閹靛秵濯洪敍宀€绱︾€?10 閸掑棝鎸撻敍澶堚偓?*/
 ;(function(){
   if (typeof window === 'undefined' || !document) return;
   var INJECTED = '__dshPluginMarketInjected';
@@ -108,10 +107,10 @@ ce as T,clearLegacyThemePreference as U,h as V,getResolvedTheme as W,normalizeTh
     var root = document.createElement('div');
     root.className = 'dsh-mkt';
     root.innerHTML =
-      '<div class="dsh-mkt__head"><b>DSH 鎻掍欢甯傚満</b><span class="dsh-mkt__msg"></span></div>' +
-      '<div class="dsh-mkt__search"><input type="search" placeholder="鎼滅储鎻掍欢鈥? aria-label="鎼滅储"><button class="btn btn--small">鎼滅储</button></div>' +
-      '<div class="dsh-mkt__chips"><button class="dsh-mkt__chip" data-on="true">鍏ㄩ儴</button></div>' +
-      '<div class="dsh-mkt__title"><b>鐩綍</b><span></span></div>' +
+      '<div class="dsh-mkt__head"><b>DSH 閹绘帊娆㈢敮鍌氭簚</b><span class="dsh-mkt__msg"></span></div>' +
+      '<div class="dsh-mkt__search"><input type="search" placeholder="閹兼粎鍌ㄩ幓鎺嶆閳? aria-label="閹兼粎鍌?><button class="btn btn--small">閹兼粎鍌?/button></div>' +
+      '<div class="dsh-mkt__chips"><button class="dsh-mkt__chip" data-on="true">閸忋劑鍎?/button></div>' +
+      '<div class="dsh-mkt__title"><b>閻╊喖缍?/b><span></span></div>' +
       '<div class="dsh-mkt__list"></div>' +
       '<div class="dsh-mkt__pages"></div>';
     if (installer.parentNode) installer.parentNode.insertBefore(root, installer);
@@ -135,7 +134,7 @@ ce as T,clearLegacyThemePreference as U,h as V,getResolvedTheme as W,normalizeTh
     var A = app(); if (!A || !chipsEl) return;
     A.PluginMarket('', '').then(function(d){
       var cats = (d && d.categories) || [];
-      var html = '<button class="dsh-mkt__chip" data-on="' + (S.category === '' ? 'true' : 'false') + '">鍏ㄩ儴</button>';
+      var html = '<button class="dsh-mkt__chip" data-on="' + (S.category === '' ? 'true' : 'false') + '">閸忋劑鍎?/button>';
       for (var i = 0; i < cats.length; i++) {
         var c = cats[i];
         html += '<button class="dsh-mkt__chip" data-on="' + (S.category === c.id ? 'true' : 'false') + '" data-cat="' + esc(c.id) + '">' + esc(c.zh || c.en || c.id) + '</button>';
@@ -155,7 +154,7 @@ ce as T,clearLegacyThemePreference as U,h as V,getResolvedTheme as W,normalizeTh
   function loadPage(page){
     var A = app(); if (!A || !panel) return;
     S.loading = true; panel.className = 'dsh-mkt dsh-mkt__busy';
-    setMsg('鍔犺浇涓€?);
+    setMsg('閸旂姾娴囨稉顓涒偓?);
     A.MarketPage(S.query, S.category, page).then(function(d){
       d = d || {};
       S.page = page;
@@ -164,7 +163,7 @@ ce as T,clearLegacyThemePreference as U,h as V,getResolvedTheme as W,normalizeTh
       S.totalPages = d.totalPages || Math.max(1, Math.ceil(S.total / 50));
       if (page === 1) S.items = [];
       S.items = S.items.concat(d.items || []);
-      if (totalEl) totalEl.textContent = '鍏?' + S.total + ' 涓?路 绗?' + S.page + '/' + S.totalPages + ' 椤?;
+      if (totalEl) totalEl.textContent = '閸?' + S.total + ' 娑?璺?缁?' + S.page + '/' + S.totalPages + ' 妞?;
       renderList();
       renderPages();
       setMsg('');
@@ -172,21 +171,21 @@ ce as T,clearLegacyThemePreference as U,h as V,getResolvedTheme as W,normalizeTh
       loadCategories();
       loadInstalled();
     }).catch(function(e){
-      setMsg('鍔犺浇澶辫触: ' + (e && e.message || e));
+      setMsg('閸旂姾娴囨径杈Е: ' + (e && e.message || e));
       S.loading = false; panel.className = 'dsh-mkt';
     });
   }
   function renderPages(){
     if (!pagesEl) return;
     var tp = S.totalPages || 1;
-    var html = '<button class="dsh-mkt__pg" data-pg="' + (S.page - 1) + '"' + (S.page <= 1 ? ' disabled' : '') + '>涓婁竴椤?/button>';
+    var html = '<button class="dsh-mkt__pg" data-pg="' + (S.page - 1) + '"' + (S.page <= 1 ? ' disabled' : '') + '>娑撳﹣绔存い?/button>';
     var seq = buildPages(S.page, tp);
     for (var i = 0; i < seq.length; i++) {
       var p = seq[i];
-      if (p === '...') html += '<span class="dsh-mkt__pg-ell">鈥?/span>';
+      if (p === '...') html += '<span class="dsh-mkt__pg-ell">閳?/span>';
       else html += '<button class="dsh-mkt__pg' + (p === S.page ? ' dsh-mkt__pg--on' : '') + '" data-pg="' + p + '">' + p + '</button>';
     }
-    html += '<button class="dsh-mkt__pg" data-pg="' + (S.page + 1) + '"' + (S.page >= tp ? ' disabled' : '') + '>涓嬩竴椤?/button>';
+    html += '<button class="dsh-mkt__pg" data-pg="' + (S.page + 1) + '"' + (S.page >= tp ? ' disabled' : '') + '>娑撳绔存い?/button>';
     pagesEl.innerHTML = html;
     pagesEl.querySelectorAll('[data-pg]').forEach(function(b){ b.addEventListener('click', function(){
       if (b.disabled) return;
@@ -217,8 +216,8 @@ ce as T,clearLegacyThemePreference as U,h as V,getResolvedTheme as W,normalizeTh
       renderList();
     }).catch(function(){});
   }
-  function riskEmoji(r){ return r === 'high' ? '馃敶' : (r === 'medium' ? '馃煛' : '馃煝'); }
-  function riskName(r){ return r === 'high' ? '楂? : (r === 'medium' ? '涓? : '浣?); }
+  function riskEmoji(r){ return r === 'high' ? '棣冩暥' : (r === 'medium' ? '棣冪厸' : '棣冪厺'); }
+  function riskName(r){ return r === 'high' ? '妤? : (r === 'medium' ? '娑? : '娴?); }
   function renderList(){
     if (!listEl) return;
     var html = '';
@@ -230,23 +229,23 @@ ce as T,clearLegacyThemePreference as U,h as V,getResolvedTheme as W,normalizeTh
         var risk = it.risk || 'low';
         html += '<div class="dsh-mkt__card" data-open="' + open + '">' +
           '<div class="dsh-mkt__row">' +
-            '<span class="dsh-mkt__nm">' + esc(riskEmoji(risk)) + ' ' + esc(id) + (it.stars ? ' <span class="dsh-mkt__meta">鈽? + it.stars + '</span>' : '') + '</span>' +
-            '<button class="btn btn--small" data-toggle="' + esc(id) + '">' + (open ? '鏀惰捣' : '璇︽儏') + '</button>' +
+            '<span class="dsh-mkt__nm">' + esc(riskEmoji(risk)) + ' ' + esc(id) + (it.stars ? ' <span class="dsh-mkt__meta">閳? + it.stars + '</span>' : '') + '</span>' +
+            '<button class="btn btn--small" data-toggle="' + esc(id) + '">' + (open ? '閺€鎯版崳' : '鐠囷附鍎?) + '</button>' +
           '</div>' +
           '<p class="dsh-mkt__desc">' + esc(it.descriptionZh || it.description || '') + '</p>' +
           '<div class="dsh-mkt__foot">' +
-            '<span class="dsh-mkt__tag" data-level="' + esc(risk) + '">' + riskName(risk) + ' 椋庨櫓</span>' +
+            '<span class="dsh-mkt__tag" data-level="' + esc(risk) + '">' + riskName(risk) + ' 妞嬪酣娅?/span>' +
             (it.owner ? '<span class="dsh-mkt__tag">' + esc(it.owner) + '</span>' : '') +
             '<span style="flex:1"></span>' +
-            (inst ? '<button class="btn btn--small" data-uninstall="' + esc(id) + '">鍗歌浇</button>'
-                  : '<button class="btn btn--primary btn--small" data-install="' + esc(id) + '">瀹夎</button>') +
-            (it.url ? '<a class="btn btn--small" href="' + esc(it.url) + '" target="_blank" rel="noopener">浠撳簱</a>' : '') +
+            (inst ? '<button class="btn btn--small" data-uninstall="' + esc(id) + '">閸楁瓕娴?/button>'
+                  : '<button class="btn btn--primary btn--small" data-install="' + esc(id) + '">鐎瑰顥?/button>') +
+            (it.url ? '<a class="btn btn--small" href="' + esc(it.url) + '" target="_blank" rel="noopener">娴犳挸绨?/a>' : '') +
           '</div>' +
           (open ? renderDetail(it) : '') +
         '</div>';
       })(S.items[i]);
     }
-    listEl.innerHTML = html || '<div style="padding:6px;opacity:.7">鏃犲尮閰嶆彃浠?/div>';
+    listEl.innerHTML = html || '<div style="padding:6px;opacity:.7">閺冪姴灏柊宥嗗絻娴?/div>';
     listEl.querySelectorAll('[data-toggle]').forEach(function(b){ b.addEventListener('click', function(){
       var id = b.getAttribute('data-toggle');
       var it = findItem(id);
@@ -272,7 +271,7 @@ ce as T,clearLegacyThemePreference as U,h as V,getResolvedTheme as W,normalizeTh
           renderList();
         }).catch(function(e){ S.details[id] = { status: 'done', data: { error: String((e && e.message) || e) } }; renderList(); });
       } else {
-        S.details[id] = { status: 'done', data: { error: '鏃犱粨搴撳湴鍧€' } };
+        S.details[id] = { status: 'done', data: { error: '閺冪姳绮ㄦ惔鎾虫勾閸р偓' } };
         renderList();
       }
     } else renderList();
@@ -282,14 +281,14 @@ ce as T,clearLegacyThemePreference as U,h as V,getResolvedTheme as W,normalizeTh
     var d = S.details[id];
     if (!d) return '';
     var html = '<div class="dsh-mkt__detail">';
-    if (d.status === 'loading') html += '<span class="dsh-mkt__status">鍔犺浇璇︽儏鈥?/span>';
+    if (d.status === 'loading') html += '<span class="dsh-mkt__status">閸旂姾娴囩拠锔藉剰閳?/span>';
     else {
       var data = d.data || {};
       if (data.image && !data.error) html += '<img class="dsh-mkt__img" src="' + esc(data.image) + '" onerror="this.style.display=\'none\'" alt="">';
       if (data.readme) html += '<div class="dsh-mkt__about">' + esc(simplifyReadme(data.readme)) + '</div>';
       else if (data.error) html += '<span class="dsh-mkt__status">' + esc(data.error) + '</span>';
       html += '<div class="dsh-mkt__detail-foot"><code>' + esc(it.install || it.url || '') + '</code>' +
-        (it.url ? ' <a href="' + esc(it.url) + '" target="_blank" rel="noopener">鍦?GitHub 鏌ョ湅 鈫?/a>' : '') + '</div>';
+        (it.url ? ' <a href="' + esc(it.url) + '" target="_blank" rel="noopener">閸?GitHub 閺屻儳婀?閳?/a>' : '') + '</div>';
     }
     html += '</div>';
     return html;
@@ -298,7 +297,7 @@ ce as T,clearLegacyThemePreference as U,h as V,getResolvedTheme as W,normalizeTh
     var s = String(raw || '').replace(/\r\n/g, '\n').replace(/^---\n[\s\S]*?\n---\n/, '').replace(/<!--[\s\S]*?-->/g, '');
     s = s.replace(/!\[[^\]]*\]\([^)]*\)/g, '').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/[#>*_`~|]/g, '').replace(/\n{3,}/g, '\n\n');
     s = s.replace(/\s+/g, ' ').trim();
-    return s.length > 500 ? s.slice(0, 500) + '鈥? : s;
+    return s.length > 500 ? s.slice(0, 500) + '閳? : s;
   }
   function esc(s){ return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
   function findItem(id){
@@ -310,25 +309,25 @@ ce as T,clearLegacyThemePreference as U,h as V,getResolvedTheme as W,normalizeTh
   }
   function installPlugin(id, btn){
     var A = app(); var it = findItem(id); if (!A || !it) return;
-    btn.textContent = '瀹夎涓€?;
+    btn.textContent = '鐎瑰顥婃稉顓涒偓?;
     var src = it.install || it.url || id;
     A.InstallPlugin(src, { name: id }).then(function(plan){
       try {
         var p = JSON.parse(plan);
-        btn.textContent = (p && p.ok) ? '宸插畨瑁? : '澶辫触';
+        btn.textContent = (p && p.ok) ? '瀹告彃鐣ㄧ憗? : '婢惰精瑙?;
         if (p && p.ok) S.installed[id] = true;
-      } catch(e){ btn.textContent = '瀹屾垚'; S.installed[id] = true; }
+      } catch(e){ btn.textContent = '鐎瑰本鍨?; S.installed[id] = true; }
       setTimeout(function(){ renderList(); }, 700);
-    }).catch(function(){ btn.textContent = '澶辫触'; });
+    }).catch(function(){ btn.textContent = '婢惰精瑙?; });
   }
   function removePlugin(id, btn){
     var A = app(); if (!A) return;
-    btn.textContent = '鍗歌浇涓€?;
+    btn.textContent = '閸楁瓕娴囨稉顓涒偓?;
     A.RemovePlugin(id).then(function(){
       delete S.installed[id];
-      btn.textContent = '宸插嵏杞?;
+      btn.textContent = '瀹告彃宓忔潪?;
       setTimeout(function(){ renderList(); }, 700);
-    }).catch(function(){ btn.textContent = '澶辫触'; });
+    }).catch(function(){ btn.textContent = '婢惰精瑙?; });
   }
   var obs = new MutationObserver(function(){ injectIntoPluginPage(); });
   try { obs.observe(document.documentElement, { childList: true, subtree: true }); } catch(e){}
@@ -366,21 +365,35 @@ ce as T,clearLegacyThemePreference as U,h as V,getResolvedTheme as W,normalizeTh
       "background:#1b1e24", "border:1px solid #333a45",
       "box-shadow:0 6px 24px rgba(0,0,0,.45)",
       "font:13px/1.4 -apple-system,'Segoe UI',system-ui,sans-serif",
-      "color:#e6e8eb", "max-width:420px"
+      "color:#e6e8eb", "max-width:460px"
     ].join(";");
     var text = document.createElement("span");
     text.style.cssText = "flex:1;min-width:0";
     text.textContent = "DSH 有新版可用：" + info.current + " → " + info.latest;
-    var btn = document.createElement("button");
-    btn.type = "button";
-    btn.textContent = "查看更新";
-    btn.style.cssText = [
+    var dl = document.createElement("button");
+    dl.type = "button";
+    dl.textContent = "下载更新";
+    dl.style.cssText = [
       "border:0", "border-radius:6px", "padding:5px 12px", "cursor:pointer",
       "background:#0153e5", "color:#fff", "font:600 12px/1 -apple-system,'Segoe UI',system-ui,sans-serif"
     ].join(";");
-    btn.onclick = function () {
+    dl.onclick = function () {
       try { localStorage.setItem(SHOWN_KEY, String(Date.now())); } catch (e) {}
-      openExternal(info.updateUrl || "https://github.com/sdkwork-ai/deepseek-harness-desktop/releases");
+      openExternal(info.downloadUrl || info.releaseUrl || info.updateUrl ||
+        "https://github.com/sdkwork-ai/deepseek-harness-desktop/releases");
+      wrap.remove();
+    };
+    var detail = document.createElement("button");
+    detail.type = "button";
+    detail.textContent = "详情";
+    detail.style.cssText = [
+      "border:1px solid #4a5260", "border-radius:6px", "padding:5px 10px", "cursor:pointer",
+      "background:none", "color:#c9d0d9", "font:600 12px/1 -apple-system,'Segoe UI',system-ui,sans-serif"
+    ].join(";");
+    detail.onclick = function () {
+      try { localStorage.setItem(SHOWN_KEY, String(Date.now())); } catch (e) {}
+      openExternal(info.releaseUrl || info.updateUrl ||
+        "https://github.com/sdkwork-ai/deepseek-harness-desktop/releases");
       wrap.remove();
     };
     var close = document.createElement("button");
@@ -393,7 +406,8 @@ ce as T,clearLegacyThemePreference as U,h as V,getResolvedTheme as W,normalizeTh
       wrap.remove();
     };
     wrap.appendChild(text);
-    wrap.appendChild(btn);
+    wrap.appendChild(dl);
+    wrap.appendChild(detail);
     wrap.appendChild(close);
     (document.body || document.documentElement).appendChild(wrap);
   }
@@ -420,5 +434,6 @@ ce as T,clearLegacyThemePreference as U,h as V,getResolvedTheme as W,normalizeTh
   whenReady(function () { setTimeout(maybeCheck, 6000); });
 })();
 </script>
+
 </body>
 </html>

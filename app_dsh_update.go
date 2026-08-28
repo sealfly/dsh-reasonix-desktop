@@ -28,17 +28,20 @@ const (
 	dshCorePkgRel = "node_modules" + string(os.PathSeparator) + "@deepseek-ai" + string(os.PathSeparator) + "dsh" + string(os.PathSeparator) + "package.json"
 	dshNpmLatest  = "https://registry.npmjs.org/@deepseek-ai/dsh/latest"
 	dshUpdateURL  = "https://github.com/sdkwork-ai/deepseek-harness-desktop/releases"
+	dshGHReleases = "https://api.github.com/repos/sdkwork-ai/deepseek-harness-desktop/releases/latest"
 )
 
 // dshVersionInfo 返回给前端的更新检测结果。
 type dshVersionInfo struct {
-	Current   string `json:"current"`   // 本地已装版本
-	Latest    string `json:"latest"`    // 检测到的最新版（未知时 = current）
-	Available bool   `json:"available"` // 是否有新版
-	Channel   string `json:"channel"`   // 更新渠道说明
-	UpdateURL string `json:"updateUrl"` // 更新渠道链接
-	CheckedAt int64  `json:"checkedAt"` // 检测时间（epoch ms）
-	Error     string `json:"error,omitempty"`
+	Current      string `json:"current"`   // 本地已装版本
+	Latest       string `json:"latest"`    // 检测到的最新版（未知时 = current）
+	Available    bool   `json:"available"` // 是否有新版
+	Channel      string `json:"channel"`   // 更新渠道说明
+	UpdateURL    string `json:"updateUrl"` // 更新渠道链接
+	DownloadURL  string `json:"downloadUrl,omitempty"`  // Windows 安装包直链（一键下载更新）
+	ReleaseURL   string `json:"releaseUrl,omitempty"`   // 最新 Release 详情页
+	CheckedAt    int64  `json:"checkedAt"` // 检测时间（epoch ms）
+	Error        string `json:"error,omitempty"`
 }
 
 // dshInstallRoot 定位 DSH 核心包 package.json（安装目录可被多路径探测）。
@@ -163,6 +166,38 @@ func compareVersions(a, b string) int {
 	}
 }
 
+// githubDesktopLatest 查 DeepSeek Harness Desktop 最新 Release：
+// 返回 {tag, htmlURL, winDownloadURL}（Windows x64 安装包直链）。
+// 失败返回空串，静默降级（更新提醒仍可用 npm 版本对比）。
+func githubDesktopLatest() (tag, htmlURL, winURL string) {
+	client := &http.Client{Timeout: 8 * time.Second}
+	resp, err := client.Get(dshGHReleases)
+	if err != nil {
+		return "", "", ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", "", ""
+	}
+	var rel struct {
+		TagName string `json:"tag_name"`
+		HTMLURL string `json:"html_url"`
+		Assets  []struct {
+			Name               string `json:"name"`
+			BrowserDownloadURL string `json:"browser_download_url"`
+		} `json:"assets"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&rel) != nil {
+		return "", "", ""
+	}
+	for _, a := range rel.Assets {
+		if strings.Contains(a.Name, "win-x64.exe") {
+			return rel.TagName, rel.HTMLURL, a.BrowserDownloadURL
+		}
+	}
+	return rel.TagName, rel.HTMLURL, ""
+}
+
 // DshUpdateCheck 检测 DSH 是否有新版（供前端注入脚本调用）。
 func (a *App) DshUpdateCheck() map[string]any {
 	info := dshVersionInfo{
@@ -170,6 +205,17 @@ func (a *App) DshUpdateCheck() map[string]any {
 		Channel:   "DeepSeek Harness Desktop (npm @deepseek-ai/dsh)",
 		UpdateURL: dshUpdateURL,
 		CheckedAt: time.Now().UnixMilli(),
+	}
+	// 更新通道实体：GitHub 最新 Release 的 Windows 安装包直链 + 详情页
+	ghTag, ghURL, winURL := githubDesktopLatest()
+	if ghURL != "" {
+		info.ReleaseURL = ghURL
+	}
+	if winURL != "" {
+		info.DownloadURL = winURL
+	}
+	if ghTag != "" {
+		info.Channel = "DeepSeek Harness Desktop (release " + ghTag + ", npm @deepseek-ai/dsh)"
 	}
 	if info.Current == "" {
 		info.Current = "unknown"
@@ -195,6 +241,12 @@ func dshInfoMap(i dshVersionInfo) map[string]any {
 		"channel":   i.Channel,
 		"updateUrl": i.UpdateURL,
 		"checkedAt": i.CheckedAt,
+	}
+	if i.DownloadURL != "" {
+		m["downloadUrl"] = i.DownloadURL
+	}
+	if i.ReleaseURL != "" {
+		m["releaseUrl"] = i.ReleaseURL
 	}
 	if i.Error != "" {
 		m["error"] = i.Error
