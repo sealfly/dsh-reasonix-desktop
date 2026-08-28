@@ -1,4 +1,11 @@
-# DSH × Reasonix 桥接桌面端
+# DSH × Reasonix 桥接桌面端（Electron 版 — 已停更）
+
+> ## ⛔ 停更声明（ARCHIVED）
+>
+> **本项目（Electron 版）已停止维护，代码仅作参考。**
+> 新版本已迁移到 **DSH-ReasonixUI（Wails 版）**：
+> `C:\Users\chenz\Desktop\dsh-reasonix-wails`（远端：github.com/sealfly/dsh-reasonix-desktop，Reasonix 前端 v1.31.4）。
+> 本项目不再发布新版本、不再修复问题；如需阅读历史实现（Electron 桥、preload 注入思路）可参考本仓库。
 
 **Reasonix 前端 + DeepSeek Harness 后端**——按你的思路：直接跑 Reasonix 桌面端的前端 UI，后端换成 DSH。
 
