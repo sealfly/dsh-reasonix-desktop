@@ -173,14 +173,17 @@ func currentReasoning(m *dshModelsView) (*dshReasoning, bool) {
 }
 
 // EffortForTab 返回推理强度选项（DSH 的 reasoningEffort 档位）。
+// 无档位模型（如 xtoken 组）返回 supported:true + levels:["auto"]——前端
+// EffortSwitcher 在 supported:false 或 levels 为空时不渲染，用户要求档位选择器
+// 始终显示，无档位时显示 "auto"（默认）。
 func (a *App) EffortForTab(tabID string) map[string]any {
 	m := a.modelsView(tabID)
 	if m == nil || m.Current == nil {
-		return map[string]any{"supported": false, "current": "auto", "default": "high", "levels": []any{}}
+		return map[string]any{"supported": true, "current": "auto", "default": "auto", "levels": []any{"auto"}}
 	}
 	reasoning, ok := currentReasoning(m)
 	if !ok {
-		return map[string]any{"supported": false, "current": "auto", "default": "high", "levels": []any{}}
+		return map[string]any{"supported": true, "current": "auto", "default": "auto", "levels": []any{"auto"}}
 	}
 	def := reasoning.DefaultEffort
 	if def == "" {
@@ -291,7 +294,8 @@ func splitRef(ref string) (provider, model string) {
 func (a *App) SetEffort(effort string) error { return a.setEffort("", effort) }
 func (a *App) SetEffortForTab(tabID, effort string) error { return a.setEffort(tabID, effort) }
 func (a *App) setEffort(tabID, effort string) error {
-	if a.dsh == nil || effort == "" {
+	// "auto" 表示无档位/跟随模型默认——不向 DSH 传非法档位（DSH 只认 off/low/high/max）。
+	if a.dsh == nil || effort == "" || effort == "auto" {
 		return nil
 	}
 	sid := a.activeSessionID(tabID)
