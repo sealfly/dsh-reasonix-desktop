@@ -13,9 +13,11 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -42,8 +44,9 @@ type imsaiPlugin struct {
 }
 
 type imsaiSearchResp struct {
-	Total   int           `json:"total"`
-	Results []imsaiPlugin `json:"results"`
+	Total      int           `json:"total"`
+	TotalPages int           `json:"totalPages"`
+	Results    []imsaiPlugin `json:"results"`
 }
 
 type imsaiCat struct {
@@ -206,6 +209,9 @@ func dynamicSearchPage(query, category string, page int) (map[string]any, bool) 
 		items = append(items, imsaiToItem(p))
 	}
 	r := marketPageResult(items, resp.Total, page, page*marketPageSize < resp.Total)
+	if resp.TotalPages > 0 {
+		r["totalPages"] = resp.TotalPages
+	}
 	searchPageCacheMu.Lock()
 	searchPageCache[key] = pageCacheEntry{result: r, at: time.Now()}
 	searchPageCacheMu.Unlock()
@@ -264,12 +270,17 @@ func embedMarketPage(query, category string, page int) map[string]any {
 	return marketPageResult(all[start:end], len(all), page, end < len(all))
 }
 
-// marketPageResult 组装分页返回结构。
+// marketPageResult 组装分页返回结构（含 totalPages 供前端页码式翻页）。
 func marketPageResult(items []any, total, page int, hasMore bool) map[string]any {
+	tp := (total + marketPageSize - 1) / marketPageSize
+	if tp < 1 {
+		tp = 1
+	}
 	return map[string]any{
 		"items": items, "count": len(items), "total": total,
-		"page": page, "hasMore": hasMore, "updated": time.Now().Format("2006-01-02"),
-		"source": "imsai",
+		"page": page, "hasMore": hasMore, "totalPages": tp,
+		"updated": time.Now().Format("2006-01-02"),
+		"source":  "imsai",
 	}
 }
 
@@ -333,4 +344,129 @@ func containsAny(s string, kws ...string) bool {
 		}
 	}
 	return false
+}
+
+// ===== 插件详情（GitHub README 功能介绍 + 预览图）=====
+
+const detailCacheTTL = 10 * time.Minute
+
+type detailCacheEntry struct {
+	result map[string]any
+	at     time.Time
+}
+
+var (
+	detailCacheMu sync.Mutex
+	detailCache   = map[string]detailCacheEntry{}
+)
+
+// MarketPluginDetail 插件详情：拉取 GitHub README（功能介绍）+ 提取预览图。
+// url 为插件 GitHub 地址。按需调用（前端点击"详情"才拉取），走 GitHub raw 直连
+// （对 imsai 限流零影响），结果缓存 10 分钟。失败返回 {error}（前端降级显示安装命令）。
+func (a *App) MarketPluginDetail(url string) map[string]any {
+	owner, repo := repoFromURL(url)
+	if owner == "" || repo == "" {
+		return map[string]any{"error": "无效的仓库地址", "url": url}
+	}
+	if os.Getenv("DSH_MARKET_OFFLINE") == "1" {
+		return map[string]any{"error": "离线模式", "url": url, "owner": owner, "repo": repo}
+	}
+	key := owner + "/" + repo
+	detailCacheMu.Lock()
+	if e, ok := detailCache[key]; ok && time.Since(e.at) < detailCacheTTL {
+		detailCacheMu.Unlock()
+		return e.result
+	}
+	detailCacheMu.Unlock()
+
+	result := map[string]any{"url": url, "owner": owner, "repo": repo, "image": ""}
+	client := &http.Client{Timeout: 8 * time.Second}
+	readme := ""
+	rawURL := "https://raw.githubusercontent.com/" + key + "/HEAD/README.md"
+	if body, err := httpGetBody(client, rawURL); err == nil {
+		readme = body
+	} else {
+		for _, br := range []string{"main", "master"} {
+			u2 := "https://raw.githubusercontent.com/" + key + "/" + br + "/README.md"
+			if body, err := httpGetBody(client, u2); err == nil {
+				readme = body
+				break
+			}
+		}
+	}
+	if img := extractFirstImage(readme, owner, repo); img != "" {
+		result["image"] = img
+	} else {
+		// GitHub 仓库 social preview（og:image）——前端加载失败会自动隐藏
+		result["image"] = "https://opengraph.githubassets.com/1/" + key
+	}
+	const maxLen = 2000
+	if len(readme) > maxLen {
+		readme = readme[:maxLen]
+	}
+	result["readme"] = readme
+	if readme == "" {
+		result["error"] = "未找到 README"
+	}
+	detailCacheMu.Lock()
+	detailCache[key] = detailCacheEntry{result: result, at: time.Now()}
+	detailCacheMu.Unlock()
+	return result
+}
+
+func httpGetBody(client *http.Client, u string) (string, error) {
+	req, err := http.NewRequest("GET", u, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", "dsh-reasonix-market/1.0")
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// repoFromURL 从 GitHub URL 提取 owner/repo。
+func repoFromURL(u string) (string, string) {
+	u = strings.TrimSpace(u)
+	u = strings.TrimSuffix(u, ".git")
+	u = strings.TrimSuffix(u, "/")
+	idx := strings.Index(u, "github.com/")
+	if idx < 0 {
+		return "", ""
+	}
+	rest := u[idx+len("github.com/"):]
+	parts := strings.Split(rest, "/")
+	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+		return "", ""
+	}
+	return parts[0], parts[1]
+}
+
+// extractFirstImage 从 markdown 提取第一张图片 URL；相对路径转为 GitHub raw 地址。
+func extractFirstImage(md, owner, repo string) string {
+	re := regexp.MustCompile(`!\[[^\]]*\]\(([^)\s]+)\)`)
+	m := re.FindStringSubmatch(md)
+	if m == nil {
+		return ""
+	}
+	u := strings.Trim(m[1], `"'`)
+	if u == "" {
+		return ""
+	}
+	if strings.HasPrefix(u, "http") {
+		return u
+	}
+	u = strings.TrimPrefix(u, "./")
+	u = strings.TrimPrefix(u, "/")
+	return "https://raw.githubusercontent.com/" + owner + "/" + repo + "/HEAD/" + u
 }

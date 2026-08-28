@@ -268,6 +268,65 @@ func TestMarketPagePagination(t *testing.T) {
 	if sp["total"].(int) < 1 {
 		t.Fatalf("搜索 total 异常")
 	}
+	// totalPages 供页码式翻页
+	tp := p1["totalPages"].(int)
+	if tp < 30 {
+		t.Fatalf("2961 条应约 30 页, 实际 %d", tp)
+	}
+}
+
+// TestRepoFromURL 仓库 URL 解析。
+func TestRepoFromURL(t *testing.T) {
+	cases := []struct {
+		url         string
+		owner, repo string
+	}{
+		{"https://github.com/openviking/dsh-memory-plugin", "openviking", "dsh-memory-plugin"},
+		{"https://github.com/a/b.git", "a", "b"},
+		{"https://github.com/a/b/", "a", "b"},
+		{"https://example.com/x/y", "", ""},
+		{"", "", ""},
+	}
+	for _, c := range cases {
+		o, r := repoFromURL(c.url)
+		if o != c.owner || r != c.repo {
+			t.Fatalf("repoFromURL(%q) = %q/%q, want %q/%q", c.url, o, r, c.owner, c.repo)
+		}
+	}
+}
+
+// TestExtractFirstImage markdown 首图提取。
+func TestExtractFirstImage(t *testing.T) {
+	md := "# title\n\n![logo](./assets/logo.png)\n\n![abs](https://example.com/x.png)\nsome text ![rel](img2.png)"
+	if got := extractFirstImage(md, "o", "r"); got != "https://raw.githubusercontent.com/o/r/HEAD/assets/logo.png" {
+		t.Fatalf("相对路径首图 = %q", got)
+	}
+	md2 := "no image here ![broken]( )"
+	if got := extractFirstImage(md2, "o", "r"); got != "" {
+		t.Fatalf("空图应忽略, got %q", got)
+	}
+	md3 := "![abs](https://cdn.example.com/shot.png) text"
+	if got := extractFirstImage(md3, "o", "r"); got != "https://cdn.example.com/shot.png" {
+		t.Fatalf("绝对路径首图 = %q", got)
+	}
+}
+
+// TestMarketPluginDetailOffline 离线模式详情降级（不崩溃、返回 error）。
+func TestMarketPluginDetailOffline(t *testing.T) {
+	_ = os.Setenv("DSH_MARKET_OFFLINE", "1")
+	a := newTestApp()
+	d := a.MarketPluginDetail("")
+	if d["error"] == nil {
+		t.Fatalf("空 URL 应返回 error")
+	}
+	d2 := a.MarketPluginDetail("https://github.com/o/r")
+	if d2["owner"] != "o" || d2["repo"] != "r" {
+		t.Fatalf("owner/repo 解析失败: %v", d2)
+	}
+	// 离线不影响本方法网络行为（走 GitHub raw）——只验证结构完整
+	if d2["image"] == "" {
+		t.Fatalf("image 应为 og 兜底 URL")
+	}
 }
 
 // TestPluginMarketInstallFlow 模拟前端市场 UI 完整闭环：

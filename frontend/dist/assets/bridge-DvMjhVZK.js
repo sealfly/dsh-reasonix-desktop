@@ -7,14 +7,15 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
 
 
 
-;/* __DSH_PLUGIN_MARKET v2 — MarketTab 风格移植（借鉴 dsh-plugin-market, MIT）:
-   搜索 / 分类 chips / 卡片(风险/已装/安装/卸载/详情) / 加载更多分页。
-   数据: MarketPage(query, category, page) — 浏览 500 条缓存后本地切页, 搜索分页缓存, 翻页零重复调用。 */
+;/* __DSH_PLUGIN_MARKET v3 — MarketTab 风格（借鉴 dsh-plugin-market, MIT）:
+   传统页码翻页(1/2/3… 上一页/下一页) + 详情(README 功能简介 + 预览图)。
+   数据: MarketPage(query, category, page) 分页缓存（翻回已加载页零调用）,
+   MarketPluginDetail(url) 拉 GitHub README/预览图（按需点击才拉，缓存 10 分钟）。 */
 ;(function(){
   if (typeof window === 'undefined' || !document) return;
   var INJECTED = '__dshPluginMarketInjected';
-  var S = { query:'', category:'', page:1, total:0, hasMore:false, loading:false, items:[], expanded:null, installed:{}, busy:false };
-  var panel=null, listEl=null, moreEl=null, totalEl=null, msgEl=null, chipsEl=null;
+  var S = { query:'', category:'', page:1, total:0, hasMore:false, totalPages:1, loading:false, items:[], expanded:null, installed:{}, details:{} };
+  var panel=null, listEl=null, pagesEl=null, totalEl=null, msgEl=null, chipsEl=null;
   function app(){ try { return window.go && window.go.main && window.go.main.App; } catch(e){ return null; } }
   var CSS = [
     '.dsh-mkt{margin:12px 0;padding:10px;border:1px solid rgba(128,128,128,.35);border-radius:8px}',
@@ -39,8 +40,16 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
     '.dsh-mkt__tag[data-level="high"]{border-color:#e06c75;color:#e06c75}',
     '.dsh-mkt__tag[data-level="medium"]{border-color:#d19a66;color:#d19a66}',
     '.dsh-mkt__tag[data-level="low"]{border-color:#98c379;color:#98c379}',
-    '.dsh-mkt__detail{font-size:12px;margin-top:4px;padding-top:4px;border-top:1px dashed rgba(128,128,128,.3);word-break:break-all}',
-    '.dsh-mkt__more{width:100%;margin-top:8px;text-align:center;padding:4px;border-radius:6px;border:1px dashed rgba(128,128,128,.4);background:transparent;color:inherit;cursor:pointer}',
+    '.dsh-mkt__detail{font-size:12px;margin-top:4px;padding-top:4px;border-top:1px dashed rgba(128,128,128,.3)}',
+    '.dsh-mkt__img{max-width:100%;max-height:140px;border-radius:6px;margin:6px 0;display:block;object-fit:contain}',
+    '.dsh-mkt__about{font-size:12px;opacity:.85;margin:4px 0;white-space:pre-wrap;word-break:break-word}',
+    '.dsh-mkt__status{font-size:12px;opacity:.7}',
+    '.dsh-mkt__detail-foot{display:flex;align-items:center;gap:6px;margin-top:4px;flex-wrap:wrap;font-size:11px;word-break:break-all}',
+    '.dsh-mkt__pages{display:flex;gap:4px;margin-top:8px;flex-wrap:wrap;align-items:center;justify-content:center}',
+    '.dsh-mkt__pg{border:1px solid rgba(128,128,128,.35);border-radius:4px;padding:2px 8px;background:transparent;color:inherit;font-size:12px;cursor:pointer}',
+    '.dsh-mkt__pg[disabled]{opacity:.4;cursor:default}',
+    '.dsh-mkt__pg--on{background:rgba(64,150,255,.25);border-color:rgba(64,150,255,.6)}',
+    '.dsh-mkt__pg-ell{font-size:12px;opacity:.6;padding:0 2px}',
     '.dsh-mkt__msg{font-size:12px;opacity:.8}',
     '.dsh-mkt__busy{opacity:.6;pointer-events:none}',
     '.dsh-mkt a{color:#61afef}'
@@ -61,14 +70,14 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
       '<div class="dsh-mkt__chips"><button class="dsh-mkt__chip" data-on="true">全部</button></div>' +
       '<div class="dsh-mkt__title"><b>目录</b><span></span></div>' +
       '<div class="dsh-mkt__list"></div>' +
-      '<button class="dsh-mkt__more" style="display:none">加载更多</button>';
+      '<div class="dsh-mkt__pages"></div>';
     if (installer.parentNode) installer.parentNode.insertBefore(root, installer);
     panel = root;
     msgEl = root.querySelector('.dsh-mkt__msg');
     chipsEl = root.querySelector('.dsh-mkt__chips');
     totalEl = root.querySelector('.dsh-mkt__title span');
     listEl = root.querySelector('.dsh-mkt__list');
-    moreEl = root.querySelector('.dsh-mkt__more');
+    pagesEl = root.querySelector('.dsh-mkt__pages');
     var input = root.querySelector('.dsh-mkt__search input');
     var btn = root.querySelector('.dsh-mkt__search button');
     var debounce = null;
@@ -76,7 +85,6 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
     input.addEventListener('input', onQuery);
     btn.addEventListener('click', function(){ S.query = input.value.trim(); loadPage(1); });
     input.addEventListener('keydown', function(e){ if (e.key === 'Enter'){ S.query = input.value.trim(); loadPage(1); } });
-    moreEl.addEventListener('click', function(){ if (S.hasMore && !S.loading) loadPage(S.page + 1); });
     loadPage(1);
   }
   function setMsg(m){ if (msgEl) msgEl.textContent = m || ''; }
@@ -110,11 +118,12 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
       S.page = page;
       S.total = d.total || 0;
       S.hasMore = !!d.hasMore;
+      S.totalPages = d.totalPages || Math.max(1, Math.ceil(S.total / 100));
       if (page === 1) S.items = [];
       S.items = S.items.concat(d.items || []);
-      if (totalEl) totalEl.textContent = '共 ' + S.total + ' 个';
+      if (totalEl) totalEl.textContent = '共 ' + S.total + ' 个 · 第 ' + S.page + '/' + S.totalPages + ' 页';
       renderList();
-      if (moreEl) moreEl.style.display = S.hasMore ? 'block' : 'none';
+      renderPages();
       setMsg('');
       S.loading = false; panel.className = 'dsh-mkt';
       loadCategories();
@@ -123,6 +132,38 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
       setMsg('加载失败: ' + (e && e.message || e));
       S.loading = false; panel.className = 'dsh-mkt';
     });
+  }
+  function renderPages(){
+    if (!pagesEl) return;
+    var tp = S.totalPages || 1;
+    var html = '<button class="dsh-mkt__pg" data-pg="' + (S.page - 1) + '"' + (S.page <= 1 ? ' disabled' : '') + '>上一页</button>';
+    var seq = buildPages(S.page, tp);
+    for (var i = 0; i < seq.length; i++) {
+      var p = seq[i];
+      if (p === '...') html += '<span class="dsh-mkt__pg-ell">…</span>';
+      else html += '<button class="dsh-mkt__pg' + (p === S.page ? ' dsh-mkt__pg--on' : '') + '" data-pg="' + p + '">' + p + '</button>';
+    }
+    html += '<button class="dsh-mkt__pg" data-pg="' + (S.page + 1) + '"' + (S.page >= tp ? ' disabled' : '') + '>下一页</button>';
+    pagesEl.innerHTML = html;
+    pagesEl.querySelectorAll('[data-pg]').forEach(function(b){ b.addEventListener('click', function(){
+      if (b.disabled) return;
+      var n = parseInt(b.getAttribute('data-pg'), 10);
+      if (n >= 1 && n <= tp) loadPage(n);
+    }); });
+  }
+  function buildPages(cur, total){
+    if (total <= 7) { var a = []; for (var i = 1; i <= total; i++) a.push(i); return a; }
+    var wanted = [1, total, cur - 1, cur, cur + 1];
+    var sorted = wanted.filter(function(x){ return x >= 1 && x <= total; }).sort(function(x, y){ return x - y; });
+    var out = []; var prev = 0;
+    for (var j = 0; j < sorted.length; j++) {
+      var v = sorted[j];
+      if (v === prev) continue;
+      if (v - prev > 1) out.push('...');
+      out.push(v);
+      prev = v;
+    }
+    return out;
   }
   function loadInstalled(){
     var A = app(); if (!A) return;
@@ -158,15 +199,15 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
                   : '<button class="btn btn--primary btn--small" data-install="' + esc(id) + '">安装</button>') +
             (it.url ? '<a class="btn btn--small" href="' + esc(it.url) + '" target="_blank" rel="noopener">仓库</a>' : '') +
           '</div>' +
-          (open ? '<div class="dsh-mkt__detail"><code>' + esc(it.install || it.url || '') + '</code></div>' : '') +
+          (open ? renderDetail(it) : '') +
         '</div>';
       })(S.items[i]);
     }
     listEl.innerHTML = html || '<div style="padding:6px;opacity:.7">无匹配插件</div>';
     listEl.querySelectorAll('[data-toggle]').forEach(function(b){ b.addEventListener('click', function(){
       var id = b.getAttribute('data-toggle');
-      S.expanded = S.expanded === id ? null : id;
-      renderList();
+      var it = findItem(id);
+      if (it) toggleDetail(id, it);
     }); });
     listEl.querySelectorAll('[data-install]').forEach(function(b){ b.addEventListener('click', function(){
       installPlugin(b.getAttribute('data-install'), b);
@@ -174,6 +215,47 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
     listEl.querySelectorAll('[data-uninstall]').forEach(function(b){ b.addEventListener('click', function(){
       removePlugin(b.getAttribute('data-uninstall'), b);
     }); });
+  }
+  function toggleDetail(id, it){
+    if (S.expanded === id) { S.expanded = null; renderList(); return; }
+    S.expanded = id;
+    if (!S.details[id]) {
+      S.details[id] = { status: 'loading', data: null };
+      renderList();
+      var A = app();
+      if (A && it.url) {
+        A.MarketPluginDetail(it.url).then(function(d){
+          S.details[id] = { status: 'done', data: d || {} };
+          renderList();
+        }).catch(function(e){ S.details[id] = { status: 'done', data: { error: String((e && e.message) || e) } }; renderList(); });
+      } else {
+        S.details[id] = { status: 'done', data: { error: '无仓库地址' } };
+        renderList();
+      }
+    } else renderList();
+  }
+  function renderDetail(it){
+    var id = it.name || it.id || '';
+    var d = S.details[id];
+    if (!d) return '';
+    var html = '<div class="dsh-mkt__detail">';
+    if (d.status === 'loading') html += '<span class="dsh-mkt__status">加载详情…</span>';
+    else {
+      var data = d.data || {};
+      if (data.image && !data.error) html += '<img class="dsh-mkt__img" src="' + esc(data.image) + '" onerror="this.style.display=\'none\'" alt="">';
+      if (data.readme) html += '<div class="dsh-mkt__about">' + esc(simplifyReadme(data.readme)) + '</div>';
+      else if (data.error) html += '<span class="dsh-mkt__status">' + esc(data.error) + '</span>';
+      html += '<div class="dsh-mkt__detail-foot"><code>' + esc(it.install || it.url || '') + '</code>' +
+        (it.url ? ' <a href="' + esc(it.url) + '" target="_blank" rel="noopener">在 GitHub 查看 →</a>' : '') + '</div>';
+    }
+    html += '</div>';
+    return html;
+  }
+  function simplifyReadme(raw){
+    var s = String(raw || '').replace(/\r\n/g, '\n').replace(/^---\n[\s\S]*?\n---\n/, '').replace(/<!--[\s\S]*?-->/g, '');
+    s = s.replace(/!\[[^\]]*\]\([^)]*\)/g, '').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/[#>*_`~|]/g, '').replace(/\n{3,}/g, '\n\n');
+    s = s.replace(/\s+/g, ' ').trim();
+    return s.length > 500 ? s.slice(0, 500) + '…' : s;
   }
   function esc(s){ return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
   function findItem(id){
