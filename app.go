@@ -78,7 +78,7 @@ func (a *App) shutdown(ctx context.Context) {
 func (a *App) Platform() string { return runtime.GOOS }
 
 // Version 返回应用版本（前端"关于"用）。
-func (a *App) Version() string { return "0.0.0" }
+func (a *App) Version() string { return "0.1.0" }
 
 // ===== 窗口控制（前端 WindowsWindowControls 调用）=====
 

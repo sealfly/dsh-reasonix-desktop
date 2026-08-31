@@ -45,6 +45,17 @@ $exe = Join-Path $root "build\bin\DSH-ReasonixUI.exe"
 if (-not (Test-Path $exe)) { throw "build output missing: $exe" }
 Write-Host "Built: $exe"
 
+# 1.5) Embed version resources + icon + manifest (wails v2.13 does not do this itself)
+# go-winres patch replaces resources; must run BEFORE signing (it removes the signature).
+Write-Host "== Resources =="
+$winresTool = Join-Path $root "tools\go-winres.exe"
+$winresJson = Join-Path $root "build\windows\winres.json"
+if (-not (Test-Path $winresTool)) { throw "go-winres missing: $winresTool (run: go install github.com/tc-hib/go-winres@v0.3.1)" }
+if (-not (Test-Path $winresJson)) { throw "winres.json missing: $winresJson" }
+& $winresTool patch --in $winresJson --delete --no-backup --authenticode remove $exe
+if ($LASTEXITCODE -ne 0) { throw "go-winres patch failed (exit $LASTEXITCODE)" }
+Write-Host "Resources embedded: $exe"
+
 # 2) Sign (warn only if cert missing)
 Write-Host "== Sign =="
 $cert = Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.Thumbprint -eq $CertThumbprint } | Select-Object -First 1

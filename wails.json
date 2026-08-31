@@ -12,7 +12,7 @@
   "info": {
     "companyName": "DSH-ReasonixUI",
     "productName": "DSH-ReasonixUI",
-    "productVersion": "0.0.0",
+    "productVersion": "0.1.0",
     "copyright": "DSH-ReasonixUI — Wails shell around DSH backend",
     "comments": "Wails shell hosting Reasonix v1.29.0 frontend, bridged to DSH backend (127.0.0.1:3080)."
   }
