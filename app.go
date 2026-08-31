@@ -29,7 +29,8 @@ func NewApp() *App {
 // startup 在 Wails 启动时调用（窗口创建前）。
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
-	a.dsh = NewDshClient(3080)
+	cfg := loadDshConnConfig()
+	a.dsh = NewDshClientAt(cfg.Host, cfg.Port)
 	a.st = NewSettings()
 	a.term = NewTerminalManager()
 	a.startEventStream()

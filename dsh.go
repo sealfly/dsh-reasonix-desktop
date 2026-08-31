@@ -16,13 +16,23 @@ import (
 // DshClient 是 DSH 后端的通用 RPC 客户端。
 // DSH 后端是本会话共享实例（端口 3080），多客户端多路复用，绝不主动关闭它。
 type DshClient struct {
+	host string
 	port int
 	http *http.Client
 }
 
-// NewDshClient 创建 DSH 客户端（默认端口 3080）。
+// NewDshClient 创建 DSH 客户端（默认 127.0.0.1:3080）。
 func NewDshClient(port int) *DshClient {
+	return NewDshClientAt("127.0.0.1", port)
+}
+
+// NewDshClientAt 创建指向指定 host:port 的 DSH 客户端（支持用户自选 DSH 后端）。
+func NewDshClientAt(host string, port int) *DshClient {
+	if host == "" {
+		host = "127.0.0.1"
+	}
 	return &DshClient{
+		host: host,
 		port: port,
 		http: &http.Client{Timeout: 60 * time.Second},
 	}
@@ -53,7 +63,7 @@ func (d *DshClient) RPC(method string, payload any) (json.RawMessage, error) {
 	if err != nil {
 		return nil, err
 	}
-	url := fmt.Sprintf("http://127.0.0.1:%d/api/%s", d.port, method)
+	url := fmt.Sprintf("http://%s:%d/api/%s", d.host, d.port, method)
 	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
