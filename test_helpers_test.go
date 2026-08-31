@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // cleanupTestSession 删除测试会话的磁盘目录（~/.dsh/sessions/<workspace>/<sid>）。
@@ -39,6 +40,22 @@ func cleanupTestSession(t *testing.T, sessionID string) {
 	}
 }
 
+// removeTempSessionDir 删除测试临时工作目录（cwd），带重试：
+// DSH 可能短暂持有文件句柄导致一次删除失败，重试 3 次防残留。
+func removeTempSessionDir(t *testing.T, dir string) {
+	t.Helper()
+	if dir == "" {
+		return
+	}
+	for i := 0; i < 3; i++ {
+		if err := os.RemoveAll(dir); err == nil {
+			return
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+	t.Logf("警告: 测试临时目录未能删除: %s（DSH 句柄占用，可手动清理）", dir)
+}
+
 // createTempSession 创建临时会话并在测试结束时清理目录。
 // 返回 sessionID；DSH 不可用时返回 ""（调用方决定是否跳过）。
 func createTempSession(t *testing.T) string {
@@ -48,9 +65,10 @@ func createTempSession(t *testing.T) string {
 	if _, err := a.dsh.RPC("session.list", map[string]any{}); err != nil {
 		t.Skipf("DSH 不可用，跳过: %v", err)
 	}
+	// 用本机测试临时目录（避免硬编码他人机器路径导致 EPERM）
+	cwd := t.TempDir()
 	raw, err := a.dsh.RPC("session.create", map[string]any{
-		// 用本机测试临时目录（避免硬编码他人机器路径导致 EPERM）
-		"cwd": t.TempDir(),
+		"cwd": cwd,
 	})
 	if err != nil {
 		t.Fatalf("session.create 失败: %v", err)
@@ -61,6 +79,9 @@ func createTempSession(t *testing.T) string {
 	if err := DecodeRPC(raw, &created); err != nil || created.SessionID == "" {
 		t.Fatalf("解析 session.create 失败: %v raw=%s", err, string(raw))
 	}
-	t.Cleanup(func() { cleanupTestSession(t, created.SessionID) })
+	t.Cleanup(func() {
+		cleanupTestSession(t, created.SessionID)
+		removeTempSessionDir(t, cwd)
+	})
 	return created.SessionID
 }
