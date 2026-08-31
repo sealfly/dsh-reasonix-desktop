@@ -50,6 +50,10 @@ func dshInstallRoot() string {
 		filepath.Join(os.Getenv("APPDATA"), "io.github.hairyf.deepseek-harness-desktop", "dependencies", "dsh"),
 		filepath.Join(os.Getenv("LOCALAPPDATA"), "io.github.hairyf.deepseek-harness-desktop", "dependencies", "dsh"),
 	}
+	// 源码仓库运行（本机开发）：deepseek-harness 根目录自带 package.json。
+	if home, err := os.UserHomeDir(); err == nil {
+		roots = append(roots, filepath.Join(home, "deepseek-harness"))
+	}
 	for _, r := range roots {
 		if r != "" {
 			if _, err := os.Stat(filepath.Join(r, "package.json")); err == nil {
@@ -66,17 +70,20 @@ func dshCoreVersion() string {
 	if root == "" {
 		return ""
 	}
-	data, err := os.ReadFile(filepath.Join(root, dshCorePkgRel))
-	if err != nil {
-		return ""
+	// 先试独立 @deepseek-ai/dsh 包（桌面版布局），再试源码仓库根（root 即 DSH workspace）。
+	rel := []string{dshCorePkgRel, "package.json"}
+	for _, relPath := range rel {
+		data, err := os.ReadFile(filepath.Join(root, relPath))
+		if err != nil {
+			continue
+		}
+		var pkg struct { Version string `json:"version"` }
+		if json.Unmarshal(data, &pkg) != nil || pkg.Version == "" {
+			continue
+		}
+		return strings.TrimSpace(pkg.Version)
 	}
-	var pkg struct {
-		Version string `json:"version"`
-	}
-	if json.Unmarshal(data, &pkg) != nil {
-		return ""
-	}
-	return strings.TrimSpace(pkg.Version)
+	return ""
 }
 
 // npmLatestVersion 查 npm registry 最新版（网络失败返回空串，静默降级）。

@@ -21,6 +21,70 @@ import (
 
 var eventStreamOnce sync.Once
 
+// ===== DSH 询问/审批 pending 表（回答 AnswerQuestionForTab / ApproveTab 用）=====
+// DSH 在 events.mux 上以 server-request 帧发出 ask 询问（approval/requested、question/requested），
+// 帧顶层 rpcId 是回答时的回显令牌：客户端回答时 POST /api/respond 带 {type:"client-response",
+// rpcId:<回显>, result:{ok:true, value:{...}}}。这里按 sessionId 缓存最近一个 pending，
+// 前端回答（AnswerQuestionForTab / ApproveTab）时据此构造 client-response。
+
+type pendingAsk struct {
+	RPCID      string
+	SessionID  string
+	ApprovalID string // approval/requested 专用
+	ToolName   string
+	CallID     string
+	Questions  []map[string]any // question/requested 专用
+}
+
+var (
+	pendingAskMu sync.Mutex
+	pendingAsks  = map[string]pendingAsk{} // key: sessionId
+)
+
+// cachePendingAsk 记录一个可回答的 server-request 帧（approval/question）。
+func cachePendingAsk(frame struct {
+	RPCID  string `json:"rpcId"`
+	Method string `json:"method"`
+	Payload struct {
+		SessionID  string           `json:"sessionId"`
+		ApprovalID string           `json:"approvalId"`
+		ToolName   string           `json:"toolName"`
+		CallID     string           `json:"callId"`
+		Questions  []map[string]any `json:"questions"`
+	} `json:"payload"`
+}) bool {
+	if frame.Payload.SessionID == "" {
+		return false
+	}
+	switch frame.Method {
+	case "approval/requested", "question/requested":
+		pendingAskMu.Lock()
+		pendingAsks[frame.Payload.SessionID] = pendingAsk{
+			RPCID:      frame.RPCID,
+			SessionID:  frame.Payload.SessionID,
+			ApprovalID: frame.Payload.ApprovalID,
+			ToolName:   frame.Payload.ToolName,
+			CallID:     frame.Payload.CallID,
+			Questions:  frame.Payload.Questions,
+		}
+		pendingAskMu.Unlock()
+		resumeLog("cached pending ask method=%s session=%s rpcId=%s", frame.Method, frame.Payload.SessionID, frame.RPCID)
+		return true
+	}
+	return false
+}
+
+// takePendingAsk 取走并清除某会话的 pending 询问（回答一次后即失效）。
+func takePendingAsk(sessionID string) (pendingAsk, bool) {
+	pendingAskMu.Lock()
+	defer pendingAskMu.Unlock()
+	p, ok := pendingAsks[sessionID]
+	if ok {
+		delete(pendingAsks, sessionID)
+	}
+	return p, ok
+}
+
 // startEventStream 启动 DSH 实时事件流转发（幂等，只启动一个连接循环）。
 func (a *App) startEventStream() {
 	eventStreamOnce.Do(func() {
@@ -58,6 +122,21 @@ func (a *App) eventStreamLoop() {
 
 // handleEventFrame 解析一帧 DSH 事件并转发为 WireEvent。
 func (a *App) handleEventFrame(data []byte) {
+	// 先识别可回答帧（approval/requested、question/requested）→ 缓存 pending 供回答。
+	var frame struct {
+		RPCID  string `json:"rpcId"`
+		Method string `json:"method"`
+		Payload struct {
+			SessionID  string           `json:"sessionId"`
+			ApprovalID string           `json:"approvalId"`
+			ToolName   string           `json:"toolName"`
+			CallID     string           `json:"callId"`
+			Questions  []map[string]any `json:"questions"`
+		} `json:"payload"`
+	}
+	if json.Unmarshal(data, &frame) == nil && cachePendingAsk(frame) {
+		return
+	}
 	wire := parseEventFrame(data)
 	if wire == nil {
 		return

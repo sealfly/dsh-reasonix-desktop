@@ -146,16 +146,29 @@ func (a *App) SetQualityFloorForTab(tabID, floor string) map[string]any {
 	return a.setQualityFloor(tabID, floor)
 }
 
-// setQualityFloor 质量地板持久化（内存 map，重启丢失；后续可落盘）。
+// setQualityFloor 质量地板持久化（standard/delivery，落盘重启保留）。
 func (a *App) setQualityFloor(tabID, floor string) map[string]any {
 	if floor != "delivery" {
 		floor = "standard"
 	}
-	sid := a.activeSessionID(tabID)
-	if sid == "" {
-		return map[string]any{"ok": false, "error": "no session"}
-	}
-	return map[string]any{"ok": true}
+	a.st.SetQualityFloor(floor)
+	return map[string]any{"ok": true, "qualityFloor": floor}
+}
+
+// AcceptDelivery 接受当前会话的交付（质量地板=delivery 时，完成任务检查）。
+func (a *App) AcceptDelivery() map[string]any {
+	return a.acceptDelivery("")
+}
+
+// AcceptDeliveryToTab 接受指定会话的交付。
+func (a *App) AcceptDeliveryToTab(tabID string) map[string]any {
+	return a.acceptDelivery(tabID)
+}
+
+// acceptDelivery 接受交付：回到标准模式（交付完成）。
+func (a *App) acceptDelivery(tabID string) map[string]any {
+	a.st.SetQualityFloor("standard")
+	return map[string]any{"ok": true, "accepted": true}
 }
 
 // ===== AI 重命名 =====

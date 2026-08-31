@@ -3,20 +3,16 @@ package main
 // 鎵归噺鐢熸垚鐨勭┖瀹炵幇锛坓en-stubs.js 浠?preload.js + 鍓嶇璋冪敤娓呭崟瀵规瘮鐢熸垚锛夈€?
 // 瑕嗙洊鍓嶇璋冪敤浣?Go 绔己澶辩殑鏂规硶锛岃繑鍥炲畨鍏ㄧ┖鎬?闄嶇骇锛岄槻 not-a-function 宕╂簝銆?
 
-func (a *App) AcceptDeliveryToTab(_a1 any) error { return nil }
 func (a *App) AcceptMemorySuggestion() error { return nil }
 func (a *App) AcceptMemorySuggestionForTab(_a1 any, _a2 any) error { return nil }
 func (a *App) AcceptSkillSuggestion() error { return nil }
 func (a *App) AcceptSkillSuggestionForTab(_a1 any, _a2 any) error { return nil }
 func (a *App) ActivateThemePack(_a1 any) error { return nil }
 func (a *App) AddOfficialProviderAccess(_a1 any, _a2 any) error { return nil }
-func (a *App) AddPermissionRule(_a1 any, _a2 any) error { return nil }
 func (a *App) AddProviderPresetAccess(_a1 any, _a2 any) error { return nil }
 func (a *App) AddRemoteForward() error { return nil }
 func (a *App) AddRemoteHost() error { return nil }
 func (a *App) AddSkillPath(_a1 any) error { return nil }
-func (a *App) AnswerQuestionForTab(_a1 any, _a2 any, _a3 any) error { return nil }
-func (a *App) ApproveTab(_a1 any, _a2 any, _a3 any, _a4 any, _a5 any) error { return nil }
 func (a *App) AttachmentDataURL() string { return "" }
 func (a *App) AuthenticateMCPServer(_a1 any) error { return nil }
 func (a *App) AvailableSubagentTools() []any {
@@ -191,7 +187,6 @@ func (a *App) RememberForTab(_tabID string, _scope string, _note string) error {
 func (a *App) RemoteLastWorkspace() map[string]any { return nil }
 func (a *App) RemoteServerLogs() map[string]any { return nil }
 func (a *App) RemoteServerStatus() map[string]any { return nil }
-func (a *App) RemovePermissionRule(_a1 any, _a2 any) error { return nil }
 func (a *App) RemoveProviderAccesses(_a1 any) error { return nil }
 func (a *App) RemoveRemoteForward() error { return nil }
 func (a *App) RemoveRemoteHost() error { return nil }
@@ -220,14 +215,11 @@ func (a *App) ScanSSHConfig() []any { return []any{} }
 func (a *App) SetBotConnectionToolApprovalMode(_a1 any, _a2 any) error { return nil }
 func (a *App) SetBotSecret(_a1 any, _a2 any) error { return nil }
 func (a *App) SetBotSettings(_a1 any) error { return nil }
-func (a *App) SetComposerProfileForTab(_a1 any, _a2 any, _a3 any, _a4 any) error { return nil }
 func (a *App) SetInboxPaused(_a1 any, _a2 any) error { return nil }
 func (a *App) SetMCPServerEnabled(_a1 any, _a2 any) error { return nil }
 func (a *App) SetNetwork(_a1 any) error { return nil }
-func (a *App) SetPermissionMode(_a1 any) error { return nil }
 func (a *App) SetProviderWebSearch(_a1 any, _a2 any) error { return nil }
 func (a *App) SetReasoningLanguage(_a1 any) error { return nil }
-func (a *App) SetSandbox(_a1 any, _a2 any, _a3 any, _a4 any, _a5 any) error { return nil }
 func (a *App) SetSkillPathEnabled(_a1 any, _a2 any) error { return nil }
 func (a *App) StartBotConnectionInstall(_a1 any, _a2 any) error { return nil }
 func (a *App) StartTopicActivation(req map[string]any) map[string]any {
@@ -238,12 +230,8 @@ func (a *App) StopRemoteServer() error { return nil }
 func (a *App) StopTaskByKey(_req map[string]any) error { return nil }
 func (a *App) StopTaskForTab() error { return nil }
 func (a *App) SubmitDeliveryRecoveryToTabWithID(_a1 any, _a2 any, _a3 any, _a4 any) error { return nil }
-func (a *App) SubmitDisplayToTabWithID(_a1 any, _a2 any, _a3 any, _a4 any) error { return nil }
 func (a *App) SubmitEditedDisplayToTabWithID(_a1 any, _a2 any, _a3 any, _a4 any, _a5 any) error { return nil }
 func (a *App) SubmitExtensionForm() error { return nil }
-func (a *App) SubmitInitialGoalToTabWithID(_a1 any, _a2 any, _a3 any, _a4 any, _a5 any, _a6 any, _a7 any, _a8 any) error { return nil }
-func (a *App) SubmitInvocationsToTabWithID(_a1 any, _a2 any, _a3 any, _a4 any, _a5 any) error { return nil }
-func (a *App) SubmitToTabWithID(_a1 any, _a2 any, _a3 any) error { return nil }
 func (a *App) SummarizeFromForTab() error { return nil }
 func (a *App) SummarizeUpToForTab() error { return nil }
 func (a *App) TerminalOutputForTab() error { return nil }

@@ -29,8 +29,6 @@ func (a *App) SetAutoApproveTools(on bool) error {
 // SetVisionModel 设置视觉模型（DSH 模型由后端管理，空操作）。
 func (a *App) SetVisionModel(_model string) error { return nil }
 
-// SetGoal 设置目标（转发到 ForTab 版本，同样空实现）。
-func (a *App) SetGoal(goal string) error { return a.SetGoalForTab("", goal) }
 
 // Steer 转向指示（无对应运行时，空操作）。
 func (a *App) Steer(_text string) error { return nil }

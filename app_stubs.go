@@ -178,33 +178,6 @@ func (a *App) SetReasoningDisplayMode(mode string) error {
 	return nil
 }
 
-// SetDesktopZoomFactor 窗口缩放。
-func (a *App) SetDesktopZoomFactor(factor float64) error {
-	a.st.SetZoom(factor)
-	return nil
-}
-
-// GetDesktopZoomFactor 读窗口缩放。
-func (a *App) GetDesktopZoomFactor() float64 { return a.st.Zoom() }
-
-// SetDesktopCheckUpdates 检查更新开关。
-func (a *App) SetDesktopCheckUpdates(_enabled bool) error { return nil }
-
-// SetDesktopConversationWidth 会话宽度。
-func (a *App) SetDesktopConversationWidth(_width string) error { return nil }
-
-// SetDesktopTerminalTheme 终端主题。
-func (a *App) SetDesktopTerminalTheme(_theme string) error { return nil }
-
-// SetDesktopMetrics 桌面指标开关。
-func (a *App) SetDesktopMetrics(_enabled bool) error { return nil }
-
-// SetDesktopTelemetry 遥测开关。
-func (a *App) SetDesktopTelemetry(_enabled bool) error { return nil }
-
-// SetTrayLocale 托盘语言。
-func (a *App) SetTrayLocale(_locale string) error { return nil }
-
 // SetDisplayMode 显示模式。
 func (a *App) SetDisplayMode(_mode string) error { return nil }
 
@@ -220,30 +193,6 @@ func (a *App) SetStatusBarItems(items []string) error {
 	return nil
 }
 
-// SetDefaultModel 默认模型。
-func (a *App) SetDefaultModel(_ref string) error { return nil }
-
-// SetPlannerModel 规划器模型。
-func (a *App) SetPlannerModel(_ref string) error { return nil }
-
-// SetSubagentModel 子代理模型。
-func (a *App) SetSubagentModel(_ref string) error { return nil }
-
-// SetSubagentEffort 子代理强度。
-func (a *App) SetSubagentEffort(_effort string) error { return nil }
-
-// SetMaxSubagentDepth 子代理最大深度。
-func (a *App) SetMaxSubagentDepth(_depth int) error { return nil }
-
-// SetMaxSubagentConcurrency 子代理最大并发。
-func (a *App) SetMaxSubagentConcurrency(_n int) error { return nil }
-
-// SetMaxParallelWriters 最大并行写入。
-func (a *App) SetMaxParallelWriters(_n int) error { return nil }
-
-// SetCompactRatio 压缩比例。
-func (a *App) SetCompactRatio(_ratio float64) error { return nil }
-
 // SetDefaultToolApprovalMode 默认工具审批模式（ask/auto/yolo，持久化；新会话自动应用）。
 func (a *App) SetDefaultToolApprovalMode(mode string) error {
 	a.st.SetDefaultToolApprovalMode(mode)
@@ -252,27 +201,6 @@ func (a *App) SetDefaultToolApprovalMode(mode string) error {
 
 // SetAutoPlan 自动规划。
 func (a *App) SetAutoPlan(_mode string) error { return nil }
-
-// SetToolApprovalModeForTab 指定会话工具审批模式。
-func (a *App) SetToolApprovalModeForTab(_tabID, _mode string) error { return nil }
-
-// SetModeForTab 指定会话模式。
-func (a *App) SetModeForTab(_tabID, _mode string) error { return nil }
-
-// SetCollaborationModeForTab 指定会话协作模式。
-func (a *App) SetCollaborationModeForTab(_tabID, _mode string) error { return nil }
-
-// SetGoalForTab 指定会话目标。
-func (a *App) SetGoalForTab(_tabID, _goal string) error { return nil }
-
-// ClearGoalForTab 清除会话目标。
-func (a *App) ClearGoalForTab(_tabID string) error { return nil }
-
-// PauseGoalForTab 暂停会话目标。
-func (a *App) PauseGoalForTab(_tabID string) error { return nil }
-
-// ResumeGoalForTab 恢复会话目标。
-func (a *App) ResumeGoalForTab(_tabID string) error { return nil }
 
 // SetProjectPinned 项目钉住。
 func (a *App) SetProjectPinned(_root string, _pinned bool) error { return nil }
@@ -463,14 +391,11 @@ func (a *App) AbandonPendingUpdate() {}
 // OpenDownloadPage 打开下载页。
 func (a *App) OpenDownloadPage() {}
 
-// ReportCrash 上报崩溃。
-func (a *App) ReportCrash(_report string) {}
 
 // RecordUIPerf 记录 UI 性能。
 func (a *App) RecordUIPerf(_event string, _ms float64) {}
 
 // ReloadSettings 重新加载设置。
-func (a *App) ReloadSettings() {}
 
 // ReloadRuntime 重新加载运行时。
 func (a *App) ReloadRuntime(_a1 any) {}

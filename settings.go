@@ -24,6 +24,28 @@ type desktopSettings struct {
 	StatusBarStyle   string   `json:"statusBarStyle"`   // icon/text
 	StatusBarItems   []string `json:"statusBarItems"`   // workspace/model/context/usage/cache/cost...
 	DefaultToolApprovalMode string `json:"defaultToolApprovalMode"` // ask/auto/yolo
+	QualityFloor     string `json:"qualityFloor"`     // standard/delivery
+	DefaultAgentPreset string `json:"defaultAgentPreset"` // standard/code/minimal/cordis (DSH 四模式)
+	PermissionMode   string   `json:"permissionMode"`   // ask/allow/deny
+	PermissionRules  map[string][]string `json:"permissionRules"`
+	SandboxBash      string   `json:"sandboxBash"`
+	SandboxNetwork   bool     `json:"sandboxNetwork"`
+	SandboxWorkspace string   `json:"sandboxWorkspace"`
+	SandboxWrites    []string `json:"sandboxWrites"`
+	SandboxShell     string   `json:"sandboxShell"`
+	TerminalTheme    string   `json:"terminalTheme"`
+	ConversationWidth string  `json:"conversationWidth"`
+	CheckUpdates     bool     `json:"checkUpdates"`
+	DesktopMetrics   bool     `json:"desktopMetrics"`
+	DesktopTelemetry bool     `json:"desktopTelemetry"`
+	DefaultModel     string   `json:"defaultModel"`
+	PlannerModel     string   `json:"plannerModel"`
+	SubagentModel    string   `json:"subagentModel"`
+	SubagentEffort   string   `json:"subagentEffort"`
+	MaxSubagentDepth int      `json:"maxSubagentDepth"`
+	MaxSubagentConcurrency int `json:"maxSubagentConcurrency"`
+	MaxParallelWriters int    `json:"maxParallelWriters"`
+	CompactRatio     int      `json:"compactRatio"`
 }
 
 // Settings 是设置持久化的句柄（内存缓存 + JSON 文件）。
@@ -45,9 +67,31 @@ func NewSettings() *Settings {
 			Zoom:          1.0,
 			CloseBehavior: "quit",
 			Language:      "zh",
-			StatusBarStyle: "text",
-			StatusBarItems: []string{"workspace", "model", "context", "usage", "cache", "cost"},
+			StatusBarStyle:   "text",
+			StatusBarItems:   []string{"workspace", "model", "context", "usage", "cache", "cost"},
 			DefaultToolApprovalMode: "auto",
+			QualityFloor:     "standard",
+			DefaultAgentPreset: "standard",
+			PermissionMode:   "ask",
+			PermissionRules:  map[string][]string{},
+			SandboxBash:      "enforce",
+			SandboxNetwork:   false,
+			SandboxWorkspace: "",
+			SandboxWrites:    []string{},
+			SandboxShell:     "auto",
+			TerminalTheme:    "dark",
+			ConversationWidth: "standard",
+			CheckUpdates:     true,
+			DesktopMetrics:   true,
+			DesktopTelemetry: false,
+			DefaultModel:     "deepseek-v4-flash",
+			PlannerModel:     "deepseek-v4-flash",
+			SubagentModel:    "deepseek-v4-flash",
+			SubagentEffort:   "auto",
+			MaxSubagentDepth: 3,
+			MaxSubagentConcurrency: 2,
+			MaxParallelWriters: 1,
+			CompactRatio:     1,
 		},
 	}
 	if raw, err := os.ReadFile(s.path); err == nil {
@@ -182,3 +226,120 @@ func (s *Settings) SetDefaultToolApprovalMode(v string) {
 	}
 	s.save()
 }
+
+func (s *Settings) QualityFloor() string { return s.data.QualityFloor }
+func (s *Settings) SetQualityFloor(v string) {
+	if v != "delivery" {
+		v = "standard"
+	}
+	s.data.QualityFloor = v
+	s.save()
+}
+
+// DefaultAgentPreset 默认 Agent 预设（DSH 四模式: standard/code/minimal/cordis）。
+func (s *Settings) DefaultAgentPreset() string { return s.data.DefaultAgentPreset }
+func (s *Settings) SetDefaultAgentPreset(v string) {
+	switch v {
+	case "code", "minimal", "cordis":
+		s.data.DefaultAgentPreset = v
+	default:
+		s.data.DefaultAgentPreset = "standard"
+	}
+	s.save()
+}
+
+func (s *Settings) PermissionMode() string { return s.data.PermissionMode }
+func (s *Settings) SetPermissionMode(v string) {
+	if v != "allow" && v != "deny" { v = "ask" }
+	s.data.PermissionMode = v
+	s.save()
+}
+
+func (s *Settings) AddPermissionRule(kind, rule string) error {
+	if s.data.PermissionRules == nil { s.data.PermissionRules = map[string][]string{} }
+	s.data.PermissionRules[kind] = normalizePermissionRules(append(s.data.PermissionRules[kind], rule))
+	s.save()
+	return nil
+}
+
+func (s *Settings) RemovePermissionRule(kind, rule string) error {
+	cur := s.data.PermissionRules[kind]
+	out := []string{}
+	for _, x := range cur { if x != rule { out = append(out, x) } }
+	s.data.PermissionRules[kind] = out
+	s.save()
+	return nil
+}
+
+func (s *Settings) SetSandbox(bash string, network bool, workspaceRoot string, writes []string, shell string) error {
+	if bash == "" { bash = "enforce" }
+	if shell == "" { shell = "auto" }
+	s.data.SandboxBash = bash
+	s.data.SandboxNetwork = network
+	s.data.SandboxWorkspace = workspaceRoot
+	s.data.SandboxWrites = writes
+	s.data.SandboxShell = shell
+	s.save()
+	return nil
+}
+
+func (s *Settings) PermissionsView() map[string]any {
+	return map[string]any{
+		"mode": s.data.PermissionMode,
+		"allow": s.data.PermissionRules["allow"],
+		"ask": s.data.PermissionRules["ask"],
+		"deny": s.data.PermissionRules["deny"],
+	}
+}
+
+func (s *Settings) SandboxView() map[string]any {
+	return map[string]any{
+		"bash": s.data.SandboxBash,
+		"network": s.data.SandboxNetwork,
+		"workspaceRoot": s.data.SandboxWorkspace,
+		"allowWrite": s.data.SandboxWrites,
+		"effectiveWorkspaceRoot": s.data.SandboxWorkspace,
+		"effectiveWriteRoots": s.data.SandboxWrites,
+		"shell": s.data.SandboxShell,
+		"effectiveShell": s.data.SandboxShell,
+	}
+}
+
+func (s *Settings) TerminalTheme() string { return s.data.TerminalTheme }
+func (s *Settings) SetTerminalTheme(v string) { s.data.TerminalTheme = v; s.save() }
+
+func (s *Settings) ConversationWidth() string { return s.data.ConversationWidth }
+func (s *Settings) SetConversationWidth(v string) { s.data.ConversationWidth = v; s.save() }
+
+func (s *Settings) CheckUpdates() bool { return s.data.CheckUpdates }
+func (s *Settings) SetCheckUpdates(v bool) { s.data.CheckUpdates = v; s.save() }
+
+func (s *Settings) DesktopMetrics() bool { return s.data.DesktopMetrics }
+func (s *Settings) SetDesktopMetrics(v bool) { s.data.DesktopMetrics = v; s.save() }
+
+func (s *Settings) DesktopTelemetry() bool { return s.data.DesktopTelemetry }
+func (s *Settings) SetDesktopTelemetry(v bool) { s.data.DesktopTelemetry = v; s.save() }
+
+func (s *Settings) DefaultModel() string { return s.data.DefaultModel }
+func (s *Settings) SetDefaultModel(v string) { if v != "" { s.data.DefaultModel = v; s.save() } }
+
+func (s *Settings) PlannerModel() string { return s.data.PlannerModel }
+func (s *Settings) SetPlannerModel(v string) { if v != "" { s.data.PlannerModel = v; s.save() } }
+
+func (s *Settings) SubagentModel() string { return s.data.SubagentModel }
+func (s *Settings) SetSubagentModel(v string) { if v != "" { s.data.SubagentModel = v; s.save() } }
+
+func (s *Settings) SubagentEffort() string { return s.data.SubagentEffort }
+func (s *Settings) SetSubagentEffort(v string) { if v != "" { s.data.SubagentEffort = v; s.save() } }
+
+func (s *Settings) MaxSubagentDepth() int { return s.data.MaxSubagentDepth }
+func (s *Settings) SetMaxSubagentDepth(v int) { if v >= 1 { s.data.MaxSubagentDepth = v; s.save() } }
+
+func (s *Settings) MaxSubagentConcurrency() int { return s.data.MaxSubagentConcurrency }
+func (s *Settings) SetMaxSubagentConcurrency(v int) { if v >= 1 { s.data.MaxSubagentConcurrency = v; s.save() } }
+
+func (s *Settings) MaxParallelWriters() int { return s.data.MaxParallelWriters }
+func (s *Settings) SetMaxParallelWriters(v int) { if v >= 1 { s.data.MaxParallelWriters = v; s.save() } }
+
+func (s *Settings) CompactRatio() int { return s.data.CompactRatio }
+func (s *Settings) SetCompactRatio(v int) { if v >= 1 { s.data.CompactRatio = v; s.save() } }

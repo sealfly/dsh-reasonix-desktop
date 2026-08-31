@@ -143,6 +143,7 @@ func installedToView(p installedPlugin) map[string]any {
 		}
 		return out
 	}()
+	compat := compatLevel(marketPlugin{Name: p.Name, En: p.Description, Zh: "", Category: ""})
 	return map[string]any{
 		"name":            p.Name,
 		"root":            p.Root,
@@ -162,6 +163,8 @@ func installedToView(p installedPlugin) map[string]any {
 		"hookDetails":     []any{},
 		"mcpServerDetails": []any{},
 		"warnings":        []any{},
+		"compat":          compat,
+		"compatNote":      compatNote(compat),
 	}
 }
 
@@ -338,6 +341,8 @@ func dshPluginToView(it map[string]any, name string) map[string]any {
 	if apiVersion == "" || kind == "" {
 		warnings = append(warnings, "missing dsh-std manifest apiVersion/kind")
 	}
+	// 兼容性：按名字启发式（已安装条目无分类，用名字判断主题/UI 类）
+	compat := compatLevel(marketPlugin{Name: name, En: desc, Zh: "", Category: categoryFromManifest(manifest)})
 	return map[string]any{
 		"name": name, "root": "dsh://" + name, "version": version,
 		"description": desc, "source": "dsh", "manifestKind": "dsh-std",
@@ -346,7 +351,24 @@ func dshPluginToView(it map[string]any, name string) map[string]any {
 		"mcpServers": 0, "skillDetails": []any{}, "agentDetails": []any{},
 		"commandDetails": []any{}, "hookDetails": []any{}, "mcpServerDetails": []any{},
 		"warnings": warnings,
+		"compat": compat, "compatNote": compatNote(compat),
 	}
+}
+
+// categoryFromManifest 从插件 manifest 尽力提取分类（缺省 tools）。
+func categoryFromManifest(manifest map[string]any) string {
+	if v, ok := manifest["category"].(string); ok && v != "" {
+		return v
+	}
+	if v, ok := manifest["categories"].(string); ok && v != "" {
+		return v
+	}
+	if cats, ok := manifest["categories"].([]any); ok && len(cats) > 0 {
+		if s, ok := cats[0].(string); ok {
+			return s
+		}
+	}
+	return "tools"
 }
 
 // PluginMarket 插件市场：优先 imsai 动态源（联网最新），失败/离线回退 GitHub dsh-market 目录。
@@ -370,11 +392,13 @@ func (a *App) PluginMarket(query, category string) map[string]any {
 				continue
 			}
 		}
+		compat := compatLevel(p)
 		items = append(items, map[string]any{
 			"name": p.Name, "owner": p.Owner, "url": p.URL,
 			"category": p.Category, "description": p.En, "descriptionZh": p.Zh,
 			"stars": p.Stars, "install": p.Install, "npm": p.Npm,
 			"risk": riskLevel(p.En + " " + p.Name),
+			"compat": compat, "compatNote": compatNote(compat),
 		})
 	}
 	// 分类展示结构（中英文）
