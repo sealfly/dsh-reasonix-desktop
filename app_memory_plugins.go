@@ -375,6 +375,13 @@ func firstNonEmpty(vals ...string) string {
 	return ""
 }
 
+// memoryPluginPrereq 插件的前置依赖（先装前置再装插件；与插件一起伴随项目预装）。
+// @memtensor/memos-local-plugin 的 peerDependencies 要求 @deepseek-ai/cordis（DSH 编排框架，
+// web profile 默认未装——headless profile 有 cordis.yml 为证）。
+var memoryPluginPrereq = map[string][]string{
+	"@memtensor/memos-local-plugin": {"@deepseek-ai/cordis"},
+}
+
 // ---------- 预装：记忆插件伴随项目安装（首次启动后台自动安装） ----------
 
 // memoryPreinstallMark 预装标记文件（~/.reasonix/memory-plugins-preinstalled.json）。
@@ -417,22 +424,39 @@ func (a *App) preinstallMemoryPlugins() {
 		_ = os.WriteFile(path, data, 0644)
 		return
 	}
-	// 后台逐个安装（不阻塞启动）
+	// 后台逐个安装（不阻塞启动）；先装前置依赖，再装插件本身
 	go func() {
 		cli := dshCliPath()
+		installOne := func(spec string) string {
+			if cli == "" {
+				return "dsh CLI not found"
+			}
+			if out, err := runDshPlugin("add", spec); err != nil {
+				return tail(err.Error()+" :: "+out, 200)
+			}
+			return "ok"
+		}
 		for _, r := range pending {
 			id := r["id"].(string)
+			// 前置依赖（未装才装）
+			installedSet := memoryInstalledSet()
+			for _, pre := range memoryPluginPrereq[id] {
+				if installedSet[pre] {
+					continue
+				}
+				if preStatus := installOne(pre); preStatus != "ok" {
+					st.Installed[id] = "prereq " + pre + " failed: " + preStatus
+					continue
+				}
+			}
+			if st.Installed[id] != "" {
+				continue // 前置失败已记录
+			}
 			spec := strings.TrimPrefix(r["install"].(string), "dsh plugin --profile web add ")
 			if spec == "" {
 				spec = id
 			}
-			status := "ok"
-			if cli == "" {
-				status = "dsh CLI not found"
-			} else if out, err := runDshPlugin("add", spec); err != nil {
-				status = tail(err.Error()+" :: "+out, 200)
-			}
-			st.Installed[id] = status
+			st.Installed[id] = installOne(spec)
 		}
 		allOK := true
 		for _, s := range st.Installed {
