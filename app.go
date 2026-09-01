@@ -35,6 +35,8 @@ func (a *App) startup(ctx context.Context) {
 	a.term = NewTerminalManager()
 	a.startEventStream()
 	a.startShowEventListener()
+	// 预装记忆插件（首次启动后台自动安装，幂等；不阻塞启动、失败可重试）
+	go a.preinstallMemoryPlugins()
 }
 
 // startShowEventListener 监听命名事件 "Local\DSH-ReasonixUI-Show"：

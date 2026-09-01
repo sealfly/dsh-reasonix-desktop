@@ -70,13 +70,18 @@ func (a *App) InboxSnapshot() []any { return []any{} }
 // available=true 让前端记忆面板正常渲染（空态），记忆插件启用后由插件 RPC 提供数据；
 // 指令文件（docs）持久化在 ~/.reasonix/memory/（Reasonix 本地维护兜底）。
 func (a *App) Memory() map[string]any {
+	memDir := filepath.Join(reasonixDataDir(), "memory")
 	return map[string]any{
-		"available":   true,
-		"memories":    []any{},
-		"archives":    []any{},
-		"docs":        []any{},
-		"suggestions": []any{},
-		"storeDir":    filepath.Join(reasonixDataDir(), "memory"),
+		"available":             true,
+		"memories":              []any{},
+		"archives":              []any{},
+		"docs":                  []any{},
+		"suggestions":           []any{},
+		"conflicts":             []any{},
+		"instructionDiagnostics": []any{},
+		"imports":               []any{},
+		"storeDir":              memDir,
+		"storeGlobalDir":        filepath.Join(memDir, "global"),
 	}
 }
 

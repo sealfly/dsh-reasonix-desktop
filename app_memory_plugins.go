@@ -285,13 +285,11 @@ func runDshPlugin(args ...string) (string, error) {
 		return "", fmt.Errorf("dsh CLI not found (install DeepSeek Harness Desktop or add dsh to PATH)")
 	}
 	full := append([]string{"plugin", "--profile", "web"}, args...)
+	// 直接 exec dsh.cmd：Go 的 os/exec 在 Windows 上对 .bat/.cmd 自动经 cmd.exe
+	// 正确转义包装——不要手动再包 cmd /c（手动包裹会因 cmd 引号规则吞掉参数，
+	// 导致 dsh CLI 报 "--profile <name> is required"）。
 	cmd := exec.Command(cli, full...)
 	cmd.Dir = filepath.Join(os.Getenv("USERPROFILE"), ".dsh", "profiles", "web")
-	// dsh.cmd 是 cmd 批处理，直接 exec 在 Go 里用 cmd /c 包裹更稳
-	if strings.HasSuffix(strings.ToLower(cli), ".cmd") {
-		cmd = exec.Command("cmd", "/c", cli, strings.Join(full, " "))
-		cmd.Dir = filepath.Join(os.Getenv("USERPROFILE"), ".dsh", "profiles", "web")
-	}
 	var buf strings.Builder
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
@@ -375,4 +373,92 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+// ---------- 预装：记忆插件伴随项目安装（首次启动后台自动安装） ----------
+
+// memoryPreinstallMark 预装标记文件（~/.reasonix/memory-plugins-preinstalled.json）。
+const memoryPreinstallMark = "memory-plugins-preinstalled.json"
+
+// memoryPreinstallState 预装状态。
+type memoryPreinstallState struct {
+	Done      bool              `json:"done"`
+	Installed map[string]string `json:"installed"` // id -> 状态(ok/error摘要)
+	At        int64             `json:"at"`
+}
+
+// preinstallMemoryPlugins 首次启动时后台安装推荐记忆插件（默认禁用，装完不启用）。
+// 幂等：标记文件存在即跳过；失败记录到标记，下次启动重试失败的。
+func (a *App) preinstallMemoryPlugins() {
+	path := filepath.Join(reasonixDataDir(), memoryPreinstallMark)
+	st := memoryPreinstallState{Installed: map[string]string{}}
+	if data, err := os.ReadFile(path); err == nil {
+		_ = json.Unmarshal(data, &st)
+		if st.Done {
+			return
+		}
+		if st.Installed == nil {
+			st.Installed = map[string]string{}
+		}
+	}
+	// 仅重试未成功的
+	pending := make([]map[string]any, 0, len(memoryRecommend))
+	for _, r := range memoryRecommend {
+		id := r["id"].(string)
+		if st.Installed[id] == "ok" {
+			continue
+		}
+		pending = append(pending, r)
+	}
+	if len(pending) == 0 {
+		st.Done = true
+		st.At = time.Now().UnixMilli()
+		data, _ := json.MarshalIndent(st, "", "  ")
+		_ = os.WriteFile(path, data, 0644)
+		return
+	}
+	// 后台逐个安装（不阻塞启动）
+	go func() {
+		cli := dshCliPath()
+		for _, r := range pending {
+			id := r["id"].(string)
+			spec := strings.TrimPrefix(r["install"].(string), "dsh plugin --profile web add ")
+			if spec == "" {
+				spec = id
+			}
+			status := "ok"
+			if cli == "" {
+				status = "dsh CLI not found"
+			} else if out, err := runDshPlugin("add", spec); err != nil {
+				status = tail(err.Error()+" :: "+out, 200)
+			}
+			st.Installed[id] = status
+		}
+		allOK := true
+		for _, s := range st.Installed {
+			if s != "ok" {
+				allOK = false
+				break
+			}
+		}
+		st.Done = allOK
+		st.At = time.Now().UnixMilli()
+		data, _ := json.MarshalIndent(st, "", "  ")
+		_ = os.MkdirAll(reasonixDataDir(), 0755)
+		_ = os.WriteFile(path, data, 0644)
+	}()
+}
+
+// MemoryPreinstallStatus 预装进度（前端设置-记忆显示）。
+func (a *App) MemoryPreinstallStatus() map[string]any {
+	path := filepath.Join(reasonixDataDir(), memoryPreinstallMark)
+	st := memoryPreinstallState{Installed: map[string]string{}}
+	if data, err := os.ReadFile(path); err == nil {
+		_ = json.Unmarshal(data, &st)
+	}
+	return map[string]any{
+		"done":      st.Done,
+		"installed": st.Installed,
+		"at":        st.At,
+	}
 }
