@@ -802,9 +802,10 @@ ce as T,clearLegacyThemePreference as U,h as V,getResolvedTheme as W,normalizeTh
 
 </script>
 <script>
-/* __DSH_VERSION_MANAGE v1 (DSH 核心版本管理 - 设置页区块, 本地注入) */
-// dsh-version-manage.js — 在设置面板追加「DSH 核心版本」管理区块：
-// 当前版本 / 最新版本 / npm 版本列表选择 / GitHub Releases（含 win-x64 安装包直链下载）。
+/* __DSH_VERSION_MANAGE v2 (DSH 核心版本管理 - 挂到 设置-更新页, 本地注入) */
+// dsh-version-manage.js — 在设置面板「更新」页（updates-control 区块后）追加
+// 「DSH 核心版本」管理区：当前版本 / 最新版本 / npm 版本列表选择 /
+// GitHub Releases（含 win-x64 安装包直链下载）。
 // 独立普通脚本（非 module）；通过 window.go.main.App 桥调用 Go。
 // 样式自带（Reasonix 是 CSS-in-JS，CSS 文件无对应类）。
 
@@ -979,25 +980,31 @@ ce as T,clearLegacyThemePreference as U,h as V,getResolvedTheme as W,normalizeTh
     app.DshVersionManage().then(function (d) { cb(d || {}); }).catch(function () { cb({ current: "unknown", latest: "", versions: [], releases: [] }); });
   }
 
-  var injected = false;
+  var injectedKey = "dsh-vm-injected";
   function inject() {
-    if (injected) return;
-    // 锚点：设置面板内容区（settings-center__content），挂到内容底部
-    var host = document.querySelector(".settings-center__content, .settings-center");
-    if (!host) return;
-    injected = true;
-    var container = document.createElement("div");
-    container.style.width = "100%";
-    host.appendChild(container);
-    var status = document.createElement("div");
-    status.className = NS + "__status";
-    status.style.cssText = "margin:10px 0;font-size:12px;opacity:.8";
-    status.textContent = "正在读取 DSH 版本信息…";
-    container.appendChild(status);
-    loadData(function (d) {
-      status.remove();
-      renderBlock(container, d);
-    });
+    // 锚点：设置-更新页的更新控制区块（updates-control），在其后插入 DSH 版本管理。
+    // 页签切换会重建该区块，故用元素级标记（host.dataset）而非全局 once，
+    // MutationObserver 持续监控，新建的 updates-control 会自动重新注入。
+    var hosts = document.querySelectorAll(".updates-control");
+    for (var h = 0; h < hosts.length; h++) {
+      var host = hosts[h];
+      if (host.dataset && host.dataset.dshVm === "1") continue;
+      if (host.dataset) host.dataset.dshVm = "1";
+      var container = document.createElement("div");
+      container.style.cssText = "margin:14px 0 4px;width:100%";
+      host.parentNode.insertBefore(container, host.nextSibling);
+      var status = document.createElement("div");
+      status.className = NS + "__status";
+      status.style.cssText = "margin:10px 0;font-size:12px;opacity:.8";
+      status.textContent = "正在读取 DSH 版本信息…";
+      container.appendChild(status);
+      (function (c, st) {
+        loadData(function (d) {
+          st.remove();
+          renderBlock(c, d);
+        });
+      })(container, status);
+    }
   }
 
   function start() {
