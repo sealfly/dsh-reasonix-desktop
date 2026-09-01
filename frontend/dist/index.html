@@ -631,5 +631,125 @@ ce as T,clearLegacyThemePreference as U,h as V,getResolvedTheme as W,normalizeTh
 
 </script>
 
+<script>
+/* __DSH_AGENT_PRESETS v1 (DSH 四模式/Agent 预设选择器注入, 源: dsh-agent-presets.js) */
+// dsh-agent-presets.js — DSH 四模式（Agent 预设）选择器注入。
+// 在 Composer「执行方式」菜单里追加 Agent 模式分组，点击切换 DSH 会话预设。
+// 独立普通脚本（非 module），不改动压缩 JSX；通过 window.go.main.App 桥调用 Go。
+
+(function () {
+  "use strict";
+  var PRESETS = [
+    { id: "standard", name: "标准模式", desc: "功能完整编码 Agent" },
+    { id: "code", name: "PTC 模式", desc: "Code Mode SDK · TypeScript 组合" },
+    { id: "minimal", name: "极简模式", desc: "bash + str_replace_editor" },
+    { id: "cordis", name: "创造模式", desc: "创建自定义 preset" }
+  ];
+  var current = null; // 当前 preset id（本地记录）
+  var injectedKey = "dsh-presets-injected";
+
+  function bridge() {
+    try { return window.go && window.go.main && window.go.main.App ? window.go.main.App : null; }
+    catch (e) { return null; }
+  }
+
+  // 菜单里插入 Agent 模式分组
+  function injectInto(menu) {
+    var section = menu.querySelector(".composer-access-menu__section");
+    if (!section || section.querySelector("." + injectedKey)) return;
+    var label = document.createElement("div");
+    label.className = "composer-access-menu__label";
+    label.textContent = "Agent 模式";
+    section.appendChild(label);
+    PRESETS.forEach(function (p) {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.role = "menuitemradio";
+      btn.setAttribute("aria-checked", current === p.id ? "true" : "false");
+      btn.className = "composer-access-menu__item composer-intent-menu__item " + injectedKey + (current === p.id ? " composer-access-menu__item--active" : "");
+      btn.title = p.desc;
+      var copy = document.createElement("span");
+      copy.className = "composer-access-menu__copy";
+      var t = document.createElement("span");
+      t.className = "composer-access-menu__title";
+      t.textContent = p.name;
+      var d = document.createElement("span");
+      d.className = "composer-access-menu__desc";
+      d.textContent = p.desc;
+      copy.appendChild(t);
+      copy.appendChild(d);
+      btn.appendChild(copy);
+      btn.addEventListener("click", function () {
+        var app = bridge();
+        if (!app || !app.SetAgentPresetForTab) return;
+        // tabId 传空 → Go 端 activeSessionID 落到活跃会话
+        app.SetAgentPresetForTab("", p.id).then(function (r) {
+          if (r && r.ok) {
+            current = p.id;
+            syncChecks(menu);
+            if (window.__dshPresetToast) window.__dshPresetToast("已切换到 " + p.name);
+          } else if (window.__dshPresetToast) {
+            window.__dshPresetToast((r && r.error) || "切换失败");
+          }
+        }).catch(function () {});
+      });
+      section.appendChild(btn);
+    });
+    menu.setAttribute("data-dsh-presets", "1");
+  }
+
+  function syncChecks(menu) {
+    var items = menu.querySelectorAll("." + injectedKey);
+    for (var i = 0; i < items.length; i++) {
+      var on = current === PRESETS[i].id;
+      items[i].setAttribute("aria-checked", on ? "true" : "false");
+      items[i].classList.toggle("composer-access-menu__item--active", on);
+    }
+  }
+
+  // 读取当前默认 preset（首次）
+  function loadCurrent() {
+    var app = bridge();
+    if (!app || !app.AgentPresets) return;
+    app.AgentPresets().then(function (v) {
+      if (!v || !v.presets) return;
+      for (var i = 0; i < v.presets.length; i++) {
+        if (v.presets[i].isDefault) { current = v.presets[i].id; break; }
+      }
+    }).catch(function () {});
+  }
+
+  // 轻量 toast（复用 body 内联样式）
+  if (!window.__dshPresetToast) {
+    window.__dshPresetToast = function (msg) {
+      var el = document.createElement("div");
+      el.style.cssText = "position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:99999;background:#1c1d21;color:#f4f4f3;border:1px solid #333;border-radius:8px;padding:8px 16px;font:13px Inter,sans-serif;box-shadow:0 4px 16px rgba(0,0,0,.5);pointer-events:none;opacity:0;transition:opacity .2s";
+      el.textContent = msg;
+      document.body.appendChild(el);
+      requestAnimationFrame(function () { el.style.opacity = "1"; });
+      setTimeout(function () { el.style.opacity = "0"; setTimeout(function () { el.remove(); }, 250); }, 1800);
+    };
+  }
+
+  function start() {
+    loadCurrent();
+    var observer = new MutationObserver(function () {
+      var menus = document.querySelectorAll(".composer-intent-menu");
+      for (var i = 0; i < menus.length; i++) injectInto(menus[i]);
+    });
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+    // 立即尝试一次
+    var menus = document.querySelectorAll(".composer-intent-menu");
+    for (var i = 0; i < menus.length; i++) injectInto(menus[i]);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", start);
+  } else {
+    start();
+  }
+})();
+
+</script>
 </body>
 </html>
