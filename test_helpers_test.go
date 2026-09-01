@@ -33,9 +33,14 @@ func cleanupTestSession(t *testing.T, sessionID string) {
 		if !ws.IsDir() {
 			continue
 		}
-		dir := filepath.Join(base, ws.Name(), sessionID)
+		wsPath := filepath.Join(base, ws.Name())
+		dir := filepath.Join(wsPath, sessionID)
 		if fi, err := os.Stat(dir); err == nil && fi.IsDir() {
 			_ = os.RemoveAll(dir)
+		}
+		// 工作区目录空壳（该会话已删）一并清理，防 Temp/TestXxx/001 工作区累积
+		if entries, err := os.ReadDir(wsPath); err == nil && len(entries) == 0 {
+			_ = os.RemoveAll(wsPath)
 		}
 	}
 }
