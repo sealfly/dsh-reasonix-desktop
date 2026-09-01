@@ -632,9 +632,10 @@ ce as T,clearLegacyThemePreference as U,h as V,getResolvedTheme as W,normalizeTh
 </script>
 
 <script>
-/* __DSH_AGENT_PRESETS v1 (DSH 四模式/Agent 预设选择器注入, 源: dsh-agent-presets.js) */
+/* __DSH_AGENT_PRESETS v2 (DSH 四模式/Agent 预设选择器注入, 含选中箭头指示) */
 // dsh-agent-presets.js — DSH 四模式（Agent 预设）选择器注入。
 // 在 Composer「执行方式」菜单里追加 Agent 模式分组，点击切换 DSH 会话预设。
+// v2: 自带选中视觉——高亮背景 + 右侧箭头指示当前模式（不依赖官方 CSS-in-JS 样式）。
 // 独立普通脚本（非 module），不改动压缩 JSX；通过 window.go.main.App 桥调用 Go。
 
 (function () {
@@ -647,6 +648,21 @@ ce as T,clearLegacyThemePreference as U,h as V,getResolvedTheme as W,normalizeTh
   ];
   var current = null; // 当前 preset id（本地记录）
   var injectedKey = "dsh-presets-injected";
+
+  // 自带样式：选中项 = 高亮背景 + 右侧箭头 ▶（用户可明确看出当前模式）
+  var css = [
+    "." + injectedKey + "{display:flex;align-items:center;justify-content:space-between;width:100%;box-sizing:border-box;background:transparent;border:none;color:inherit;padding:7px 10px;margin:1px 0;text-align:left;cursor:pointer;font:inherit;border-radius:6px}",
+    "." + injectedKey + ":hover{background:rgba(255,255,255,.08)}",
+    "." + injectedKey + ".composer-access-menu__item--active,." + injectedKey + "[aria-checked='true']{background:rgba(1,83,229,.22)}",
+    "." + injectedKey + ".composer-access-menu__item--active::after,." + injectedKey + "[aria-checked='true']::after{content:'\\25B6';font-size:10px;color:#5b9bff;flex:none;margin-left:8px}",
+    "." + injectedKey + " .composer-access-menu__copy{display:flex;flex-direction:column;min-width:0}",
+    "." + injectedKey + " .composer-access-menu__title{font-weight:600;font-size:13px;line-height:1.3}",
+    "." + injectedKey + " .composer-access-menu__desc{font-size:11px;opacity:.65;margin-top:2px;line-height:1.3}"
+  ].join("\n");
+  var styleEl = document.createElement("style");
+  styleEl.id = "dsh-presets-css";
+  styleEl.textContent = css;
+  document.head.appendChild(styleEl);
 
   function bridge() {
     try { return window.go && window.go.main && window.go.main.App ? window.go.main.App : null; }
@@ -686,7 +702,7 @@ ce as T,clearLegacyThemePreference as U,h as V,getResolvedTheme as W,normalizeTh
         app.SetAgentPresetForTab("", p.id).then(function (r) {
           if (r && r.ok) {
             current = p.id;
-            syncChecks(menu);
+            syncChecks();
             if (window.__dshPresetToast) window.__dshPresetToast("已切换到 " + p.name);
           } else if (window.__dshPresetToast) {
             window.__dshPresetToast((r && r.error) || "切换失败");
@@ -698,12 +714,22 @@ ce as T,clearLegacyThemePreference as U,h as V,getResolvedTheme as W,normalizeTh
     menu.setAttribute("data-dsh-presets", "1");
   }
 
-  function syncChecks(menu) {
-    var items = menu.querySelectorAll("." + injectedKey);
-    for (var i = 0; i < items.length; i++) {
-      var on = current === PRESETS[i].id;
-      items[i].setAttribute("aria-checked", on ? "true" : "false");
-      items[i].classList.toggle("composer-access-menu__item--active", on);
+  // 同步所有已注入菜单的选中态（按标题匹配 preset 名，不依赖索引）
+  function syncChecks() {
+    var menus = document.querySelectorAll(".composer-intent-menu[data-dsh-presets='1']");
+    for (var m = 0; m < menus.length; m++) {
+      var items = menus[m].querySelectorAll("." + injectedKey);
+      for (var i = 0; i < items.length; i++) {
+        var title = items[i].querySelector(".composer-access-menu__title");
+        var on = false;
+        if (title) {
+          for (var j = 0; j < PRESETS.length; j++) {
+            if (title.textContent === PRESETS[j].name) { on = current === PRESETS[j].id; break; }
+          }
+        }
+        items[i].setAttribute("aria-checked", on ? "true" : "false");
+        items[i].classList.toggle("composer-access-menu__item--active", on);
+      }
     }
   }
 
@@ -716,6 +742,7 @@ ce as T,clearLegacyThemePreference as U,h as V,getResolvedTheme as W,normalizeTh
       for (var i = 0; i < v.presets.length; i++) {
         if (v.presets[i].isDefault) { current = v.presets[i].id; break; }
       }
+      syncChecks();
     }).catch(function () {});
   }
 
