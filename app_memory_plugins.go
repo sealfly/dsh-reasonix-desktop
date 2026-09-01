@@ -386,6 +386,199 @@ func memoryPluginRowID(id string) string {
 	return ""
 }
 
+// memoryBudgetsDefault 各记忆插件注入预算默认值（省 token 推荐值；与插件源码默认对齐）。
+func memoryBudgetsDefault() map[string]any {
+	return map[string]any{
+		"openviking-memory": map[string]any{
+			"recallTokenBudget":   2000,
+			"profileTokenBudget":  10000,
+			"recallMaxContentChars": 500,
+		},
+		"memos-local-memory": map[string]any{
+			"recallEnabled":     true,
+			"contextMaxChars":   6000,
+		},
+	}
+}
+
+// MemoryBudgets 返回当前记忆注入预算（根 patch config override，未设置则默认）。
+func (a *App) MemoryBudgets() map[string]any {
+	rows, err := memoryPatchRows()
+	if err != nil {
+		return memoryBudgetsDefault()
+	}
+	out := memoryBudgetsDefault()
+	for _, row := range rows {
+		if cfg, ok := row["config"].(map[string]any); ok && len(cfg) > 0 {
+			base := out[row["id"].(string)]
+			if bm, ok := base.(map[string]any); ok {
+				for k, v := range cfg {
+					bm[k] = v
+				}
+			}
+		}
+	}
+	return out
+}
+
+// SetMemoryBudget 设置记忆注入预算（写根 patch config override，启用后生效）。
+// budget: {"recallTokenBudget": 800, "profileTokenBudget": 5000, ...}
+func (a *App) SetMemoryBudget(rowID string, budget map[string]any) map[string]any {
+	if rowID == "" || len(budget) == 0 {
+		return map[string]any{"ok": false, "error": "invalid args"}
+	}
+	// 只允许已知预算键（防任意 YAML 注入）
+	allowed := map[string]bool{
+		"recallTokenBudget": true, "profileTokenBudget": true,
+		"recallMaxContentChars": true, "recallEnabled": true,
+		"contextMaxChars": true, "captureEnabled": true,
+	}
+	clean := map[string]any{}
+	for k, v := range budget {
+		if allowed[k] {
+			clean[k] = v
+		}
+	}
+	if len(clean) == 0 {
+		return map[string]any{"ok": false, "error": "no allowed keys"}
+	}
+	if err := patchMemoryRowConfig(rowID, clean); err != nil {
+		return map[string]any{"ok": false, "error": err.Error()}
+	}
+	return map[string]any{"ok": true, "row": rowID, "restartHint": "重启 DSH 后生效"}
+}
+
+// memoryPatchRow 解析根 patch 的一条记录（- id: X / disabled / config）。
+func memoryPatchRows() ([]map[string]any, error) {
+	path := memoryRootPatchPath()
+	if path == "" {
+		return nil, fmt.Errorf("no home dir")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	lines := strings.Split(string(data), "\n")
+	rows := []map[string]any{}
+	var cur map[string]any
+	for _, ln := range lines {
+		trim := strings.TrimSpace(ln)
+		if trim == "" || strings.HasPrefix(trim, "#") || trim == "[]" {
+			continue
+		}
+		indent := len(ln) - len(strings.TrimLeft(ln, " "))
+		// 顶层条目 - id:
+		if m := regexp.MustCompile(`^- id:\s*(.+)$`).FindStringSubmatch(trim); m != nil && indent == 0 {
+			if cur != nil {
+				rows = append(rows, cur)
+			}
+			cur = map[string]any{"id": strings.TrimSpace(m[1]), "config": map[string]any{}}
+			continue
+		}
+		if cur == nil {
+			continue
+		}
+		// config: 段
+		if m := regexp.MustCompile(`^config:\s*$`).FindStringSubmatch(trim); m != nil && indent == 2 {
+			continue
+		}
+		// config 内的键值
+		if m := regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*):\s*(.*)$`).FindStringSubmatch(trim); m != nil && indent == 4 {
+			cfg := cur["config"].(map[string]any)
+			cfg[m[1]] = yamlScalar(m[2])
+			continue
+		}
+		if m := regexp.MustCompile(`^disabled:\s*(true|false)$`).FindStringSubmatch(trim); m != nil && indent == 2 {
+			cur["disabled"] = m[1] == "true"
+		}
+	}
+	if cur != nil {
+		rows = append(rows, cur)
+	}
+	return rows, nil
+}
+
+// yamlScalar 把 YAML 标量文本转成 Go 值（bool/int/string）。
+func yamlScalar(s string) any {
+	s = strings.TrimSpace(s)
+	if s == "true" || s == "false" {
+		return s == "true"
+	}
+	if n, err := strconv.Atoi(s); err == nil {
+		return n
+	}
+	return strings.Trim(s, `"'`)
+}
+
+// patchMemoryRowConfig 为根 patch 某行写入/合并 config 段（不存在则创建行）。
+func patchMemoryRowConfig(row string, cfg map[string]any) error {
+	path := memoryRootPatchPath()
+	if path == "" {
+		return fmt.Errorf("no home dir")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	content := string(data)
+	// 1) 移除该行现有 config 段（config: 开头到下一个顶层条目）
+	content = removeRowConfig(content, row)
+	// 2) 构造 config 段
+	var sb strings.Builder
+	sb.WriteString("  config:\n")
+	for _, k := range []string{"recallTokenBudget", "profileTokenBudget", "recallMaxContentChars", "recallEnabled", "contextMaxChars", "captureEnabled"} {
+		if v, ok := cfg[k]; ok {
+			sb.WriteString(fmt.Sprintf("    %s: %s\n", k, yamlValue(v)))
+		}
+	}
+	// 3) 插入：行后（disabled 行后）
+	rowRe := regexp.MustCompile(`(?m)^(\s*-\s*id:\s*` + regexp.QuoteMeta(row) + `\s*\n)(?:\s+disabled:\s*(?:true|false)\s*\n)?`)
+	loc := rowRe.FindStringIndex(content)
+	if loc == nil {
+		// 行不存在：先禁用插入（保持默认关闭语义）
+		content = rowReInsert(content, row)
+		loc = rowRe.FindStringIndex(content)
+		if loc == nil {
+			return fmt.Errorf("cannot insert row %s", row)
+		}
+	}
+	end := loc[1]
+	content = content[:end] + sb.String() + content[end:]
+	return os.WriteFile(path, []byte(content), 0644)
+}
+
+// rowReInsert 插入 "- id: X\n  disabled: true\n"（数组位置）。
+func rowReInsert(content, row string) string {
+	entry := fmt.Sprintf("- id: %s\n  disabled: true\n", row)
+	if strings.Contains(content, "[]") {
+		return strings.Replace(content, "[]", entry, 1)
+	}
+	return strings.TrimRight(content, "\n") + "\n" + entry
+}
+
+// removeRowConfig 移除某行后的 config 段（保留 id 行与 disabled 行）。
+func removeRowConfig(content, row string) string {
+	re := regexp.MustCompile(`(?m)^(\s*-\s*id:\s*` + regexp.QuoteMeta(row) + `\s*\n)((?:\s+disabled:\s*(?:true|false)\s*\n)?)((?:\s+config:\s*\n(?:\s+[A-Za-z_][A-Za-z0-9_]*:\s*.*\n)*)?)`)
+	return re.ReplaceAllString(content, "$1$2")
+}
+
+// yamlValue 把 Go 值转 YAML 标量。
+func yamlValue(v any) string {
+	switch t := v.(type) {
+	case bool:
+		if t {
+			return "true"
+		}
+		return "false"
+	case int:
+		return strconv.Itoa(t)
+	case float64:
+		return strconv.FormatFloat(t, 'f', -1, 64)
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
+
 // memoryRootPatchPath profile 根 cordis.patch.yml。
 func memoryRootPatchPath() string {
 	home, err := os.UserHomeDir()

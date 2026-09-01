@@ -1339,6 +1339,119 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
     }).catch(function () {});
   }
 
+  // ===== 记忆策略（省 token）：多源警告 + 注入预算控制 =====
+  var STRATEGY_INJECTORS = ["@openviking/dsh-memory-plugin", "@memtensor/memos-local-plugin", "@vectorize-io/hindsight-coding-agents"];
+
+  function renderStrategy(host, data) {
+    // 多源冲突警告：启用了 >1 个会注入记忆的插件
+    var enabledOnes = (data.recommended || []).filter(function (p) {
+      return STRATEGY_INJECTORS.indexOf(p.id) >= 0 && p.installed && p.enabled;
+    }).map(function (p) { return p.name; });
+    if (enabledOnes.length > 1) {
+      var warn = document.createElement("div");
+      warn.style.cssText = "border:1px solid #b45309;background:rgba(180,83,9,.12);color:#fbbf24;border-radius:8px;padding:8px 10px;font-size:11px;margin:10px 0;line-height:1.6";
+      warn.innerHTML = "⚠️ 检测到 <b>" + enabledOnes.length + " 个记忆源同时启用</b>（" + esc(enabledOnes.join("、")) +
+        "）——每轮都会注入多份记忆上下文，浪费 token。建议只启用一个，或用下方「按需检索」模式（零注入）。";
+      host.appendChild(warn);
+    }
+    // 预算控制卡片
+    var card = document.createElement("div");
+    card.className = NS + "__card";
+    card.innerHTML = '<div class="' + NS + '__name" style="margin-bottom:4px">记忆注入预算（省 token）</div>' +
+      '<div class="' + NS + '__desc">每轮自动注入的记忆量上限。调低预算 = 更少 token；「按需检索」= pre-step 完全不注入（零开销），需要记忆时由 agent 显式调用检索工具。</div>';
+    var app = bridge();
+    var st = document.createElement("div");
+    st.style.cssText = "font-size:11px;opacity:.85;margin-top:6px;min-height:14px";
+    card.appendChild(st);
+    if (app && app.MemoryBudgets && app.SetMemoryBudget) {
+      app.MemoryBudgets().then(function (b) {
+        renderBudgetUI(card, b || {}, st);
+      }).catch(function () { st.textContent = "预算读取失败（桥不可用？）"; });
+    } else {
+      st.textContent = "桥方法不可用";
+    }
+    host.appendChild(card);
+  }
+
+  function slider(label, min, max, val, fmt, onChange) {
+    var row = document.createElement("div");
+    row.style.cssText = "display:flex;align-items:center;gap:8px;margin:5px 0;flex-wrap:wrap;font-size:11px";
+    var lab = document.createElement("span");
+    lab.style.cssText = "min-width:150px;opacity:.85";
+    lab.textContent = label;
+    var inp = document.createElement("input");
+    inp.type = "range";
+    inp.min = String(min); inp.max = String(max); inp.step = "1";
+    inp.value = String(clampNum(val, min, max));
+    inp.style.cssText = "flex:1;min-width:120px";
+    var out = document.createElement("span");
+    out.style.cssText = "min-width:90px;text-align:right;font-weight:600";
+    out.textContent = fmt(clampNum(val, min, max));
+    inp.addEventListener("input", function () { out.textContent = fmt(parseInt(inp.value, 10)); onChange(parseInt(inp.value, 10)); });
+    row.appendChild(lab); row.appendChild(inp); row.appendChild(out);
+    return row;
+  }
+
+  function clampNum(v, min, max) {
+    var n = parseInt(v, 10);
+    if (!isFinite(n)) return min;
+    return Math.max(min, Math.min(max, n));
+  }
+
+  function renderBudgetUI(card, budgets, st) {
+    var ov = budgets["openviking-memory"] || {};
+    var mem = budgets["memos-local-memory"] || {};
+    var draft = {
+      ovRecall: ov.recallTokenBudget != null ? ov.recallTokenBudget : 2000,
+      ovProfile: ov.profileTokenBudget != null ? ov.profileTokenBudget : 10000,
+      memRecall: mem.recallEnabled !== false,
+      memChars: mem.contextMaxChars != null ? mem.contextMaxChars : 6000
+    };
+    // memos 模式选择
+    var modeRow = document.createElement("div");
+    modeRow.style.cssText = "display:flex;align-items:center;gap:8px;margin:6px 0;flex-wrap:wrap;font-size:11px";
+    modeRow.innerHTML = '<span style="min-width:150px;opacity:.85">memos 记忆注入</span>';
+    var auto = document.createElement("label");
+    auto.style.cssText = "display:flex;align-items:center;gap:4px";
+    var rAuto = document.createElement("input"); rAuto.type = "radio"; rAuto.name = NS + "-mode"; rAuto.checked = draft.memRecall;
+    var rOn = document.createElement("input"); rOn.type = "radio"; rOn.name = NS + "-mode"; rOn.checked = !draft.memRecall;
+    auto.appendChild(rAuto); auto.appendChild(document.createTextNode("自动注入（每轮注入）"));
+    var manual = document.createElement("label");
+    manual.style.cssText = "display:flex;align-items:center;gap:4px";
+    manual.appendChild(rOn); manual.appendChild(document.createTextNode("按需检索（零注入，推荐）"));
+    modeRow.appendChild(auto); modeRow.appendChild(manual);
+    card.appendChild(modeRow);
+    rAuto.addEventListener("change", function () { draft.memRecall = rAuto.checked; });
+    rOn.addEventListener("change", function () { draft.memRecall = !rOn.checked; });
+    // 滑块
+    var ovRecallRow = slider("openviking 每轮 recall 预算", 200, 5000, draft.ovRecall, function (v) { return v + " tokens"; }, function (v) { draft.ovRecall = v; });
+    var ovProfileRow = slider("openviking profile 预算", 500, 50000, draft.ovProfile, function (v) { return v + " tokens"; }, function (v) { draft.ovProfile = v; });
+    var memCharsRow = slider("memos 注入上下文上限", 1000, 16000, draft.memChars, function (v) { return (v / 1000).toFixed(1) + " KB"; }, function (v) { draft.memChars = v; });
+    card.appendChild(ovRecallRow); card.appendChild(ovProfileRow); card.appendChild(memCharsRow);
+    // 保存
+    var save = document.createElement("button");
+    save.className = NS + "__btn " + NS + "__btn--primary";
+    save.textContent = "保存预算（重启 DSH 生效）";
+    save.style.cssText = "margin-top:8px";
+    save.addEventListener("click", function () {
+      var app = bridge();
+      save.disabled = true;
+      save.textContent = "保存中…";
+      Promise.all([
+        app.SetMemoryBudget("openviking-memory", { recallTokenBudget: draft.ovRecall, profileTokenBudget: draft.ovProfile }),
+        app.SetMemoryBudget("memos-local-memory", { recallEnabled: draft.memRecall, contextMaxChars: draft.memChars })
+      ]).then(function (rs) {
+        var ok = rs.every(function (r) { return r && r.ok; });
+        st.textContent = ok ? "✅ 预算已保存，重启 DSH 后生效。" : "部分保存失败：" + (rs.map(function (r) { return (r && r.error) || ""; }).join("; "));
+        toast(ok ? "记忆预算已保存" : "记忆预算保存失败");
+        save.disabled = false; save.textContent = "保存预算（重启 DSH 生效）";
+      }).catch(function () {
+        st.textContent = "保存调用异常"; save.disabled = false; save.textContent = "重试";
+      });
+    });
+    card.appendChild(save);
+  }
+
   // 注入主区块
   function renderBlock(host, data) {
     var wrap = document.createElement("div");
@@ -1348,10 +1461,11 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
       '<div class="' + NS + '__sub">DSH 原生无记忆 API；记忆由插件提供。默认关闭——安装后请在此启用。启用后插件注册的 RPC 由桥透传，前端即可使用。</div>' +
       '<div class="' + NS + '__rec"></div>' +
       '<div class="' + NS + '__status" data-role="status"></div>' +
-      '<div class="' + NS + '__hint">安装位置：~/.dsh/profiles/web（dsh plugin --profile web add）。安装/卸载后需重启 DSH (Harness Desktop) 才生效。与「插件」页同源（dsh-1024store）：从插件市场安装的记忆插件会自动出现在上方的「已安装」列表。</div>';
+      '<div class="' + NS + '__hint">安装位置：~/.dsh/profiles/web（dsh plugin --profile web add）。安装/卸载/预算修改后需重启 DSH (Harness Desktop) 才生效。与「插件」页同源（dsh-1024store）：从插件市场安装的记忆插件会自动出现在上方的「已安装」列表。</div>';
     var box = wrap.querySelector("." + NS + "__rec");
     renderRecommended(box, data);
     renderInstalled(box, data);
+    renderStrategy(wrap, data);
     renderMarket(box);
     host.appendChild(wrap);
   }
