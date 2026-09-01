@@ -11,6 +11,7 @@
   window.__DSH_VERSION_MANAGE__ = true;
 
   var NS = "dsh-version-manage";
+  var injectTimer = null;
   var css = [
     "." + NS + "{margin:18px 0;padding:14px 16px;border:1px solid var(--border,#333);border-radius:10px;background:var(--surface,#17181b)}",
     "." + NS + "__head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px}",
@@ -178,14 +179,24 @@
 
   var injectedKey = "dsh-vm-injected";
   function inject() {
+    // 节流：mutation 高频触发时合并为每 300ms 一次，防止设置面板渲染风暴下主线程卡死
+    if (injectTimer) return;
+    injectTimer = setTimeout(function () {
+      injectTimer = null;
+      doInject();
+    }, 300);
+  }
+  function doInject() {
     // 锚点：设置-更新页的更新控制区块（updates-control），在其后插入 DSH 版本管理。
-    // 页签切换会重建该区块，故用元素级标记（host.dataset）而非全局 once，
-    // MutationObserver 持续监控，新建的 updates-control 会自动重新注入。
+    // 页签切换会重建该区块，故用元素级标记（host.dataset）而非全局 once；
+    // 全局注入标志防止任何重建-注入循环。
+    if (window.__DSH_VM_INJECTED) return;
     var hosts = document.querySelectorAll(".updates-control");
     for (var h = 0; h < hosts.length; h++) {
       var host = hosts[h];
       if (host.dataset && host.dataset.dshVm === "1") continue;
       if (host.dataset) host.dataset.dshVm = "1";
+      window.__DSH_VM_INJECTED = true;
       var container = document.createElement("div");
       container.style.cssText = "margin:14px 0 4px;width:100%";
       host.parentNode.insertBefore(container, host.nextSibling);
@@ -196,6 +207,7 @@
       container.appendChild(status);
       (function (c, st) {
         loadData(function (d) {
+          if (!c.isConnected) return;
           st.remove();
           renderBlock(c, d);
         });
@@ -206,7 +218,14 @@
   function start() {
     var obs = new MutationObserver(function () { inject(); });
     obs.observe(document.documentElement, { childList: true, subtree: true });
-    inject();
+    doInject();
+    // 注入成功后 3 秒断开观察（版本管理区已渲染，无需持续监控）
+    var guard = setInterval(function () {
+      if (window.__DSH_VM_INJECTED) {
+        clearInterval(guard);
+        obs.disconnect();
+      }
+    }, 500);
   }
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", start);

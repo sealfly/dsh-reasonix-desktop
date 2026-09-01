@@ -307,8 +307,19 @@
   }
 
   var hostMark = "dsh-mem-host";
+  var injectTimer = null;
+  var injectCount = 0;
   function inject() {
-    // 锚点：设置面板内的记忆面板区块（.mem-section）或已出现的内容容器
+    // 节流：mutation 高频触发时合并为每 300ms 一次，防止设置面板渲染风暴下主线程卡死
+    if (injectTimer) return;
+    injectTimer = setTimeout(function () {
+      injectTimer = null;
+      doInject();
+    }, 300);
+  }
+  function doInject() {
+    // 全局注入标志：注入过一次后不再注入（settings-center 被 React 重建也有效）
+    if (window.__DSH_MEM_PLUGINS_INJECTED) return;
     var centers = document.querySelectorAll(".settings-center");
     for (var c = 0; c < centers.length; c++) {
       var center = centers[c];
@@ -317,6 +328,7 @@
       var mem = center.querySelector(".mem-section, .mem-facts, .mem-empty");
       if (!mem) continue;
       if (center.dataset) center.dataset[hostMark] = "1";
+      window.__DSH_MEM_PLUGINS_INJECTED = true;
       var container = document.createElement("div");
       container.style.width = "100%";
       mem.parentNode.insertBefore(container, mem.nextSibling);
@@ -327,6 +339,7 @@
       var app = bridge();
       if (app && app.MemoryPlugins) {
         app.MemoryPlugins().then(function (d) {
+          if (!container.isConnected) return;
           status.remove();
           renderBlock(container, d || {});
         }).catch(function () {
@@ -341,7 +354,14 @@
   function start() {
     var obs = new MutationObserver(function () { inject(); });
     obs.observe(document.documentElement, { childList: true, subtree: true });
-    inject();
+    doInject();
+    // 注入成功后 3 秒断开观察（管理区已渲染，无需持续监控）
+    var guard = setInterval(function () {
+      if (window.__DSH_MEM_PLUGINS_INJECTED) {
+        clearInterval(guard);
+        obs.disconnect();
+      }
+    }, 500);
   }
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", start);

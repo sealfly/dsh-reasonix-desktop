@@ -34,7 +34,9 @@ func NewDshClientAt(host string, port int) *DshClient {
 	return &DshClient{
 		host: host,
 		port: port,
-		http: &http.Client{Timeout: 60 * time.Second},
+		// 普通 RPC 15s 超时：DSH 为本地实例（毫秒级响应），短超时防止后端卡住时
+		// 桥调用长挂导致前端界面长时间无响应（事件流走独立 WebSocket，不受影响）。
+		http: &http.Client{Timeout: 15 * time.Second},
 	}
 }
 
