@@ -306,7 +306,8 @@
     host.appendChild(wrap);
   }
 
-  var hostMark = "dsh-mem-host";
+  // dataset 键必须用合法 identifier（连字符名会抛 SyntaxError，导致注入脚本整体崩溃）
+  var hostMark = "dshMemHost";
   var injectTimer = null;
   var injectCount = 0;
   function inject() {
