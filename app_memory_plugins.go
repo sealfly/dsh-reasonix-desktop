@@ -387,16 +387,29 @@ func memoryPluginRowID(id string) string {
 }
 
 // memoryBudgetsDefault 各记忆插件注入预算默认值（省 token 推荐值；与插件源码默认对齐）。
+// 注意：memos 的 config 是「整块替换」语义（cordis 覆盖行必须复述全部键），
+// 故这里给出 memos patch 的完整 13 键，SetMemoryBudget 写回时补全，防止丢键。
 func memoryBudgetsDefault() map[string]any {
 	return map[string]any{
 		"openviking-memory": map[string]any{
-			"recallTokenBudget":   2000,
-			"profileTokenBudget":  10000,
+			"recallTokenBudget":     2000,
+			"profileTokenBudget":    10000,
 			"recallMaxContentChars": 500,
 		},
 		"memos-local-memory": map[string]any{
-			"recallEnabled":     true,
-			"contextMaxChars":   6000,
+			"enabled":              true,
+			"profileId":            "default",
+			"home":                 "",
+			"recallEnabled":        true,
+			"captureEnabled":       true,
+			"toolsEnabled":         true,
+			"hostLlmEnabled":       true,
+			"viewerEnabled":        false,
+			"viewerPort":           18801,
+			"recallTimeoutMs":      3000,
+			"contextMaxChars":      6000,
+			"toolResultMaxChars":   1200,
+			"failOnStartupError":   false,
 		},
 	}
 }
@@ -423,6 +436,7 @@ func (a *App) MemoryBudgets() map[string]any {
 
 // SetMemoryBudget 设置记忆注入预算（写根 patch config override，启用后生效）。
 // budget: {"recallTokenBudget": 800, "profileTokenBudget": 5000, ...}
+// 整块替换语义：memos 行写回时补全全部 13 键（默认 + 用户覆盖），防丢键。
 func (a *App) SetMemoryBudget(rowID string, budget map[string]any) map[string]any {
 	if rowID == "" || len(budget) == 0 {
 		return map[string]any{"ok": false, "error": "invalid args"}
@@ -432,17 +446,41 @@ func (a *App) SetMemoryBudget(rowID string, budget map[string]any) map[string]an
 		"recallTokenBudget": true, "profileTokenBudget": true,
 		"recallMaxContentChars": true, "recallEnabled": true,
 		"contextMaxChars": true, "captureEnabled": true,
+		"enabled": true, "profileId": true, "home": true,
+		"toolsEnabled": true, "hostLlmEnabled": true, "viewerEnabled": true,
+		"viewerPort": true, "recallTimeoutMs": true, "toolResultMaxChars": true,
+		"failOnStartupError": true,
 	}
-	clean := map[string]any{}
-	for k, v := range budget {
-		if allowed[k] {
-			clean[k] = v
+	// 完整键集合（默认全键 + 用户覆盖）
+	merged := map[string]any{}
+	if def, ok := memoryBudgetsDefault()[rowID].(map[string]any); ok {
+		for k, v := range def {
+			merged[k] = v
 		}
 	}
-	if len(clean) == 0 {
+	// 已存在的 override 先读回合并（保留之前设置的其他键）
+	if rows, err := memoryPatchRows(); err == nil {
+		for _, r := range rows {
+			if r["id"] == rowID {
+				if cfg, ok := r["config"].(map[string]any); ok {
+					for k, v := range cfg {
+						if allowed[k] {
+							merged[k] = v
+						}
+					}
+				}
+			}
+		}
+	}
+	for k, v := range budget {
+		if allowed[k] {
+			merged[k] = v
+		}
+	}
+	if len(merged) == 0 {
 		return map[string]any{"ok": false, "error": "no allowed keys"}
 	}
-	if err := patchMemoryRowConfig(rowID, clean); err != nil {
+	if err := patchMemoryRowConfig(rowID, merged); err != nil {
 		return map[string]any{"ok": false, "error": err.Error()}
 	}
 	return map[string]any{"ok": true, "row": rowID, "restartHint": "重启 DSH 后生效"}
@@ -523,10 +561,27 @@ func patchMemoryRowConfig(row string, cfg map[string]any) error {
 	content := string(data)
 	// 1) 移除该行现有 config 段（config: 开头到下一个顶层条目）
 	content = removeRowConfig(content, row)
-	// 2) 构造 config 段
+	// 1.5) 整块替换语义兜底：memos 行自动补全全部 13 键（默认 + 传入覆盖），防丢键
+	if row == "memos-local-memory" {
+		if def, ok := memoryBudgetsDefault()["memos-local-memory"].(map[string]any); ok {
+			for k, v := range def {
+				if _, exists := cfg[k]; !exists {
+					cfg[k] = v
+				}
+			}
+		}
+	}
+	// 2) 构造 config 段（写全部传入键，键序固定）
 	var sb strings.Builder
 	sb.WriteString("  config:\n")
-	for _, k := range []string{"recallTokenBudget", "profileTokenBudget", "recallMaxContentChars", "recallEnabled", "contextMaxChars", "captureEnabled"} {
+	keys := []string{
+		"enabled", "profileId", "home", "recallEnabled", "captureEnabled",
+		"toolsEnabled", "hostLlmEnabled", "viewerEnabled", "viewerPort",
+		"recallTimeoutMs", "contextMaxChars", "toolResultMaxChars",
+		"failOnStartupError", "recallTokenBudget", "profileTokenBudget",
+		"recallMaxContentChars",
+	}
+	for _, k := range keys {
 		if v, ok := cfg[k]; ok {
 			sb.WriteString(fmt.Sprintf("    %s: %s\n", k, yamlValue(v)))
 		}

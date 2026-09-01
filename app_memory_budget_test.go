@@ -76,6 +76,18 @@ func TestMemoryBudgetRoundTrip(t *testing.T) {
 	if !strContains(s2, "recallTokenBudget: 500") {
 		t.Fatalf("预算未更新:\n%s", s2)
 	}
+
+	// 整块替换语义：memos config 必须保留全部 13 键（防丢键——cordis 覆盖行须复述所有键）
+	if err := patchMemoryRowConfig("memos-local-memory", map[string]any{"recallEnabled": false, "contextMaxChars": 3000}); err != nil {
+		t.Fatal(err)
+	}
+	s3, _ := os.ReadFile(root)
+	full := string(s3)
+	for _, key := range []string{"enabled", "profileId", "home", "recallEnabled", "captureEnabled", "toolsEnabled", "hostLlmEnabled", "viewerEnabled", "viewerPort", "recallTimeoutMs", "contextMaxChars", "toolResultMaxChars", "failOnStartupError"} {
+		if !strContains(full, key+":") {
+			t.Fatalf("memos config 丢失键 %s（整块替换语义必须复述全部键）:\n%s", key, full)
+		}
+	}
 }
 
 func strContains(s, sub string) bool {
