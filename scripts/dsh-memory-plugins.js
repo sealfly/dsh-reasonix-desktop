@@ -266,8 +266,10 @@
     app.SetMemoryPluginEnabled(p.id, enabled).then(function (r) {
       if (btn) btn.disabled = false;
       if (r && r.ok) {
-        if (status) status.textContent = enabled ? "✅ 已启用 " + (p.name || p.id) + "（默认关闭，启用后生效）" : "已禁用 " + (p.name || p.id);
-        toast((enabled ? "已启用 " : "已禁用 ") + (p.name || p.id));
+        if (status) status.textContent = enabled
+          ? "✅ 已启用 " + (p.name || p.id) + "（默认关闭；重启 DSH (Harness Desktop) 后记忆插件加载生效）"
+          : "已禁用 " + (p.name || p.id) + "（重启 DSH 后插件不再加载）";
+        toast((enabled ? "已启用 " : "已禁用 ") + (p.name || p.id) + "，重启 DSH 生效");
         setTimeout(refreshAll, 500);
       } else if (status) {
         status.textContent = "设置失败：" + ((r && r.error) || "未知错误");

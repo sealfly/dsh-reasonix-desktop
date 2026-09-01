@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -339,7 +340,11 @@ func (a *App) UninstallMemoryPlugin(spec string) map[string]any {
 	return map[string]any{"ok": true, "output": out}
 }
 
-// SetMemoryPluginEnabled 启用/禁用记忆插件（默认关闭；持久化到 ~/.reasonix/memory-plugins.json）。
+// SetMemoryPluginEnabled 启用/禁用记忆插件。
+// 双层生效：
+//  1) UI 状态持久化（~/.reasonix/memory-plugins.json，默认关闭）
+//  2) 真正激活控制：profile 根 cordis.patch.yml 写/删 `- id: <行id>\n disabled: true`
+//     （cordis 官方禁用语法——插件加载层即被 disabled，重启 DSH 后生效）
 func (a *App) SetMemoryPluginEnabled(id string, enabled bool) map[string]any {
 	loadMemoryPluginState()
 	id = strings.TrimSpace(id)
@@ -354,7 +359,91 @@ func (a *App) SetMemoryPluginEnabled(id string, enabled bool) map[string]any {
 	}
 	memPluginMu.Unlock()
 	saveMemoryPluginState()
-	return map[string]any{"ok": true, "id": id, "enabled": enabled}
+	// 真正控制：改根 patch（行 id 映射；未知 id 只持久化 UI 状态）
+	row := memoryPluginRowID(id)
+	if row != "" {
+		if err := patchMemoryRowDisabled(row, !enabled); err != nil {
+			return map[string]any{"ok": true, "id": id, "enabled": enabled, "warning": "UI 状态已保存，但插件层控制失败: " + err.Error()}
+		}
+	}
+	return map[string]any{"ok": true, "id": id, "enabled": enabled, "restartHint": "重启 DSH (Harness Desktop) 后生效"}
+}
+
+// memoryPluginRowID 插件包名 → 根 patch 行 id。
+func memoryPluginRowID(id string) string {
+	row := map[string]string{
+		"@openviking/dsh-memory-plugin":        "openviking-memory",
+		"@vectorize-io/hindsight-coding-agents": "hindsight",
+		"@memtensor/memos-local-plugin":        "memos-local-memory",
+	}[id]
+	if row != "" {
+		return row
+	}
+	// 兜底：包名末段做行 id（memos 的 adapter 行以 memos-local-memory 命名）
+	if strings.HasSuffix(id, "/dsh-memory-plugin") {
+		return "openviking-memory"
+	}
+	return ""
+}
+
+// memoryRootPatchPath profile 根 cordis.patch.yml。
+func memoryRootPatchPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".dsh", "profiles", "web", "cordis.patch.yml")
+}
+
+// patchMemoryRowDisabled 在根 patch 中确保某行处于指定 disabled 状态。
+func patchMemoryRowDisabled(row string, disabled bool) error {
+	path := memoryRootPatchPath()
+	if path == "" {
+		return fmt.Errorf("no home dir")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	content := string(data)
+	re := regexp.MustCompile(`(?m)^\s*-\s*id:\s*` + regexp.QuoteMeta(row) + `\s*\n(?:\s+disabled:\s*(?:true|false)\s*\n)?`)
+	content = re.ReplaceAllString(content, "")
+	if disabled {
+		// 顶层数组位置插入（替换空数组 []，或追加到已有内容）
+		entry := fmt.Sprintf("- id: %s\n  disabled: true\n", row)
+		if strings.Contains(content, "[]") {
+			content = strings.Replace(content, "[]", entry, 1)
+		} else {
+			content = strings.TrimRight(content, "\n") + "\n" + entry
+		}
+	} else if !strings.Contains(content, "- id:") {
+		// 启用后数组已无任何条目 → 恢复 []（防止 YAML 顶层解析为 null）
+		content = strings.TrimRight(content, "\n") + "\n[]\n"
+	}
+	return os.WriteFile(path, []byte(content), 0644)
+}
+
+// ensureMemoryDefaultOff 首次启动确保三个记忆插件默认关闭（根 patch disabled）。
+// 幂等：memory-plugins.json 的 defaultOffApplied 标记只应用一次，之后由用户开关控制。
+func ensureMemoryDefaultOff() {
+	loadMemoryPluginState()
+	memPluginMu.Lock()
+	if memPluginState.UpdatedAt != 0 && memPluginState.Enabled == nil {
+		// 已初始化过（有开关记录）——不干预
+		memPluginMu.Unlock()
+		return
+	}
+	memPluginMu.Unlock()
+	// 读标记（独立于 enabled map，避免误判）
+	path := filepath.Join(reasonixDataDir(), "memory-plugins-default-off.json")
+	if _, err := os.Stat(path); err == nil {
+		return
+	}
+	for _, row := range []string{"openviking-memory", "hindsight", "memos-local-memory"} {
+		_ = patchMemoryRowDisabled(row, true)
+	}
+	_ = os.MkdirAll(reasonixDataDir(), 0755)
+	_ = os.WriteFile(path, []byte("{\"applied\":true}\n"), 0644)
 }
 
 // tail 返回字符串末尾最多 n 字节。
