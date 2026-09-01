@@ -110,14 +110,28 @@ func (a *App) historySliceForTabImpl(tabID string, req map[string]any) map[strin
 			"content":   m.Content,
 			"reasoning": "",
 		}
-		entries = append(entries, map[string]any{
-			"entryId": fmt.Sprintf("dsh-%s:m%d:o0", sid, i),
-			"turn":    i,
+		entry := map[string]any{
+			"entryId": fmt.Sprintf("dsh-%s:t%d:m%d", sid, m.Turn, i),
+			"turn":    m.Turn,
 			"order":   i,
 			"message": msg,
 			"refs":    []any{},
 			"note":    nil,
-		})
+		}
+		// Reasonix 历史协议：user 条目需要顶层 role/content/checkpointTurn
+		// （问题导航据此构建「第 n 个问题」列表，缺失则全部显示「点击加载」）。
+		if m.Role == "user" {
+			entry["role"] = "user"
+			entry["content"] = m.Content
+			entry["checkpointTurn"] = m.CheckpointTurn
+			if m.SubmitText != "" {
+				entry["submitText"] = m.SubmitText
+			}
+			if m.CreatedAt > 0 {
+				entry["createdAt"] = m.CreatedAt
+			}
+		}
+		entries = append(entries, entry)
 	}
 	return map[string]any{
 		"entries":       entries,
@@ -156,15 +170,22 @@ type resumeEvent struct {
 				Content json.RawMessage `json:"content"`
 			} `json:"message"`
 		} `json:"data"`
-		Seq int64 `json:"seq"`
+		Seq  int64 `json:"seq"`
+		Time int64 `json:"time"`
 	} `json:"event"`
 }
 
 // resumeMessage 是前端期待的消息条目。
+// Turn/CheckpointTurn 是问题导航(questionNav)的关键：user 条目提供问题边界，
+// 前端据此构建「第 n 个问题」导航与跳转；缺失时全部显示「点击加载」且无法跳转。
 type resumeMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-	Seq     int64  `json:"seq,omitempty"`
+	Role           string `json:"role"`
+	Content        string `json:"content"`
+	Seq            int64  `json:"seq,omitempty"`
+	Turn           int    `json:"turn,omitempty"`
+	CheckpointTurn int    `json:"checkpointTurn,omitempty"`
+	SubmitText     string `json:"submitText,omitempty"`
+	CreatedAt      int64  `json:"createdAt,omitempty"`
 }
 
 // historyPayload 是 session.history 的返回结构。
@@ -222,32 +243,56 @@ func resumeEventText(content json.RawMessage) string {
 	return ""
 }
 
-// sessionMessages 把 session.history 的 assistant/message 事件折叠成消息数组。
-// 按 seq 升序；assistant/message 一条对应一轮 assistant 输出。
-// 用户消息不在事件流里（DSH 事件只有 assistant 侧），前端对空历史会显示会话标题占位。
+// sessionMessages 把 session.history 的事件折叠成消息数组（按 seq 升序）。
+// 关键：DSH 事件流里有 user/message 事件（用户问题），是问题导航的问题边界；
+// turn/start 事件提供真实轮次号。assistant/message 一条对应一轮 assistant 输出。
 func (a *App) sessionMessages(sessionID string) []resumeMessage {
 	hp, err := a.fetchHistory(sessionID)
 	if err != nil || hp == nil {
 		return []resumeMessage{}
 	}
 	out := make([]resumeMessage, 0, len(hp.Events))
+	currentTurn := 0
 	for _, ev := range hp.Events {
-		if ev.Event.Type != "assistant/message" {
-			continue
+		switch ev.Event.Type {
+		case "turn/start":
+			if ev.Event.Data.Turn > 0 {
+				currentTurn = ev.Event.Data.Turn
+			}
+		case "user/message":
+			text := resumeEventText(ev.Event.Data.Message.Content)
+			if text == "" {
+				continue
+			}
+			out = append(out, resumeMessage{
+				Role:           "user",
+				Content:        text,
+				Seq:            ev.Event.Seq,
+				Turn:           currentTurn,
+				CheckpointTurn: currentTurn,
+				SubmitText:     text,
+				CreatedAt:      ev.Event.Time,
+			})
+		case "assistant/message":
+			role := ev.Event.Data.Message.Role
+			if role == "" {
+				role = "assistant"
+			}
+			text := resumeEventText(ev.Event.Data.Message.Content)
+			if text == "" {
+				continue
+			}
+			turn := ev.Event.Data.Turn
+			if turn <= 0 {
+				turn = currentTurn
+			}
+			out = append(out, resumeMessage{
+				Role:    role,
+				Content: text,
+				Seq:     ev.Event.Seq,
+				Turn:    turn,
+			})
 		}
-		role := ev.Event.Data.Message.Role
-		if role == "" {
-			role = "assistant"
-		}
-		text := resumeEventText(ev.Event.Data.Message.Content)
-		if text == "" {
-			continue
-		}
-		out = append(out, resumeMessage{
-			Role:    role,
-			Content: text,
-			Seq:     ev.Event.Seq,
-		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Seq < out[j].Seq })
 	return out
@@ -274,7 +319,7 @@ func (a *App) ResumeSession(sessionID any) []any {
 }
 
 // mockHistoryPage 复刻前端 bridge 的分页逻辑（index 页 + 条数窗口）。
-// 前端按 user 轮次计数；DSH 事件流没有 user 消息时退化为按消息条数分页。
+// 前端按 user 轮次计数（user/message 事件即问题边界）。
 func mockHistoryPage(msgs []resumeMessage, t int, o int) map[string]any {
 	userCount := 0
 	for _, m := range msgs {
@@ -290,7 +335,7 @@ func mockHistoryPage(msgs []resumeMessage, t int, o int) map[string]any {
 		limit = 200
 	}
 	n := userCount
-	// DSH 事件流只有 assistant/message，没有 user 消息时按消息总数分页
+	// 历史极短（如首次会话只有 assistant 摘要）时按消息总数分页兜底
 	if n == 0 && len(msgs) > 0 {
 		n = len(msgs)
 	}

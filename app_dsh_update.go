@@ -15,6 +15,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -264,4 +265,198 @@ func dshInfoMap(i dshVersionInfo) map[string]any {
 // dshUpdateBannerHTML 供注入脚本使用的横幅模板信息（便于单点维护文案）。
 func dshUpdateBannerText(current, latest string) string {
 	return fmt.Sprintf("DSH 有新版可用：%s → %s（点击查看更新渠道）", current, latest)
+}
+
+// ---------- 设置页版本管理（DshVersionManage / DshDownloadVersion） ----------
+
+// dshReleaseMeta 一条 GitHub Release 的展示信息。
+type dshReleaseMeta struct {
+	Tag      string `json:"tag"`
+	Name     string `json:"name"`
+	URL      string `json:"url"`
+	Date     string `json:"date"`
+	WinURL   string `json:"winUrl,omitempty"`
+	Prerelease bool `json:"prerelease"`
+}
+
+// npmVersions 查 npm registry 的版本列表（含 dist-tags），失败返回空（静默降级）。
+func npmVersions() (tags map[string]string, versions []string) {
+	client := &http.Client{Timeout: 8 * time.Second}
+	resp, err := client.Get("https://registry.npmjs.org/@deepseek-ai/dsh")
+	if err != nil {
+		return nil, nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, nil
+	}
+	var doc struct {
+		DistTags map[string]string            `json:"dist-tags"`
+		Versions map[string]json.RawMessage   `json:"versions"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&doc) != nil {
+		return nil, nil
+	}
+	versions = make([]string, 0, len(doc.Versions))
+	for v := range doc.Versions {
+		versions = append(versions, v)
+	}
+	// 倒序（新→旧），截前 24 个
+	sortVersionsDesc(versions)
+	if len(versions) > 24 {
+		versions = versions[:24]
+	}
+	return doc.DistTags, versions
+}
+
+// sortVersionsDesc 按版本号倒序（解析失败按字符串倒序）。
+func sortVersionsDesc(vs []string) {
+	less := func(a, b string) bool { return compareVersions(a, b) > 0 }
+	// 简单插入排序（版本列表小）
+	for i := 1; i < len(vs); i++ {
+		for j := i; j > 0 && less(vs[j], vs[j-1]); j-- {
+			vs[j], vs[j-1] = vs[j-1], vs[j]
+		}
+	}
+}
+
+// githubDesktopReleases 查 DeepSeek Harness Desktop 最近 Releases（per_page 个）。
+func githubDesktopReleases(perPage int) []dshReleaseMeta {
+	client := &http.Client{Timeout: 8 * time.Second}
+	url := "https://api.github.com/repos/sdkwork-ai/deepseek-harness-desktop/releases?per_page=" + strconv.Itoa(perPage)
+	resp, err := client.Get(url)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil
+	}
+	var rels []struct {
+		TagName    string `json:"tag_name"`
+		Name       string `json:"name"`
+		HTMLURL    string `json:"html_url"`
+		Published  string `json:"published_at"`
+		Prerelease bool   `json:"prerelease"`
+		Assets     []struct {
+			Name               string `json:"name"`
+			BrowserDownloadURL string `json:"browser_download_url"`
+		} `json:"assets"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&rels) != nil {
+		return nil
+	}
+	out := make([]dshReleaseMeta, 0, len(rels))
+	for _, r := range rels {
+		m := dshReleaseMeta{Tag: r.TagName, Name: r.Name, URL: r.HTMLURL, Date: r.Published, Prerelease: r.Prerelease}
+		for _, a := range r.Assets {
+			if strings.Contains(a.Name, "win-x64.exe") {
+				m.WinURL = a.BrowserDownloadURL
+				break
+			}
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
+// DshVersionManage 返回设置页「DSH 核心版本」区块需要的完整数据。
+// 失败字段一律空值/空列表（原则 3：兜底不崩溃，前端显示占位）。
+func (a *App) DshVersionManage() map[string]any {
+	m := map[string]any{
+		"current":   dshCoreVersion(),
+		"latest":    "",
+		"available": false,
+		"channel":   "DeepSeek Harness Desktop (npm @deepseek-ai/dsh)",
+		"checkedAt": time.Now().UnixMilli(),
+		"versions":  []any{},
+		"releases":  []any{},
+	}
+	if m["current"] == "" {
+		m["current"] = "unknown"
+		m["error"] = "cannot locate local @deepseek-ai/dsh package.json"
+		return m
+	}
+	tags, vers := npmVersions()
+	if len(vers) > 0 {
+		vs := make([]any, 0, len(vers))
+		for _, v := range vers {
+			vs = append(vs, v)
+		}
+		m["versions"] = vs
+		if tags != nil {
+			if l := tags["latest"]; l != "" {
+				m["latest"] = l
+				m["available"] = compareVersions(l, m["current"].(string)) > 0
+			}
+		}
+	}
+	rels := githubDesktopReleases(8)
+	if len(rels) > 0 {
+		rs := make([]any, 0, len(rels))
+		for i := range rels {
+			rs = append(rs, map[string]any{
+				"tag":        rels[i].Tag,
+				"name":       rels[i].Name,
+				"url":        rels[i].URL,
+				"date":       rels[i].Date,
+				"winUrl":     rels[i].WinURL,
+				"prerelease": rels[i].Prerelease,
+			})
+		}
+		m["releases"] = rs
+	}
+	return m
+}
+
+// DshDownloadVersion 下载 DSH 安装包/核心包到 ~/.reasonix/downloads/。
+// url 可以是 GitHub Release 的 win-x64.exe 直链或 npm tarball。
+// 返回 {ok, path, size, fileName, error}。
+func (a *App) DshDownloadVersion(url, fileName string) map[string]any {
+	dir := filepath.Join(reasonixDataDir(), "downloads")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return map[string]any{"ok": false, "error": "cannot create downloads dir: " + err.Error()}
+	}
+	if fileName == "" {
+		fileName = "dsh-download"
+		// 从 URL 提取文件名
+		if i := strings.LastIndexByte(url, '/'); i >= 0 && i+1 < len(url) {
+			fileName = url[i+1:]
+		}
+	}
+	// 文件名净化（防路径穿越）
+	fileName = strings.Map(func(r rune) rune {
+		switch r {
+		case '\\', '/', ':', '*', '?', '"', '<', '>', '|':
+			return '_'
+		}
+		return r
+	}, fileName)
+	target := filepath.Join(dir, fileName)
+
+	client := &http.Client{Timeout: 30 * time.Minute}
+	resp, err := client.Get(url)
+	if err != nil {
+		return map[string]any{"ok": false, "error": "download failed: " + err.Error()}
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return map[string]any{"ok": false, "error": "download failed: HTTP " + strconv.Itoa(resp.StatusCode)}
+	}
+	out, err := os.Create(target)
+	if err != nil {
+		return map[string]any{"ok": false, "error": "cannot create file: " + err.Error()}
+	}
+	n, err := io.Copy(out, resp.Body)
+	out.Close()
+	if err != nil {
+		_ = os.Remove(target)
+		return map[string]any{"ok": false, "error": "download interrupted: " + err.Error()}
+	}
+	return map[string]any{
+		"ok":       true,
+		"path":     target,
+		"size":     n,
+		"fileName": fileName,
+	}
 }
