@@ -704,8 +704,31 @@ ce as T,clearLegacyThemePreference as U,h as V,getResolvedTheme as W,normalizeTh
             current = p.id;
             syncChecks();
             if (window.__dshPresetToast) window.__dshPresetToast("已切换到 " + p.name);
-          } else if (window.__dshPresetToast) {
-            window.__dshPresetToast((r && r.error) || "切换失败");
+          } else {
+            var err = (r && r.error) || "切换失败";
+            // DSH 语义：已启动(running)会话的 preset 锁定(agent-preset-locked)，
+            // 不能原地切换——用该模式新开会话（session.create 带 agentPreset）。
+            if (err.indexOf("locked") >= 0 || err.indexOf("started") >= 0 || err.indexOf("fixed") >= 0) {
+              if (app.CreateSession) {
+                if (window.__dshPresetToast) window.__dshPresetToast("当前会话已启动(预设固定)，正在用「" + p.name + "」新开会话…");
+                app.CreateSession("", p.id).then(function (r2) {
+                  var nid = r2 && (r2.id || r2.tabId || r2.sessionId);
+                  if (nid) {
+                    current = p.id;
+                    syncChecks();
+                    if (window.__dshPresetToast) window.__dshPresetToast("已创建「" + p.name + "」新会话 " + String(nid).substring(0, 8) + "… 请在会话列表查看");
+                  } else if (window.__dshPresetToast) {
+                    window.__dshPresetToast("新开会话失败：" + ((r2 && r2.error) || "未知错误"));
+                  }
+                }).catch(function () {
+                  if (window.__dshPresetToast) window.__dshPresetToast("新开会话调用失败");
+                });
+              } else if (window.__dshPresetToast) {
+                window.__dshPresetToast("当前会话已启动，预设固定(DSH限制)。请新开会话后再选模式");
+              }
+            } else if (window.__dshPresetToast) {
+              window.__dshPresetToast(err);
+            }
           }
         }).catch(function () {});
       });
