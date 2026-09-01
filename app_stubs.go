@@ -1,6 +1,9 @@
 package main
 
-import "strings"
+import (
+	"path/filepath"
+	"strings"
+)
 
 // 启动路径必需 + 常见空实现（补齐前端调用但 Go 端缺失的方法，防 not-a-function 崩溃）。
 // 前端实际调用 332 个方法，Go 端只实现了核心 60 个；其余在此按"安全空实现"补齐，
@@ -63,8 +66,19 @@ func (a *App) ExternalOpeners() map[string]any { return map[string]any{"openers"
 // InboxSnapshot 收件箱快照。
 func (a *App) InboxSnapshot() []any { return []any{} }
 
-// Memory 记忆（DSH 无记忆能力，空态）。
-func (a *App) Memory() map[string]any { return map[string]any{"memories": []any{}, "available": false} }
+// Memory 记忆（DSH 原生无记忆 API，能力来自记忆插件生态——见 app_memory_plugins.go）。
+// available=true 让前端记忆面板正常渲染（空态），记忆插件启用后由插件 RPC 提供数据；
+// 指令文件（docs）持久化在 ~/.reasonix/memory/（Reasonix 本地维护兜底）。
+func (a *App) Memory() map[string]any {
+	return map[string]any{
+		"available":   true,
+		"memories":    []any{},
+		"archives":    []any{},
+		"docs":        []any{},
+		"suggestions": []any{},
+		"storeDir":    filepath.Join(reasonixDataDir(), "memory"),
+	}
+}
 
 // MemoryForTab 指定会话记忆。
 func (a *App) MemoryForTab(_tabID string) map[string]any { return a.Memory() }
@@ -75,9 +89,9 @@ func (a *App) MemoryRevisions() []any { return []any{} }
 // MemoryRevisionsForTab 指定会话记忆修订。
 func (a *App) MemoryRevisionsForTab(_a1 any, _a2 any) []any { return []any{} }
 
-// MemorySuggestions 记忆建议。
+// MemorySuggestions 记忆建议（空态；记忆插件启用后由插件提供）。
 func (a *App) MemorySuggestions() map[string]any {
-	return map[string]any{"memories": []any{}, "skills": []any{}, "generatedAt": "", "available": false, "source": "dsh"}
+	return map[string]any{"memories": []any{}, "skills": []any{}, "generatedAt": "", "available": true, "source": "dsh"}
 }
 
 // MemorySuggestionsForTab 指定会话记忆建议。
