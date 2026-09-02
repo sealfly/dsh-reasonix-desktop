@@ -46,20 +46,31 @@ type dshVersionInfo struct {
 }
 
 // dshInstallRoot 定位 DSH 核心包 package.json（安装目录可被多路径探测）。
+// 覆盖：官方桌面版(dependencies/dsh)、源码仓库(~/deepseek-harness)、
+// npm 全局安装(安装包预装 @deepseek-ai/dsh 的落点，APPDATA/npm 与 ProgramFiles/nodejs)。
 func dshInstallRoot() string {
 	roots := []string{
 		filepath.Join(os.Getenv("APPDATA"), "io.github.hairyf.deepseek-harness-desktop", "dependencies", "dsh"),
 		filepath.Join(os.Getenv("LOCALAPPDATA"), "io.github.hairyf.deepseek-harness-desktop", "dependencies", "dsh"),
+		// npm 全局安装（安装包预装路径）
+		filepath.Join(os.Getenv("APPDATA"), "npm", "node_modules", "@deepseek-ai", "dsh"),
+		filepath.Join(os.Getenv("ProgramFiles"), "nodejs", "node_modules", "@deepseek-ai", "dsh"),
+		filepath.Join(os.Getenv("ProgramFiles"), "nodejs", "node_modules", "@deepseek-ai", "dsh"),
 	}
 	// 源码仓库运行（本机开发）：deepseek-harness 根目录自带 package.json。
 	if home, err := os.UserHomeDir(); err == nil {
 		roots = append(roots, filepath.Join(home, "deepseek-harness"))
+		// npm 全局(用户级, pnpm/nvm 布局)
+		roots = append(roots, filepath.Join(home, "AppData", "Roaming", "npm", "node_modules", "@deepseek-ai", "dsh"))
 	}
+	seen := map[string]bool{}
 	for _, r := range roots {
-		if r != "" {
-			if _, err := os.Stat(filepath.Join(r, "package.json")); err == nil {
-				return r
-			}
+		if r == "" || seen[r] {
+			continue
+		}
+		seen[r] = true
+		if _, err := os.Stat(filepath.Join(r, "package.json")); err == nil {
+			return r
 		}
 	}
 	return ""

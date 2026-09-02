@@ -2,7 +2,11 @@ package main
 
 // app_dsh_update_test.go — DSH 更新检测桥测试（版本解析/比较 + 检测结果结构）。
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestParseVersion(t *testing.T) {
 	cases := []struct {
@@ -132,4 +136,32 @@ func indexOf(s, sub string) int {
 		}
 	}
 	return -1
+}
+
+// dshCoreVersion / dshInstallRoot：能定位 npm 全局布局的 @deepseek-ai/dsh（安装包预装路径）。
+func TestDshCoreVersionFromNpmGlobalLayout(t *testing.T) {
+	dir := t.TempDir()
+	content := `{"name":"@deepseek-ai/dsh","version":"0.1.1-rc.2"}`
+	// 构造 APPDATA/npm/node_modules/@deepseek-ai/dsh/package.json
+	root := filepath.Join(dir, "npm", "node_modules", "@deepseek-ai", "dsh")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// 备份并覆盖 APPDATA(不污染真实环境)
+	oldAppData := os.Getenv("APPDATA")
+	os.Setenv("APPDATA", dir)
+	defer os.Setenv("APPDATA", oldAppData)
+	// dshInstallRoot 应命中 APPDATA/npm 布局
+	found := dshInstallRoot()
+	if found == "" {
+		t.Fatal("dshInstallRoot 未命中 npm 全局布局")
+	}
+	// dshCoreVersion 应读出版本
+	ver := dshCoreVersion()
+	if ver != "0.1.1-rc.2" {
+		t.Fatalf("dshCoreVersion = %q, want 0.1.1-rc.2", ver)
+	}
 }

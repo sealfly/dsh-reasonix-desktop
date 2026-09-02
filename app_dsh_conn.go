@@ -83,13 +83,17 @@ func pingDsh(host string, port int) error {
 }
 
 // DshConnStatus 返回当前 DSH 连接状态（前端启动时调用）。
-// 返回 {configured:{host,port}, connected:bool, detected:{host,port}, error?}。
+// 返回 {configured:{host,port}, connected:bool, detected:{host,port}, version?, error?}。
+// version 为探测到的本地 DSH 版本（dshCoreVersion 读 npm 全局/源码/桌面版），
+// 前端横幅可显示"已连接 DSH x.y.z"。
 func (a *App) DshConnStatus() map[string]any {
 	cfg := loadDshConnConfig()
 	status := map[string]any{
 		"configured": map[string]any{"host": cfg.Host, "port": cfg.Port},
 		"connected":  false,
 		"detected":   map[string]any{"host": "", "port": 0},
+		"version":    dshCoreVersion(),
+		"installRoot": dshInstallRoot(),
 	}
 	// 1. 试配置地址
 	if err := pingDsh(cfg.Host, cfg.Port); err == nil {
@@ -169,7 +173,15 @@ func (a *App) DshLaunch() map[string]any {
 			}
 		}
 		if !found {
-			return map[string]any{"ok": false, "error": "未找到 dsh 命令。请先安装: npm install -g @deepseek-ai/dsh"}
+			// 自动安装：探测 Node/npm，存在则后台 npm i -g @deepseek-ai/dsh（装默认最新版）
+			if npmPath, err := exec.LookPath("npm"); err == nil {
+				inst := exec.Command(npmPath, "install", "-g", "@deepseek-ai/dsh")
+				if err := inst.Start(); err == nil {
+					go func() { _ = inst.Wait() }()
+					return map[string]any{"ok": true, "installing": true, "note": "未找到 dsh, 已开始自动安装 @deepseek-ai/dsh (npm), 完成后点启动"}
+				}
+			}
+			return map[string]any{"ok": false, "error": "未找到 dsh 且自动安装不可用。请手动安装: npm install -g @deepseek-ai/dsh"}
 		}
 	}
 	// 后台启动 dsh web（不阻塞应用）
