@@ -39,6 +39,8 @@ func (a *App) startup(ctx context.Context) {
 	go a.preinstallMemoryPlugins()
 	// 记忆插件默认关闭（根 patch disabled，仅首次应用一次）
 	go ensureMemoryDefaultOff()
+	// 预热会话列表缓存（DSH session.list 投影计算慢，预热后左侧任务栏秒开）
+	go a.warmTabsCache()
 }
 
 // startShowEventListener 监听命名事件 "Local\DSH-ReasonixUI-Show"：

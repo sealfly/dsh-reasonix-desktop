@@ -3,7 +3,11 @@ package main
 // App 的会话桥方法（DSH session.* 透传 + 转换成前端 TabMeta）。
 // 项目原则：不限制 DSH 能力——DSH 的方法经 dsh.RPC 通用透传调用。
 
-import "fmt"
+import (
+	"fmt"
+	"sync"
+	"time"
+)
 
 // dshSession 是 DSH session.list 返回的会话对象（部分字段）。
 type dshSession struct {
@@ -65,12 +69,72 @@ func filepathBase(p string) string {
 	return p
 }
 
-// Tabs 返回当前所有会话的 TabMeta 列表（前端启动/刷新时读）。
+// tabsCache 会话列表短期缓存：DSH session.list 对巨型会话的 projections 计算耗时
+// 0.5~1.3s（实测 24.8MB 会话 761 万 token），左侧任务栏每次同步等待会卡顿。
+// 方案：TTL 缓存 + 启动后台预热 + 写会话动作失效，让列表秒开、静默更新。
+var (
+	tabsCacheMu sync.Mutex
+	tabsCache   []any
+	tabsCacheAt time.Time
+)
+
+const tabsCacheTTL = 10 * time.Second
+
+// invalidateTabsCache 会话增删/切换后立即失效缓存。
+func invalidateTabsCache() {
+	tabsCacheMu.Lock()
+	tabsCache = nil
+	tabsCacheAt = time.Time{}
+	tabsCacheMu.Unlock()
+}
+
+// Tabs 返回当前所有会话的 TabMeta 列表（前端启动/刷新时读，带 TTL 缓存）。
 func (a *App) Tabs() []any {
 	resumeLog("Tabs called")
 	if a.dsh == nil {
 		return []any{}
 	}
+	tabsCacheMu.Lock()
+	if tabsCache != nil && time.Since(tabsCacheAt) < tabsCacheTTL {
+		tabs := tabsCache
+		tabsCacheMu.Unlock()
+		resumeLog("Tabs: cache hit (%d sessions)", len(tabs))
+		return tabs
+	}
+	tabsCacheMu.Unlock()
+	tabs := a.fetchTabs()
+	tabsCacheMu.Lock()
+	tabsCache = tabs
+	tabsCacheAt = time.Now()
+	tabsCacheMu.Unlock()
+	return tabs
+}
+
+// warmTabsCache 启动后台预热会话列表缓存（异步，不阻塞启动）。
+func (a *App) warmTabsCache() {
+	defer func() {
+		if r := recover(); r != nil {
+			resumeLog("warmTabsCache panic=%v", r)
+		}
+	}()
+	if a.dsh == nil {
+		return
+	}
+	tabsCacheMu.Lock()
+	if tabsCache != nil {
+		tabsCacheMu.Unlock()
+		return
+	}
+	tabsCacheMu.Unlock()
+	_ = a.fetchTabs()
+	tabsCacheMu.Lock()
+	tabsCacheAt = time.Now() // 预热后从当前时刻起算 TTL
+	tabsCacheMu.Unlock()
+	resumeLog("Tabs: warm done")
+}
+
+// fetchTabs 直接调 DSH session.list（无缓存）。
+func (a *App) fetchTabs() []any {
 	raw, err := a.dsh.RPC("session.list", map[string]any{})
 	if err != nil {
 		resumeLog("Tabs err=%v", err)
@@ -119,6 +183,7 @@ func (a *App) CreateSession(workspaceRoot, preset string) (map[string]any, error
 	if err != nil {
 		return nil, err
 	}
+	invalidateTabsCache()
 	var res struct {
 		SessionID string `json:"sessionId"`
 	}
@@ -158,6 +223,7 @@ func (a *App) DeleteSession(sessionID string) error {
 	if a.dsh == nil {
 		return fmt.Errorf("dsh not ready")
 	}
+	invalidateTabsCache()
 	_, err := a.dsh.RPC("workspace.archiveSession", map[string]any{"sessionId": sessionID})
 	return err
 }
