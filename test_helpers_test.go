@@ -8,23 +8,36 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
 
+// workspaceDirName DSH 工作区目录名 = "--" + cwd 编码 + "--"
+// （反斜杠→-、冒号删除；DSH 落盘用 cwd 编码做工作区目录）。
+func workspaceDirName(cwd string) string {
+	return "--" + strings.ReplaceAll(strings.ReplaceAll(cwd, "\\", "-"), ":", "") + "--"
+}
+
 // cleanupTestSession 删除测试会话的磁盘目录（~/.dsh/sessions/<workspace>/<sid>）。
 // DSH 运行中删除不影响进程（内存态仍在），但重启后该会话不再出现。
-func cleanupTestSession(t *testing.T, sessionID string) {
+// 根治残留：除按 sid 删外，再按 cwd 编码直接删整个工作区目录——
+// DSH 会话目录是延迟落盘（cleanup 时可能尚未创建），按 cwd 删不依赖落盘时机。
+func cleanupTestSession(t *testing.T, sessionID, cwd string) {
 	t.Helper()
-	if sessionID == "" {
-		return
-	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return
 	}
-	// 扫描 sessions 下所有 workspace，删掉匹配目录
 	base := filepath.Join(home, ".dsh", "sessions")
+	// 1) 按 cwd 编码删工作区（根治延迟落盘残留）
+	if cwd != "" {
+		_ = os.RemoveAll(filepath.Join(base, workspaceDirName(cwd)))
+	}
+	if sessionID == "" {
+		return
+	}
+	// 2) 按 sid 删（cwd 未知时的兜底）
 	workspaces, err := os.ReadDir(base)
 	if err != nil {
 		return
@@ -85,7 +98,16 @@ func createTempSession(t *testing.T) string {
 		t.Fatalf("解析 session.create 失败: %v raw=%s", err, string(raw))
 	}
 	t.Cleanup(func() {
-		cleanupTestSession(t, created.SessionID)
+		// 1) 归档会话：DSH 运行时持有会话文件句柄，直接删磁盘会被占用；
+		//    workspace.archiveSession 让 DSH 释放管理后再删才可靠。
+		if a.dsh != nil {
+			_, _ = a.dsh.RPC("workspace.archiveSession", map[string]any{"sessionId": created.SessionID})
+		}
+		time.Sleep(1 * time.Second)
+		cleanupTestSession(t, created.SessionID, cwd)
+		// DSH 会话目录延迟落盘/句柄释放需要时间，等写完再清一次
+		time.Sleep(2 * time.Second)
+		cleanupTestSession(t, created.SessionID, cwd)
 		removeTempSessionDir(t, cwd)
 	})
 	return created.SessionID

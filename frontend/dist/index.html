@@ -1541,18 +1541,19 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
 <!-- __DSH_FILE_PREVIEW -->
 <script>
 // dsh-file-preview.js — 文件预览注入（md/docx/xlsx/pptx）
-// 三个入口：① 左侧浮动"📁"文件浏览面板（ListWorkspaceFiles）② 预览弹层（PreviewFile）
-// ③ 对话区内点击本地文件路径/链接 → 自动预览。
-// 自包含浮动 UI（无前端锚点依赖）；全桥调用走 wails 绑定，透传原则。
+// 集成在右侧文件栏：运行时探测右侧面板 → 面板头部注入"📁 文件"入口 →
+// 文件浏览（ListWorkspaceFiles）+ 预览弹层（PreviewFile）。
+// 对话区内点击本地文件路径/链接 → 自动预览。
+// 自包含（无前端锚点依赖）；桥调用走 wails 绑定，透传原则。
 (function () {
   if (window.__DSH_FP_INJECTED) return;
   window.__DSH_FP_INJECTED = true;
   var NS = "dsh-fp";
 
   var css = [
-    "." + NS + "__fab{position:fixed;left:14px;bottom:70px;z-index:99990;width:40px;height:40px;border-radius:12px;border:1px solid rgba(128,128,128,.35);background:rgba(28,29,33,.92);color:#f4f4f3;font-size:18px;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;transition:transform .15s}",
-    "." + NS + "__fab:hover{transform:scale(1.08)}",
-    "." + NS + "__panel{position:fixed;left:14px;bottom:118px;z-index:99991;width:340px;max-height:60vh;display:flex;flex-direction:column;background:rgba(24,25,29,.97);color:#f4f4f3;border:1px solid rgba(128,128,128,.4);border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,.6);font:13px Inter,system-ui,sans-serif;overflow:hidden}",
+    "." + NS + "__rt-btn{display:inline-flex;align-items:center;gap:5px;margin:6px 8px;padding:5px 10px;border-radius:7px;border:1px solid rgba(128,128,128,.35);background:rgba(28,29,33,.9);color:#f4f4f3;font-size:12px;font-weight:500;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.3);transition:background .15s;white-space:nowrap}",
+    "." + NS + "__rt-btn:hover{background:#3b3f46}",
+    "." + NS + "__panel{position:fixed;right:16px;bottom:70px;z-index:99991;width:360px;max-height:62vh;display:flex;flex-direction:column;background:rgba(24,25,29,.97);color:#f4f4f3;border:1px solid rgba(128,128,128,.4);border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,.6);font:13px Inter,system-ui,sans-serif;overflow:hidden}",
     "." + NS + "__panel-head{display:flex;align-items:center;gap:6px;padding:8px 10px;border-bottom:1px solid rgba(128,128,128,.25);font-weight:600;font-size:12px}",
     "." + NS + "__panel-crumb{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left;color:#9ca3af}",
     "." + NS + "__panel-x{cursor:pointer;color:#9ca3af;font-size:14px;padding:0 4px}",
@@ -1795,16 +1796,8 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
     load(dir || "");
   }
 
-  // ===== 浮动按钮 =====
-  var fab = document.createElement("button");
-  fab.className = NS + "__fab";
-  fab.textContent = "📁";
-  fab.title = "文件浏览 / 预览";
-  fab.addEventListener("click", function () { openBrowser(currentCwd()); });
-  document.body.appendChild(fab);
-
   function currentCwd() {
-    // 尝试从会话 meta 拿 cwd（window.dsh 透传或前端状态）
+    // 尝试从会话 meta 拿 cwd（桥 MetaForTab）
     try {
       var app = bridge();
       if (app && app.MetaForTab) {
@@ -1814,6 +1807,67 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
     } catch (e) { /* ignore */ }
     return "";
   }
+
+  // ===== 右侧文件栏集成 =====
+  // 运行时探测右侧面板（Reasonix 混淆代码无稳定类名，用几何特征定位：
+  // 贴右 80px 内、高度 >35% 视口的最大容器），在面板头部注入文件入口。
+  function findRightPanel() {
+    var best = null, bestScore = 0;
+    var all = document.querySelectorAll("aside, div, section, nav, main");
+    for (var i = 0; i < all.length; i++) {
+      var el = all[i];
+      var r = el.getBoundingClientRect();
+      if (r.width < 80 || r.width > 900) continue;
+      if (r.height < window.innerHeight * 0.35) continue;
+      var gap = window.innerWidth - r.right;
+      if (gap >= -5 && gap <= 80) {
+        var score = r.height + (r.width > 200 ? 500 : 0);
+        if (score > bestScore) { bestScore = score; best = el; }
+      }
+    }
+    return best;
+  }
+  function mountFileButton(panel) {
+    if (panel.querySelector("." + NS + "__rt-btn")) return;
+    var btn = document.createElement("button");
+    btn.className = NS + "__rt-btn";
+    btn.textContent = "📁 文件";
+    btn.title = "浏览并预览工作区文件（md/docx/xlsx/pptx）";
+    btn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      openBrowser(currentCwd());
+    });
+    panel.insertBefore(btn, panel.firstChild);
+  }
+  function initRightPanel() {
+    var tries = 0;
+    var timer = setInterval(function () {
+      tries++;
+      var panel = findRightPanel();
+      if (panel) {
+        clearInterval(timer);
+        mountFileButton(panel);
+      } else if (tries > 60) {
+        clearInterval(timer); // 12s 上限，找不到就放弃（不干扰 UI）
+      }
+    }, 200);
+  }
+  // 前端面板重建时重新注入（MutationObserver 观察右侧面板区域）
+  var mo = new MutationObserver(function () {
+    var panel = findRightPanel();
+    if (panel) mountFileButton(panel);
+  });
+  var moTries = 0;
+  var moTimer = setInterval(function () {
+    moTries++;
+    var panel = findRightPanel();
+    if (panel) {
+      clearInterval(moTimer);
+      mo.observe(panel, { childList: true, subtree: true });
+    } else if (moTries > 60) {
+      clearInterval(moTimer);
+    }
+  }, 300);
 
   // ===== 对话区内点击文件路径 → 预览 =====
   document.addEventListener("click", function (e) {
@@ -1838,6 +1892,7 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
 })();
 
 </script>
+<!-- /__DSH_FILE_PREVIEW -->
 <!-- /__DSH_FILE_PREVIEW -->
 </body>
 </html>
