@@ -1,5 +1,9 @@
 # 构建产物
 build/
+# 自定义 NSIS 安装器脚本（build-installer.ps1 依赖，含 DSH 后端组件选项，必须入库）
+!build/windows/installer/
+!build/windows/installer/project.nsi
+!build/windows/installer/start-dsh.cmd
 # 前端 dist（从 Electron 项目 renderer/dist 复制，构建产物不提交）
 frontend/dist/
 # Wails 自动生成的绑定（每次 wails build 重新生成）
