@@ -1,19 +1,24 @@
-﻿# build-installer.ps1 - Build NSIS installer with DSH backend integration.
+# build-installer.ps1 - Build NSIS installer with DSH backend integration.
+# Two flavors:
+#   default      -> classic installer (no bundled DSH; DSH component installs online via npm)
+#   -Bundle      -> LAZY installer (embeds DSH runtime + node.exe; offline one-click DSH)
 # Standard pipeline so EVERY installer carries the "DSH 后端" component option:
 #   wails build -nsis  -> main exe + wails_tools.nsh + initial installer
 #   go-winres patch    -> embed version resources / icon / manifest into main exe
 #   sign main exe
-#   makensis (custom project.nsi) -> repackage with the patched exe
+#   [-Bundle] prepare-dsh-runtime.ps1 -> build\windows\installer\dsh-runtime\
+#   makensis (custom project.nsi, -DBUNDLE_DSH when lazy) -> repackage with the patched exe
 #   sign installer
-#   copy to Desktop as DSH-ReasonixUI-安装包.exe
-# Usage: .\build-installer.ps1 [-WailsBin <path>] [-CertThumbprint <thumb>] [-GoProxy <proxy>] [-SkipSign]
+#   copy to Desktop as DSH-ReasonixUI-安装包.exe / DSH-ReasonixUI-懒人包.exe
+# Usage: .\build-installer.ps1 [-WailsBin <path>] [-CertThumbprint <thumb>] [-GoProxy <proxy>] [-SkipSign] [-Bundle]
 
 param(
   [string]$WailsBin = "",
   [string]$CertThumbprint = "96A3EB4C926AFEAAA71A72119C3D34B5C7465335",
   [string]$GoProxy = "https://goproxy.cn,direct",
   [switch]$SkipSign,
-  [switch]$CopyDesktop = $true
+  [switch]$CopyDesktop = $true,
+  [switch]$Bundle
 )
 
 $ErrorActionPreference = "Stop"
@@ -45,6 +50,9 @@ $installerOut = Join-Path $root "build\bin\dsh-reasonix-wails-amd64-installer.ex
 $installerDir = Join-Path $root "build\windows\installer"
 $winresTool = Join-Path $root "tools\go-winres.exe"
 $winresJson = Join-Path $root "build\windows\winres.json"
+if ($Bundle) {
+  $installerOut = Join-Path $root "build\bin\dsh-reasonix-wails-amd64-installer-lazy.exe"
+}
 
 # 1) wails build -nsis: main exe + wails_tools.nsh + initial installer
 Write-Host "== Build (wails -nsis) =="
@@ -77,11 +85,35 @@ if ($cert) {
   Write-Warning "Cert not found; skipped signing main exe."
 }
 
+# 3.5) Lazy flavor: prepare offline DSH runtime (node.exe + dsh tree) BEFORE makensis
+if ($Bundle) {
+  $runtimeDir = Join-Path $installerDir "dsh-runtime"
+  $runtimeOk = (Test-Path (Join-Path $runtimeDir "node.exe")) -and
+               (Test-Path (Join-Path $runtimeDir "dsh\node_modules\@deepseek-ai\dsh\lib\bin.js"))
+  if ($runtimeOk) {
+    Write-Host "== Bundled runtime already present (skip prepare): $runtimeDir =="
+    Write-Host "   To rebuild it: remove dsh-runtime\ then rerun -Bundle"
+  } else {
+    Write-Host "== Prepare bundled DSH runtime (lazy installer) =="
+    $prepare = Join-Path $installerDir "prepare-dsh-runtime.ps1"
+    if (-not (Test-Path $prepare)) { throw "prepare-dsh-runtime.ps1 missing: $prepare" }
+    & $prepare
+    if ($LASTEXITCODE -ne 0) { throw "prepare-dsh-runtime failed (exit $LASTEXITCODE)" }
+  }
+  if (-not (Test-Path (Join-Path $runtimeDir "node.exe"))) { throw "runtime node.exe missing: $runtimeDir" }
+  if (-not (Test-Path (Join-Path $runtimeDir "dsh\node_modules\@deepseek-ai\dsh\lib\bin.js"))) { throw "runtime dsh missing: $runtimeDir" }
+  Write-Host "Runtime ready: $runtimeDir"
+}
+
 # 4) makensis repackage with the patched exe (custom project.nsi carries DSH component)
 Write-Host "== NSIS (custom project.nsi with DSH option) =="
 Push-Location $installerDir
 try {
-  & $makensis "-DARG_WAILS_AMD64_BINARY=$exe" "project.nsi"
+  if ($Bundle) {
+    & $makensis "-DARG_WAILS_AMD64_BINARY=$exe" "-DBUNDLE_DSH" "project.nsi"
+  } else {
+    & $makensis "-DARG_WAILS_AMD64_BINARY=$exe" "project.nsi"
+  }
   if ($LASTEXITCODE -ne 0) { throw "makensis failed (exit $LASTEXITCODE)" }
 } finally { Pop-Location }
 if (-not (Test-Path $installerOut)) { throw "installer missing: $installerOut" }
@@ -99,7 +131,8 @@ if ($cert) {
 # 6) Copy to Desktop
 if ($CopyDesktop) {
   $desktop = Join-Path $env:USERPROFILE "Desktop"
-  $dst = Join-Path $desktop "DSH-ReasonixUI-安装包.exe"
+  $name = if ($Bundle) { "DSH-ReasonixUI-懒人包.exe" } else { "DSH-ReasonixUI-安装包.exe" }
+  $dst = Join-Path $desktop $name
   Copy-Item $installerOut $dst -Force
   Write-Host "Desktop copy: $dst"
 }
