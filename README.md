@@ -56,3 +56,9 @@ wails build
 - **项目原则**（见 Electron 项目 PRINCIPLES.md）：前端 dist 零改动、一切适配走 Go 桥、不限制 DSH 能力（dsh.go 通用 RPC 透传）。
 - **防崩溃结构**：GetThemeExperience / CapabilityDiagnostics / RuntimeDoctor / bot / StorageSettings / SkillsSettings 必须返回完整结构，不能返回空（否则前端读字段崩溃——这是 Electron 版踩过的坑）。
 - **DSH 后端是共享实例**（3080），绝不主动关闭它（杀它会杀本会话）。
+
+## 本地模型 / 离线部署
+
+- **本地模型接入**（ollama / LM Studio / vLLM 等 OpenAI 兼容端点）：见 [LOCAL-MODEL.md](LOCAL-MODEL.md)（已实测验证）。
+- **安装包双模式**：老式包（`build-installer.ps1`，DSH 联网装）与懒人包（`build-installer.ps1 -Bundle`，内置 dsh+node 离线一键装，约 96MB）。懒人包离线 runtime 由 `build/windows/installer/prepare-dsh-runtime.ps1` 在联网构建机上准备（产物 `dsh-runtime/` 被 gitignore，不入库）。
+
