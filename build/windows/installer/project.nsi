@@ -34,6 +34,20 @@
 ####
 !include "wails_tools.nsh"
 
+# ===== Lazy installer switch =====
+# Two flavors:
+#   classic : makensis project.nsi                    (no bundled DSH; online install)
+#   lazy    : makensis -DBUNDLE_DSH project.nsi        (embeds DSH runtime + node.exe)
+# Lazy runtime dir is prepared by prepare-dsh-runtime.ps1 -> dsh-runtime/:
+#   dsh-runtime\node.exe           (node single exe to run dsh)
+#   dsh-runtime\dsh\node_modules\  (@deepseek-ai/dsh full dependency tree)
+!ifdef BUNDLE_DSH
+  !ifndef BUNDLE_DSH_DIR
+    !define BUNDLE_DSH_DIR "dsh-runtime"
+  !endif
+!endif
+
+
 # The version information for this two must consist of 4 parts
 VIProductVersion "${INFO_PRODUCTVERSION}.0"
 VIFileVersion    "${INFO_PRODUCTVERSION}.0"
@@ -72,7 +86,11 @@ ManifestDPIAware true
 #!finalize 'signtool --file "%1"'
 
 Name "${INFO_PRODUCTNAME}"
-OutFile "..\..\bin\${INFO_PROJECTNAME}-${ARCH}-installer.exe" # Name of the installer's file.
+!ifdef BUNDLE_DSH
+OutFile "..\..\bin\${INFO_PROJECTNAME}-${ARCH}-installer-lazy.exe" # lazy flavor (bundled DSH+node)
+!else
+OutFile "..\..\bin\${INFO_PROJECTNAME}-${ARCH}-installer.exe" # classic flavor
+!endif
 !ifdef WAILS_INSTALL_SCOPE
   !if "${WAILS_INSTALL_SCOPE}" == "user"
     InstallDir "$LOCALAPPDATA\Programs\${INFO_PRODUCTNAME}"
@@ -164,42 +182,73 @@ Section "DSH-ReasonixUI 桌面客户端" SecApp
     !insertmacro wails.writeUninstaller
 SectionEnd
 
-# ===== 组件: DSH 后端(可选, 未安装时勾选) =====
+# ===== Component: DSH backend (optional) =====
 Section "DSH 后端 (DeepSeek Harness, 127.0.0.1:3080)" SecDSH
     SectionIn 1
     !insertmacro wails.setShellContext
 
-    # 1. 检测 DSH 是否已装/在跑
+    !ifdef BUNDLE_DSH
+        # Lazy flavor: unpack bundled DSH runtime (node.exe + dsh tree) first
+        SetOutPath "$INSTDIR"
+        DetailPrint "Unpacking bundled DSH runtime (node.exe + dsh)..."
+        File /r "${BUNDLE_DSH_DIR}"
+    !endif
+
+    # 1. Already installed or running?
     Call dsh.detectInstalled
     StrCmp $0 "yes" dshAlreadyInstalled dshDoInstall
 
     dshAlreadyInstalled:
-        DetailPrint "DSH 后端已存在, 跳过安装"
+        DetailPrint "DSH backend already present, skip install"
         Goto dshDone
 
     dshDoInstall:
-        # 2. 检测 Node.js
+        # 2. Node.js present? (online install needs it; lazy bundle does not)
         Call node.detect
         StrCmp $0 "yes" nodeFound nodeMissing
 
         nodeFound:
-            DetailPrint "Node.js 已检测到, 安装 DSH..."
-            nsExec::ExecToLog "npm install -g @deepseek-ai/dsh"
-            # 3. 创建 DSH 启动快捷方式
-            CreateShortCut "$DESKTOP\启动 DSH 后端.lnk" "$INSTDIR\start-dsh.cmd"
-            CreateShortCut "$SMPROGRAMS\启动 DSH 后端.lnk" "$INSTDIR\start-dsh.cmd"
-            Goto dshDone
+            DetailPrint "Node.js found, trying online install (npm latest stable)..."
+            nsExec::ExecToLog "npm install -g @deepseek-ai/dsh --no-audit --no-fund --fetch-timeout=15000 --fetch-retries=1"
+            Pop $0
+            DetailPrint "npm exit code: $0"
+            StrCmp $0 "0" dshInstalled npmFailed
+
+        npmFailed:
+            DetailPrint "Online install failed (offline?), falling back to bundled runtime"
+            !ifdef BUNDLE_DSH
+                IfFileExists "$INSTDIR\dsh-runtime\node.exe" dshInstalled noBundleFile
+                noBundleFile:
+                    DetailPrint "Error: bundled runtime missing (dsh-runtime\node.exe)"
+                    Goto dshDone
+            !else
+                DetailPrint "No bundled DSH in this installer. Retry online or run: npm install -g @deepseek-ai/dsh"
+                Goto dshDone
+            !endif
 
         nodeMissing:
-            MessageBox MB_YESNO|MB_ICONINFORMATION "需要 Node.js 才能安装 DSH 后端。$\r$\n$\r$\n是否打开 Node.js 下载页? (https://nodejs.org)$\r$\n$\r$\n安装 Node.js 后重新运行本安装器勾选 DSH 即可。" IDYES openNode IDNO skipNode
-            openNode:
-                ExecShell "open" "https://nodejs.org"
-            skipNode:
-            Goto dshDone
+            !ifdef BUNDLE_DSH
+                DetailPrint "Node.js not found, using bundled DSH runtime (includes node.exe)"
+                IfFileExists "$INSTDIR\dsh-runtime\node.exe" dshInstalled noBundleNoNode
+                noBundleNoNode:
+                    DetailPrint "Error: bundled runtime missing (dsh-runtime\node.exe)"
+                    Goto dshDone
+            !else
+                MessageBox MB_YESNO|MB_ICONINFORMATION "需要 Node.js 才能安装 DSH 后端。$\r$\n$\r$\n是否打开 Node.js 下载页? (https://nodejs.org)$\r$\n$\r$\n安装 Node.js 后重新运行本安装器勾选 DSH 即可。$\r$\n$\r$\n(离线环境请使用内置 DSH 的懒人包)" IDYES openNode IDNO skipNode
+                openNode:
+                    ExecShell "open" "https://nodejs.org"
+                skipNode:
+                Goto dshDone
+            !endif
 
-    dshDone:
+        dshInstalled:
+            # 3. Shortcuts + auto start
+            CreateShortCut "$DESKTOP\启动 DSH 后端.lnk" "$INSTDIR\start-dsh.cmd"
+            CreateShortCut "$SMPROGRAMS\启动 DSH 后端.lnk" "$INSTDIR\start-dsh.cmd"
+            ExecShell "open" "$INSTDIR\start-dsh.cmd"
+            DetailPrint "DSH backend started (127.0.0.1:3080)"
+        dshDone:
 SectionEnd
-
 Section "uninstall"
     !insertmacro wails.setShellContext
 
