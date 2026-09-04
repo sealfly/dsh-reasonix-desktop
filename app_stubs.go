@@ -341,24 +341,6 @@ func (a *App) RenameProject(_root, _name string) error { return nil }
 // RemoveWorkspace 移除工作区。
 func (a *App) RemoveWorkspace(_root string) error { return nil }
 
-// RevealPath 在文件管理器显示路径。
-func (a *App) RevealPath(_path string) {}
-
-// RevealWorkspacePathForTab 显示会话工作区路径。
-func (a *App) RevealWorkspacePathForTab(_a1 any, _a2 any) {}
-
-// RevealWorkspaceWriterForTab 显示写入者。
-func (a *App) RevealWorkspaceWriterForTab(_tabID string) {}
-
-// OpenLocalPath 打开本地路径。
-func (a *App) OpenLocalPath(_path string) {}
-
-// OpenLocalPathInExternalOpener 用外部打开器打开。
-func (a *App) OpenLocalPathInExternalOpener(_a1 any, _a2 any) {}
-
-// OpenWorkspacePathForTab 打开会话工作区路径。
-func (a *App) OpenWorkspacePathForTab(_a1 any, _a2 any) {}
-
 // PickWorkspace 选择工作区（无 UI 选择器，空）。
 func (a *App) PickWorkspace() string { return "" }
 
@@ -371,9 +353,6 @@ func (a *App) SaveExportFile(_a1 any, _a2 any, _a3 any) error { return nil }
 // SaveExportImageFiles 保存导出图片。
 func (a *App) SaveExportImageFiles(_a1 any, _a2 any) error { return nil }
 
-// ReadFileForTab 读文件。
-func (a *App) ReadFileForTab(_tabID, _path string) string { return "" }
-
 // SaveDoc / SaveDocForTab 保存文档。
 func (a *App) SaveDoc(_path, _content string) error { return nil }
 func (a *App) SaveDocForTab(_tabID, _path, _content string) error { return nil }
@@ -385,9 +364,6 @@ func (a *App) SavePastedImage(_name string, _data string) string { return "" }
 
 // AttachDropped 附加拖放文件。
 func (a *App) AttachDropped(_tabID string, _paths []string) {}
-
-// ListDirForTab 列目录。
-func (a *App) ListDirForTab(_tabID, _path string) []any { return []any{} }
 
 // SearchFileRefsForTab 搜索文件引用。
 func (a *App) SearchFileRefsForTab(_tabID, _query string) []any { return []any{} }

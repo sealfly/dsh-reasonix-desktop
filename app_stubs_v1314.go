@@ -53,25 +53,8 @@ func (a *App) SubmitDisplayToTab(_a1 string, _a2 string) error { return nil }
 // SubmitInvocationsToTab 提交调用列表到指定标签页。
 func (a *App) SubmitInvocationsToTab(_a1 string, _a2 string, _a3 string, _a4 []any) error { return nil }
 
-// ReadFile 读取文件预览（DSH 无文件服务，空）。
-func (a *App) ReadFile(path string) map[string]any {
-	return map[string]any{"path": path, "content": "", "size": 0, "truncated": false}
-}
-
-// ListDir 列出目录（空）。
-func (a *App) ListDir(_path string) []any { return []any{} }
-
 // SearchFileRefs 按文件名搜索（空）。
 func (a *App) SearchFileRefs(_query string) []any { return []any{} }
-
-// OpenWorkspacePath 打开工作区路径（空操作）。
-func (a *App) OpenWorkspacePath(_path string) error { return nil }
-
-// RevealWorkspacePath 在文件管理器中显示路径（空操作）。
-func (a *App) RevealWorkspacePath(_path string) error { return nil }
-
-// OpenWorkspaceInExternalOpener 用外部打开器打开工作区（空操作）。
-func (a *App) OpenWorkspaceInExternalOpener(_path string) error { return nil }
 
 // RunShell 在 shell 中执行（DSH 无 shell 集成，空操作）。
 func (a *App) RunShell(_cmd string) error { return nil }
