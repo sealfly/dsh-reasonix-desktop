@@ -1,4 +1,4 @@
-# build-installer.ps1 - Build NSIS installer with DSH backend integration.
+﻿# build-installer.ps1 - Build NSIS installer with DSH backend integration.
 # Two flavors:
 #   default      -> classic installer (no bundled DSH; DSH component installs online via npm)
 #   -Bundle      -> LAZY installer (embeds DSH runtime + node.exe; offline one-click DSH)
