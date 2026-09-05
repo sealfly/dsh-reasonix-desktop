@@ -322,3 +322,59 @@ func (a *App) RevealWorkspaceWriterForTab(tabID string) error {
 	}
 	return revealInExplorer(root)
 }
+
+// ===== 本地文件编辑 + 保存 =====//
+
+// WriteFileForTab 把编辑后的文本保存到会话工作区文件（供前端内嵌编辑器保存）。
+// 参数：tabID=会话, rel=相对工作区路径（或绝对路径）, content=新内容(UTF-8)。
+// 安全：resolveWorkspacePath 防 ../ 穿越；文本类扩展 + 大小上限；二进制/目录拒绝。
+// 返回 {ok, path, size, modified} 或 {ok:false, error}。
+func (a *App) WriteFileForTab(tabID, rel, content string) map[string]any {
+	rel = strings.TrimSpace(rel)
+	if rel == "" {
+		return map[string]any{"ok": false, "error": "empty path"}
+	}
+	path, ok := a.resolveWorkspacePath(tabID, rel)
+	if !ok {
+		return map[string]any{"ok": false, "error": "invalid path (escape blocked)"}
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		// 不存在 → 新建（仅当父目录存在且非二进制扩展名场景外，文本新建放行）
+		fi = nil
+	} else if fi.IsDir() {
+		return map[string]any{"ok": false, "error": "path is a directory"}
+	}
+	// 二进制扩展名拒绝（写文本会损坏）
+	ext := strings.ToLower(filepath.Ext(path))
+	if binaryExts[ext] {
+		return map[string]any{"ok": false, "error": "binary file not editable"}
+	}
+	// 大小上限（防写超大文件误操作）
+	if fi != nil && fi.Size() > previewZipMaxBytes {
+		return map[string]any{"ok": false, "error": fmt.Sprintf("file too large (%.1f MB > 64 MB)", float64(fi.Size())/(1<<20))}
+	}
+	// 内容上限：预览上限 4MB 对应，写回不超过 8MB（留余量）
+	const writeMax = 8 << 20
+	if int64(len(content)) > writeMax {
+		return map[string]any{"ok": false, "error": "content too large (max 8 MB)"}
+	}
+	// 写回（UTF-8；若原文件 GBK 编码，读取已被转 UTF-8，写回统一 UTF-8）
+	data := []byte(content)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return map[string]any{"ok": false, "error": err.Error()}
+	}
+	nfi, _ := os.Stat(path)
+	out := map[string]any{
+		"ok":       true,
+		"path":     path,
+		"size":     int64(len(data)),
+		"modified": nfi.ModTime().Format("2006-01-02 15:04:05"),
+	}
+	return out
+}
+
+// WriteFile 无会话版（绝对路径直接写，供本地/引用场景）。
+func (a *App) WriteFile(path, content string) map[string]any {
+	return a.WriteFileForTab("", path, content)
+}
