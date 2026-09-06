@@ -129,7 +129,18 @@
         ta.className = NS + "-ta";
         ta.spellcheck = false;
         ta.value = (pv && pv.body) || "";
+        // ---- 自动补全支持 ----
+        ta.__lang = langOf(rel);
+        ta.addEventListener("input", function () { scheduleComplete(ta, false); });
         ta.addEventListener("keydown", function (e) {
+          // 补全弹层开着: Enter/Tab/上下接受或导航
+          if (completeBox && completeBox.__ta === ta && (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Enter")) {
+            e.preventDefault();
+            if (e.key === "ArrowDown") { moveComplete(1); return; }
+            if (e.key === "ArrowUp") { moveComplete(-1); return; }
+            applyComplete();
+            return;
+          }
           if (e.key === "Tab") {
             e.preventDefault();
             var s = ta.selectionStart, en = ta.selectionEnd;
@@ -137,7 +148,8 @@
             ta.selectionStart = ta.selectionEnd = s + 2;
           }
           if (e.key === "s" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); doSave(); }
-          if (e.key === "Escape") { e.preventDefault(); exitEdit(); }
+          if (e.key === "Escape") { e.preventDefault(); hideComplete(); if (!completeBox) exitEdit(); }
+          if ((e.key === " " || e.key === ".") && (e.ctrlKey || e.metaKey)) { e.preventDefault(); scheduleComplete(ta, true); }
         });
         ovl.appendChild(bar);
         ovl.appendChild(ta);
@@ -209,6 +221,133 @@
     obs.observe(document.documentElement, { childList: true, subtree: true });
     setTimeout(scan, 1500);
     setInterval(scan, 3000);
+  }
+
+
+  // ===== 自动补全（语言关键字 + 文件内标识符） =====
+  var completeBox = null;   // 当前补全弹层
+  var completeIdx = 0;
+  var completeItems = [];
+  var completeTimer = null;
+
+  // 语言关键字表（按扩展名粗分）
+  var KEYWORDS = {
+    ".go": ["func","package","import","return","if","else","for","range","var","const","type","struct","interface","map","chan","go","defer","select","switch","case","break","continue","fallthrough","default","nil","true","false","len","cap","make","new","append","panic","recover","error","string","int","bool","float64"],
+    ".js": ["function","return","var","let","const","if","else","for","while","do","switch","case","break","continue","new","typeof","instanceof","true","false","null","undefined","class","extends","super","import","export","default","try","catch","finally","throw","async","await","yield"],
+    ".ts": ["interface","type","enum","namespace","public","private","protected","readonly","abstract","implements","function","return","var","let","const","if","else","for","while","class","extends","import","export","async","await","try","catch","throw","true","false","null","undefined"],
+    ".tsx": ["function","return","const","let","var","import","export","default","if","else","for","class","extends","interface","type","async","await","try","catch","throw","true","false","null","undefined","useState","useEffect","useCallback","useMemo","useRef"],
+    ".jsx": ["function","return","const","let","var","import","export","default","if","else","for","class","extends","async","await","true","false","null","undefined","useState","useEffect"],
+    ".py": ["def","class","return","if","elif","else","for","while","import","from","as","with","try","except","finally","raise","lambda","pass","break","continue","None","True","False","and","or","not","in","is","global","nonlocal","yield","async","await","self","print"],
+    ".rs": ["fn","let","mut","const","static","struct","enum","impl","trait","mod","use","pub","return","if","else","match","for","while","loop","break","continue","unsafe","async","await","move","ref","self","true","false","Some","None","Ok","Err","vec","String","Option","Result"],
+    ".c": ["int","char","float","double","void","return","if","else","for","while","do","switch","case","break","continue","struct","union","enum","typedef","static","extern","const","unsigned","signed","long","short","sizeof","NULL"],
+    ".h": ["int","char","float","double","void","return","if","else","for","while","do","switch","case","break","continue","struct","union","enum","typedef","static","extern","const","unsigned","signed","long","short","sizeof","NULL","define","ifdef","ifndef","endif","include","pragma"],
+    ".cpp": ["int","char","float","double","void","return","if","else","for","while","do","switch","case","break","continue","struct","union","enum","typedef","static","extern","const","unsigned","signed","long","short","sizeof","NULL","class","public","private","protected","virtual","new","delete","this","namespace","using","template","typename","auto","nullptr","true","false"],
+    ".java": ["public","private","protected","class","interface","enum","extends","implements","return","if","else","for","while","do","switch","case","break","continue","new","this","super","static","final","abstract","void","int","long","double","float","boolean","char","byte","short","String","null","true","false","import","package","try","catch","finally","throw","throws"],
+    ".json": ["true","false","null"],
+    ".sh": ["if","then","else","elif","fi","for","while","do","done","case","esac","function","return","local","export","echo","exit","read","cd","set","unset","shift","break","continue","source"],
+    ".ps1": ["function","param","begin","process","end","if","else","elseif","switch","foreach","for","while","do","until","try","catch","finally","throw","return","new","class","enum","using","filter","workflow","$true","$false","$null","Write-Host","Write-Output","Write-Error","Get-Item","Set-Item","Remove-Item","Get-Content","Set-Content"],
+    ".sql": ["SELECT","FROM","WHERE","INSERT","INTO","VALUES","UPDATE","SET","DELETE","CREATE","TABLE","ALTER","DROP","INDEX","VIEW","JOIN","LEFT","RIGHT","INNER","OUTER","ON","GROUP","BY","ORDER","HAVING","LIMIT","OFFSET","AND","OR","NOT","NULL","PRIMARY","KEY","FOREIGN","REFERENCES","DEFAULT","UNIQUE","AS","DISTINCT","COUNT","SUM","AVG","MIN","MAX"],
+    ".html": ["div","span","p","a","img","ul","ol","li","table","tr","td","th","form","input","button","select","option","textarea","script","style","link","meta","title","head","body","header","footer","nav","section","article","aside","class","id","href","src","style"],
+    ".css": ["color","background","background-color","margin","padding","border","display","position","top","right","bottom","left","width","height","font","font-size","font-weight","font-family","text-align","flex","grid","align-items","justify-content","overflow","opacity","z-index","transition","transform","cursor","float","clear"],
+    ".md": ["#","##","###","- ","* ","1. ","`","[","]","(",")","```"],
+  };
+
+  function langOf(path) {
+    if (!path) return ".txt";
+    var i = path.lastIndexOf(".");
+    if (i < 0) return ".txt";
+    var ext = path.slice(i).toLowerCase();
+    return KEYWORDS[ext] ? ext : ".txt";
+  }
+
+  function wordBefore(ta) {
+    var v = ta.value, pos = ta.selectionStart;
+    var m = v.slice(0, pos).match(/[A-Za-z_$][A-Za-z0-9_$]*$/);
+    return m ? { word: m[0], start: pos - m[0].length } : null;
+  }
+
+  function collectIdentifiers(ta) {
+    var ids = {};
+    var m, re = /[A-Za-z_$][A-Za-z0-9_$]*/g;
+    while ((m = re.exec(ta.value))) {
+      if (m[0].length >= 3) ids[m[0]] = true;
+    }
+    return Object.keys(ids);
+  }
+
+  function scheduleComplete(ta, force) {
+    if (completeTimer) { clearTimeout(completeTimer); completeTimer = null; }
+    completeTimer = setTimeout(function () { showComplete(ta, force); }, force ? 0 : 220);
+  }
+
+  function showComplete(ta, force) {
+    if (document.activeElement !== ta) return;
+    var wb = wordBefore(ta);
+    var prefix = wb ? wb.word : "";
+    // 触发条件: 有词或强制(Ctrl+Space)
+    if (!force && prefix.length < 2) { hideComplete(); return; }
+    // 候选: 关键字 + 文件标识符
+    var ext = ta.__lang || langOf(relPath);
+    var set = {};
+    (KEYWORDS[ext] || []).forEach(function (k) { set[k] = true; });
+    collectIdentifiers(ta).forEach(function (id) { set[id] = true; });
+    var items = Object.keys(set).filter(function (it) { return it !== prefix && it.indexOf(prefix) === 0; }).sort();
+    if (!items.length) { hideComplete(); return; }
+    completeItems = items.slice(0, 40);
+    completeIdx = 0;
+    // 定位弹层: 在 textarea 光标处(粗略: 靠近光标字符数估算行/列不可靠, 用 textarea 顶部右下角固定浮层)
+    var rect = ta.getBoundingClientRect();
+    if (!completeBox) {
+      completeBox = document.createElement("div");
+      completeBox.style.cssText = "position:fixed;z-index:2147483003;min-width:200px;max-width:340px;max-height:260px;overflow-y:auto;background:#1c1e24;border:1px solid #3a4150;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.5);font:12px Consolas,monospace;color:#dbe2ea;padding:3px";
+      completeBox.__ta = ta;
+      document.body.appendChild(completeBox);
+    }
+    completeBox.__ta = ta;
+    renderComplete();
+    // 定位在光标上方
+    var lh = 20, linesBefore = (ta.value.slice(0, ta.selectionStart).split("\n").length - 1);
+    var top = rect.top + lh * linesBefore - completeBox.offsetHeight - 6;
+    if (top < rect.top + 30) top = rect.top + 30;
+    completeBox.style.left = (rect.left + Math.min(12, rect.width / 3)) + "px";
+    completeBox.style.top = top + "px";
+    completeBox.style.display = "block";
+  }
+
+  function renderComplete() {
+    if (!completeBox) return;
+    completeBox.innerHTML = "";
+    completeItems.forEach(function (it, i) {
+      var d = document.createElement("div");
+      d.style.cssText = "padding:3px 8px;cursor:pointer;border-radius:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" + (i === completeIdx ? ";background:#0153e5;color:#fff" : "");
+      d.textContent = it;
+      d.onmousedown = function (ev) { ev.preventDefault(); completeIdx = i; applyComplete(); };
+      d.onmouseenter = function () { completeIdx = i; renderComplete(); };
+      completeBox.appendChild(d);
+    });
+  }
+
+  function moveComplete(d) {
+    completeIdx = (completeIdx + d + completeItems.length) % completeItems.length;
+    renderComplete();
+  }
+
+  function applyComplete() {
+    var ta = completeBox && completeBox.__ta;
+    if (!ta) { hideComplete(); return; }
+    var wb = wordBefore(ta);
+    var item = completeItems[completeIdx];
+    if (!item) { hideComplete(); return; }
+    var s = wb ? wb.start : ta.selectionStart;
+    ta.value = ta.value.slice(0, s) + item + ta.value.slice(ta.selectionStart);
+    ta.selectionStart = ta.selectionEnd = s + item.length;
+    hideComplete();
+    ta.focus();
+  }
+
+  function hideComplete() {
+    if (completeTimer) { clearTimeout(completeTimer); completeTimer = null; }
+    if (completeBox) { completeBox.remove(); completeBox = null; }
   }
 
   if (document.readyState === "loading") {
