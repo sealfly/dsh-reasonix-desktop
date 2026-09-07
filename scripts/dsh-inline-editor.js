@@ -156,14 +156,15 @@
         ta.__lang = langOf(rel);
         ta.addEventListener("input", function () { scheduleComplete(ta, false); });
         ta.addEventListener("keydown", function (e) {
-          // 补全弹层开着: Enter/Tab/上下接受或导航
-          if (completeBox && completeBox.__ta === ta && (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Enter")) {
+          // 补全弹层开着: Enter/Tab 接受选中项, ↑/↓ 导航（IDE 习惯：弹层开时 Tab 不再缩进）
+          if (completeBox && completeBox.__ta === ta && (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Enter" || e.key === "Tab")) {
             e.preventDefault();
             if (e.key === "ArrowDown") { moveComplete(1); return; }
             if (e.key === "ArrowUp") { moveComplete(-1); return; }
             applyComplete();
             return;
           }
+          // Tab 缩进（仅在补全弹层没开时生效——补全开着时上面的分支已接管 Tab）
           if (e.key === "Tab") {
             e.preventDefault();
             var s = ta.selectionStart, en = ta.selectionEnd;

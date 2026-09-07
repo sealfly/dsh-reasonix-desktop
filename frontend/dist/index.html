@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
@@ -1541,7 +1541,6 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
 
 
 <script>
-/* __DSH_INLINE_EDITOR v3 (就地编辑 + 自动补全) */
 // dsh-inline-editor.js — 就地代码编辑：在原生文件预览处直接编辑 + 保存。
 // 用户点开文件看到预览的地方就能改（不另开面板）。
 // 机制：探测原生预览容器(.workspace-preview__body)，注入「✏️ 编辑」按钮；
@@ -1558,11 +1557,18 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
   window.__DSH_INLINE_EDITOR__ = true;
   var NS = "dsh-ie";
 
+  // A() 取 Wails Go 桥对象 window.go.main.App（前端注入上下文里唯一与 Go 通信的入口）。
+  // 取不到时返回 null，调用方都做空安全（App 还没就绪时静默跳过，后续 scan 轮询会补上）。
   function A() {
     try { return window.go && window.go.main && window.go.main.App ? window.go.main.App : null; }
     catch (e) { return null; }
   }
 
+  // 全部样式内联进一个 <style>（用 NS 前缀防与前端类名冲突）：
+  //  - dsh-ie-btn     预览窗口操作栏里的「✏️ 编辑 / 退出编辑」按钮
+  //  - dsh-ie-ovl     编辑覆盖层（absolute 盖住预览容器，不动 React 子树）
+  //  - dsh-ie-bar     覆盖层顶栏（文件名 + 快捷键提示 + 保存按钮）
+  //  - dsh-ie-ta      覆盖层里的编辑区（textarea，等宽字体，2 空格缩进）
   var css = [
     "." + NS + "-btn{display:inline-flex;align-items:center;gap:4px;margin-left:6px;padding:3px 9px;border-radius:6px;border:1px solid rgba(128,128,128,.35);background:rgba(28,29,33,.85);color:#e8eaed;font:600 11px Inter,system-ui,sans-serif;cursor:pointer;white-space:nowrap;line-height:1.6}",
     "." + NS + "-btn:hover{background:#3b3f46}",
@@ -1583,10 +1589,11 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
     document.head.appendChild(s);
   }
 
-  var overlay = null;   // 当前编辑覆盖层(自己创建的，可安全移除)
-  var relPath = "";
-  var tabId = "";
+  var overlay = null;   // 当前编辑覆盖层元素（只含自己创建的节点，退出时可整体移除）
+  var relPath = "";     // 正在编辑的文件相对路径（工作区相对；保存时传给 WriteFileForTab）
+  var tabId = "";       // 正在编辑的文件所属会话 tabId（进入编辑时从 Tabs 解析）
 
+  // toast 屏幕底部轻提示（一次性，2.2s 淡出自毁）。
   function toast(m) {
     var el = document.createElement("div");
     el.style.cssText = "position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:2147483005;background:#1c1d21;color:#f4f4f3;border:1px solid #3d4450;border-radius:8px;padding:8px 16px;font:13px Inter,sans-serif;box-shadow:0 4px 16px rgba(0,0,0,.5);opacity:0;transition:opacity .2s;pointer-events:none";
@@ -1596,29 +1603,39 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
     setTimeout(function () { el.style.opacity = "0"; setTimeout(function () { el.remove(); }, 220); }, 2200);
   }
 
+  // resolveTab 异步取"当前活动会话"的 tabId（写文件需要 tabId → 工作区根）。
+  // 优先 active 会话，其次列表第一个；拿不到就回调空串（保存会走绝对路径分支）。
   function resolveTab(cb) {
     var app = A();
     if (!app || !app.Tabs) return cb("");
     app.Tabs().then(function (tabs) {
+      // Tabs 返回数组；兼容 {items:[...]} 包裹
       var arr = Array.isArray(tabs) ? tabs : (tabs && tabs.items) ? tabs.items : [];
       for (var i = 0; i < arr.length; i++) { if (arr[i] && arr[i].active) { cb(arr[i].tabId || ""); return; } }
       if (arr[0]) cb(arr[0].tabId || ""); else cb("");
     }).catch(function () { cb(""); });
   }
 
+  // currentRel 从原生文件树的"活动行"取当前文件的相对路径。
+  // 原生行 DOM: .workspace-tree__row--active 上带 data-workspace-path（与我们 Go 桥的 rel 同义）。
   function currentRel() {
     var active = document.querySelector(".workspace-tree__row--active[data-workspace-path]");
     return active ? (active.getAttribute("data-workspace-path") || "") : "";
   }
 
+  // previewBody 原生预览内容容器（React 的 CodeViewer/Markdown 渲染都挂在这里）。
+  // 编辑覆盖层就叠在这个容器上（它需要是定位上下文，见 enterEdit）。
   function previewBody() {
     return document.querySelector(".workspace-preview__body") || null;
   }
 
+  // windowActions 原生预览窗口的右上操作栏（✏️ 编辑按钮就插进这里）。
   function windowActions() {
     return document.querySelector(".workspace-preview__window-actions") || null;
   }
 
+  // ensureEditBtn 保证操作栏里存在编辑按钮（没有就补一个，已存在则跳过——防重复注入）。
+  // 按钮文案按当前是否在编辑态切换（"✏️ 编辑"/"退出编辑"）。
   function ensureEditBtn() {
     var actions = windowActions();
     if (!actions || actions.querySelector("." + NS + "-btn")) return;
@@ -1631,6 +1648,11 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
     actions.appendChild(b);
   }
 
+  // enterEdit 进入就地编辑：
+  // 1) 读活动文件的 rel（没有 → 提示先选文件）；
+  // 2) resolveTab 拿到 tabId，调 ReadFileForTab 读当前内容（err/binary → 提示后放弃）；
+  // 3) 在预览容器上叠一个自建的 overlay（textarea），React 渲染的预览节点原样保留在下面；
+  // 4) 挂自动补全（input 事件 + 键盘导航），Ctrl+S 保存、Esc 退出。
   function enterEdit() {
     if (overlay) return;
     var rel = currentRel();
@@ -1677,14 +1699,15 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
         ta.__lang = langOf(rel);
         ta.addEventListener("input", function () { scheduleComplete(ta, false); });
         ta.addEventListener("keydown", function (e) {
-          // 补全弹层开着: Enter/Tab/上下接受或导航
-          if (completeBox && completeBox.__ta === ta && (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Enter")) {
+          // 补全弹层开着: Enter/Tab 接受选中项, ↑/↓ 导航（IDE 习惯：弹层开时 Tab 不再缩进）
+          if (completeBox && completeBox.__ta === ta && (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Enter" || e.key === "Tab")) {
             e.preventDefault();
             if (e.key === "ArrowDown") { moveComplete(1); return; }
             if (e.key === "ArrowUp") { moveComplete(-1); return; }
             applyComplete();
             return;
           }
+          // Tab 缩进（仅在补全弹层没开时生效——补全开着时上面的分支已接管 Tab）
           if (e.key === "Tab") {
             e.preventDefault();
             var s = ta.selectionStart, en = ta.selectionEnd;
@@ -1706,10 +1729,14 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
     });
   }
 
+  // currentTA 取当前 overlay 里的 textarea（编辑态专用；非编辑态返回 null）。
   function currentTA() {
     return overlay ? overlay.querySelector("." + NS + "-ta") : null;
   }
 
+  // doSave 把 textarea 当前内容经 WriteFileForTab 写回文件：
+  // 保存中禁用按钮防重复提交；成功 → 提示 + 退出编辑 + 点一下活动行触发原生重读预览；
+  // 失败 → 恢复按钮并提示（不改动已编辑内容，用户可继续改）。
   function doSave() {
     var ta = currentTA();
     if (!ta || !relPath || !overlay) return;
@@ -1721,7 +1748,7 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
       if (r && r.ok) {
         toast("✓ 已保存 " + relPath);
         exitEdit();
-        // 触发原生重读显示新内容
+        // 触发原生重读显示新内容（模拟点击活动行，让预览区重新拉文件）
         var active = document.querySelector(".workspace-tree__row--active");
         if (active) { try { active.click(); } catch (e) {} }
       } else {
@@ -1744,6 +1771,10 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
   }
 
   var lastRel = "";
+  // scan 周期性自检（MutationObserver 防抖 200ms + 1.5s 首轮 + 3s 兜底轮询）：
+  //  - ensureEditBtn：操作栏出现后补编辑按钮
+  //  - 文件切换（活动行 rel 变化）且正在编辑 → 退出编辑
+  //  - overlay 被外部移除（React 重建预览容器）而状态残留 → 复位状态与按钮文案
   function scan() {
     ensureEditBtn();
     var rel = currentRel();
@@ -1756,6 +1787,8 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
     if (overlay && !overlay.isConnected) { overlay = null; relPath = ""; var bb = document.querySelector("." + NS + "-btn"); if (bb) bb.textContent = "✏️ 编辑"; }
   }
 
+  // boot 挂全局 MutationObserver 监听 DOM 变化（React 懒加载的面板随时可能出现），
+  // 变化后防抖触发 scan；另设 3s 周期兜底（Observer 漏掉的情况）。
   function boot() {
     var timer = null;
     var obs = new MutationObserver(function () {
@@ -1796,6 +1829,7 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
     ".md": ["#","##","###","- ","* ","1. ","`","[","]","(",")","```"],
   };
 
+  // langOf 按文件扩展名取语言（查不到的语言统一按 .txt 处理——无关键字表，只补文件内标识符）。
   function langOf(path) {
     if (!path) return ".txt";
     var i = path.lastIndexOf(".");
@@ -1804,12 +1838,15 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
     return KEYWORDS[ext] ? ext : ".txt";
   }
 
+  // wordBefore 取光标前正在输入的那个词（标识符前缀），用于补全匹配；无则返回 null。
   function wordBefore(ta) {
     var v = ta.value, pos = ta.selectionStart;
     var m = v.slice(0, pos).match(/[A-Za-z_$][A-Za-z0-9_$]*$/);
     return m ? { word: m[0], start: pos - m[0].length } : null;
   }
 
+  // collectIdentifiers 扫描整个 textarea 收集"文件内标识符"（≥3 字符的去重集合），
+  // 与语言关键字合并成补全候选——同文件里用过的变量/函数名都能补。
   function collectIdentifiers(ta) {
     var ids = {};
     var m, re = /[A-Za-z_$][A-Za-z0-9_$]*/g;
@@ -1819,11 +1856,17 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
     return Object.keys(ids);
   }
 
+  // scheduleComplete 防抖调度补全弹层：普通输入 220ms 后弹（避免打字抖动），
+  // Ctrl+Space 强制立即弹。
   function scheduleComplete(ta, force) {
     if (completeTimer) { clearTimeout(completeTimer); completeTimer = null; }
     completeTimer = setTimeout(function () { showComplete(ta, force); }, force ? 0 : 220);
   }
 
+  // showComplete 计算并显示补全弹层：
+  //  - 前提：光标在编辑区 + 有前缀（强制模式除外）
+  //  - 候选 = 语言关键字 ∪ 文件内标识符，按前缀过滤排序，最多 40 条
+  //  - 弹层定位：按光标前换行数估算行高放到 textarea 上方（固定浮层，跟随粗略即可）
   function showComplete(ta, force) {
     if (document.activeElement !== ta) return;
     var wb = wordBefore(ta);
@@ -1858,6 +1901,7 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
     completeBox.style.display = "block";
   }
 
+  // renderComplete 重绘弹层列表：当前项高亮；鼠标进入/按下即接受（mousedown 防止 textarea 失焦先于点击）。
   function renderComplete() {
     if (!completeBox) return;
     completeBox.innerHTML = "";
@@ -1871,11 +1915,13 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
     });
   }
 
+  // moveComplete 上下移动选中项（循环），重绘高亮。
   function moveComplete(d) {
     completeIdx = (completeIdx + d + completeItems.length) % completeItems.length;
     renderComplete();
   }
 
+  // applyComplete 把当前选中项插入 textarea（替换光标前的前缀词），随后收起弹层并聚焦。
   function applyComplete() {
     var ta = completeBox && completeBox.__ta;
     if (!ta) { hideComplete(); return; }
@@ -1889,11 +1935,13 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
     ta.focus();
   }
 
+  // hideComplete 收起补全弹层并清定时器（幂等：无弹层/无定时器时静默）。
   function hideComplete() {
     if (completeTimer) { clearTimeout(completeTimer); completeTimer = null; }
     if (completeBox) { completeBox.remove(); completeBox = null; }
   }
 
+  // 启动：DOM 已就绪直接 boot；否则等 DOMContentLoaded（脚本可能在 head 阶段就被注入）。
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", boot);
   } else {
