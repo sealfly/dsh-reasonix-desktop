@@ -652,6 +652,9 @@ func dshStdDeclarations() ProtocolDeclaration {
 			{ApiReference: ApiReference{APIVersion: "tool.dsh/v1", Kind: "Tool"}},
 		},
 		Supports: []ProtocolSupport{
+			{ApiReference: ApiReference{APIVersion: "core.dsh/v1alpha1", Kind: "Negotiation"}},
+			{ApiReference: ApiReference{APIVersion: "connection.dsh/v1alpha1", Kind: "Connection"}},
+			{ApiReference: ApiReference{APIVersion: "session.dsh/v1alpha1", Kind: "Session"}},
 			{ApiReference: ApiReference{APIVersion: "command.dsh/v1", Kind: "CommandRuntime"}},
 			{ApiReference: ApiReference{APIVersion: "tool.dsh/v1", Kind: "Tool"}},
 			{ApiReference: ApiReference{APIVersion: "model.dsh/v1", Kind: "ModelCatalog"}},

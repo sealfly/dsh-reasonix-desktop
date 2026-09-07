@@ -473,12 +473,17 @@ func (a *App) InstallPlugin(source string, options map[string]any) (string, erro
 	}
 	mgr.saveInstalled(list)
 	// 返回安装计划（前端 parsePluginInstallPlan 读取）
-	// dsh-std 兼容性预检：模拟插件声明（plugin 支持其市场类别协议），与本端协商
+	// dsh-std 兼容性：先按分类预检（模拟协商），再尝试读真实 dsh-plugin.json 做五态准入
 	negotiation := negotiatePluginCompatibility(inst.Name, mp.Category)
+	admission := a.PluginDshStdAdmit(inst.Name)
+	if admission == nil {
+		admission = map[string]any{"ok": false}
+	}
 	plan := map[string]any{
 		"ok": true, "status": "done", "kind": "plugin",
 		"name": inst.Name, "source": inst.Source,
 		"dshStd": negotiation,
+		"admission": admission, // 真实 manifest 五态准入（manifestFound=false = cordis 形态）
 		"actions": []any{map[string]any{
 			"kind": "plugin", "action": "install_plugin_package",
 			"name": inst.Name, "source": inst.Source, "status": "done",
