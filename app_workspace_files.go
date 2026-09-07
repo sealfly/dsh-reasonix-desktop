@@ -340,7 +340,9 @@ func (a *App) WriteFileForTab(tabID, rel, content string) map[string]any {
 	}
 	fi, err := os.Stat(path)
 	if err != nil {
-		// 不存在 → 新建（仅当父目录存在且非二进制扩展名场景外，文本新建放行）
+		// 文件不存在 → 按"新建"放行（fi 置 nil，跳过大小/类型限制）；os.WriteFile 会创建。
+		// 若父目录也不存在，os.WriteFile 会失败并在下方返回错误——属预期（编辑器只保存已有文件的改动，
+		// 或同目录新建文本）。
 		fi = nil
 	} else if fi.IsDir() {
 		return map[string]any{"ok": false, "error": "path is a directory"}

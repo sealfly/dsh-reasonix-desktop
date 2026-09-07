@@ -16,9 +16,13 @@ import (
 )
 
 // acpReservedNote 每个 reserved 响应都带（前端可据此显示"预留/未启用"）。
+// 所有 ACP 桥方法当前只返回 reserved 状态：结构先就位、不假装可用，
+// 也不干扰项目主通道（HTTP RPC 连共享 DSH 3080）。
 const acpReservedNote = "ACP reserved: wire dsh ACP server (stdio) later; HTTP RPC unaffected"
 
 // AcpAvailable 探测 DSH 是否具备 ACP 能力（本机 dsh 命令存在）。
+// 返回里 available/dshDetected 表示"机器上找得到 dsh"（未来能 spawn ACP），
+// enabled=false + stage="reserved" 表示功能本身还没启用——前端据此显示"预留"。
 func (a *App) AcpAvailable() map[string]any {
 	dshDetected := dshCmdExists()
 	return map[string]any{
@@ -72,11 +76,16 @@ func (a *App) AcpStop(sessionId string) map[string]any {
 	}
 }
 
-// dshCmdExists 检测 dsh 命令（PATH + npm 全局常见位置）。
+// dshCmdExists 检测 dsh 命令是否存在（PATH 直查 + npm 全局常见落点兜底）。
+// 用于 AcpAvailable 判断"机器上是否具备未来 spawn dsh ACP 组合的条件"。
 func dshCmdExists() bool {
+	// 1) PATH 里直接找 dsh（npm -g 安装后通常已进 PATH）
 	if p, err := exec.LookPath("dsh"); err == nil && p != "" {
 		return true
 	}
+	// 2) npm 全局常见落点（PATH 可能不含）：
+	//    %APPDATA%\npm\dsh.cmd、%ProgramFiles%\nodejs\dsh.cmd、
+	//    %APPDATA%\npm\node_modules\@deepseek-ai\dsh（免 cmd 的安装检测）
 	seen := map[string]bool{}
 	roots := []string{
 		os.Getenv("APPDATA"),
@@ -88,9 +97,10 @@ func dshCmdExists() bool {
 	}
 	for _, r := range roots {
 		if r == "" || seen[r] {
-			continue
+			continue // 空路径/已查过去重
 		}
 		seen[r] = true
+		// 命中其一即认为 dsh 已安装：命令入口(dsh.cmd) 或 包本体(带 bin 的 package.json)
 		for _, c := range []string{filepath.Join(r, "dsh.cmd"), filepath.Join(r, "node_modules", "@deepseek-ai", "dsh", "package.json")} {
 			if _, err := os.Stat(c); err == nil {
 				return true
