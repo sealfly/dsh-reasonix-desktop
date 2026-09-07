@@ -1545,7 +1545,13 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
 // 用户点开文件看到预览的地方就能改（不另开面板）。
 // 机制：探测原生预览容器(.workspace-preview__body)，注入「✏️ 编辑」按钮；
 // 点击后把当前文件(来自 .workspace-tree__row--active 的 data-workspace-path)内容
-// 载入 textarea 就地编辑；Ctrl+S 或「保存」→ WriteFileForTab 写回后恢复预览。
+// 载入编辑器；Ctrl+S 或「保存」→ WriteFileForTab 写回后恢复预览。
+//
+// 编辑器引擎（v4）：
+//   - 优先 Monaco Editor（VS Code 内核，assets/monaco/vs 离线内置）——语法高亮/行号/
+//     括号自动配对/查找替换/多光标/自动补全(Tab 接受)；
+//   - Monaco 加载失败或创建异常 → 自动回退 textarea 轻量版（自动补全弹层仍可用）——
+//     失败留痕兜底，不阻塞编辑。
 //
 // ★ React 安全：绝不删除/清空 React 渲染的节点（removeChild 会崩）。
 // 编辑时在预览容器上叠加一个绝对定位的覆盖层(overlay)，React 的 CodeViewer 原样保留；
@@ -1581,6 +1587,8 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
     "." + NS + "-bar .sp{flex:1}",
     "." + NS + "-bar .ht{color:#6b7280}",
     "." + NS + "-ta{flex:1;width:100%;box-sizing:border-box;resize:none;border:0;outline:none;background:#15161a;color:#dbe2ea;padding:14px 16px;font:13px/1.6 Consolas,monospace;white-space:pre;overflow:auto;tab-size:2;display:block}",
+    // Monaco host：同 textarea 的 flex:1 占位，Monaco 在其中自绘
+    "." + NS + "-mh{flex:1;min-height:0;position:relative;background:#1e1e1e}",
   ].join("\n");
   if (!document.getElementById(NS + "-css")) {
     var s = document.createElement("style");
@@ -1589,9 +1597,10 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
     document.head.appendChild(s);
   }
 
-  var overlay = null;   // 当前编辑覆盖层元素（只含自己创建的节点，退出时可整体移除）
-  var relPath = "";     // 正在编辑的文件相对路径（工作区相对；保存时传给 WriteFileForTab）
-  var tabId = "";       // 正在编辑的文件所属会话 tabId（进入编辑时从 Tabs 解析）
+  var overlay = null;       // 当前编辑覆盖层元素（只含自己创建的节点，退出时可整体移除）
+  var editorInst = null;    // Monaco editor 实例（textarea 模式为 null）
+  var relPath = "";         // 正在编辑的文件相对路径（工作区相对；保存时传给 WriteFileForTab）
+  var tabId = "";           // 正在编辑的文件所属会话 tabId（进入编辑时从 Tabs 解析）
 
   // toast 屏幕底部轻提示（一次性，2.2s 淡出自毁）。
   function toast(m) {
@@ -1651,8 +1660,8 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
   // enterEdit 进入就地编辑：
   // 1) 读活动文件的 rel（没有 → 提示先选文件）；
   // 2) resolveTab 拿到 tabId，调 ReadFileForTab 读当前内容（err/binary → 提示后放弃）；
-  // 3) 在预览容器上叠一个自建的 overlay（textarea），React 渲染的预览节点原样保留在下面；
-  // 4) 挂自动补全（input 事件 + 键盘导航），Ctrl+S 保存、Esc 退出。
+  // 3) 尝试 Monaco（加载 + 创建都成功才用）；任一失败 → textarea 轻量版回退；
+  // 4) Ctrl+S 保存、Esc 退出。
   function enterEdit() {
     if (overlay) return;
     var rel = currentRel();
@@ -1667,84 +1676,227 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
         if (pv && pv.binary) { toast("二进制文件不能文本编辑"); return; }
         var body = previewBody();
         if (!body) { toast("预览区不可用"); return; }
-        // 确保 body 是定位上下文（非 absolute 时临时置 relative；不碰其子节点）
         if (getComputedStyle(body).position === "static") body.style.position = "relative";
-        // 建覆盖层（仅追加，不动 React 子节点）
-        var ovl = document.createElement("div");
-        ovl.className = NS + "-ovl";
-        var bar = document.createElement("div");
-        bar.className = NS + "-bar";
-        var nm = document.createElement("span");
-        nm.className = "nm";
-        nm.textContent = rel;
-        var sp = document.createElement("span");
-        sp.className = "sp";
-        var ht = document.createElement("span");
-        ht.className = "ht";
-        ht.textContent = pv && pv.truncated ? "内容超限已截断，保存会覆盖" : "Tab 缩进 · Ctrl+S 保存 · Esc 退出";
-        var save = document.createElement("button");
-        save.type = "button";
-        save.className = NS + "-btn save";
-        save.textContent = "保存";
-        save.onclick = doSave;
-        bar.appendChild(nm);
-        bar.appendChild(sp);
-        bar.appendChild(ht);
-        bar.appendChild(save);
-        var ta = document.createElement("textarea");
-        ta.className = NS + "-ta";
-        ta.spellcheck = false;
-        ta.value = (pv && pv.body) || "";
-        // ---- 自动补全支持 ----
-        ta.__lang = langOf(rel);
-        ta.addEventListener("input", function () { scheduleComplete(ta, false); });
-        ta.addEventListener("keydown", function (e) {
-          // 补全弹层开着: Enter/Tab 接受选中项, ↑/↓ 导航（IDE 习惯：弹层开时 Tab 不再缩进）
-          if (completeBox && completeBox.__ta === ta && (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Enter" || e.key === "Tab")) {
-            e.preventDefault();
-            if (e.key === "ArrowDown") { moveComplete(1); return; }
-            if (e.key === "ArrowUp") { moveComplete(-1); return; }
-            applyComplete();
-            return;
-          }
-          // Tab 缩进（仅在补全弹层没开时生效——补全开着时上面的分支已接管 Tab）
-          if (e.key === "Tab") {
-            e.preventDefault();
-            var s = ta.selectionStart, en = ta.selectionEnd;
-            ta.value = ta.value.slice(0, s) + "  " + ta.value.slice(en);
-            ta.selectionStart = ta.selectionEnd = s + 2;
-          }
-          if (e.key === "s" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); doSave(); }
-          if (e.key === "Escape") { e.preventDefault(); hideComplete(); if (!completeBox) exitEdit(); }
-          if ((e.key === " " || e.key === ".") && (e.ctrlKey || e.metaKey)) { e.preventDefault(); scheduleComplete(ta, true); }
-        });
-        ovl.appendChild(bar);
-        ovl.appendChild(ta);
-        body.appendChild(ovl);   // append 安全：React 只管理自己的子节点
-        overlay = ovl;
-        var b = document.querySelector("." + NS + "-btn");
-        if (b) b.textContent = "退出编辑";
-        ta.focus();
+        // Monaco 优先；加载/创建失败回退 textarea（ensureMonaco 内部失败即回退）
+        openMonacoEditor(pv, body);
       }).catch(function (err) { toast("读取失败: " + String(err && err.message || err)); });
     });
   }
 
-  // currentTA 取当前 overlay 里的 textarea（编辑态专用；非编辑态返回 null）。
+  // ===== Monaco 引擎（VS Code 内核，离线内置 assets/monaco/vs） =====
+  var monacoPending = null; // 加载队列（并发请求复用一次加载）
+
+  // ensureMonaco 用 AMD loader 加载 monaco（一次性；失败/缺失 → 回退调用方）。
+  function ensureMonaco(cb) {
+    if (window.monaco) { cb(true); return; }
+    if (monacoPending) { monacoPending.push(cb); return; }
+    monacoPending = [cb];
+    var settle = function (ok) {
+      var q = monacoPending; monacoPending = null;
+      (q || []).forEach(function (f) { try { f(ok); } catch (e) {} });
+    };
+    var vsPath = "./assets/monaco/vs";
+    var ls = document.createElement("script");
+    ls.src = vsPath + "/loader.js";
+    ls.onload = function () {
+      try {
+        window.require.config({ paths: { vs: vsPath } });
+        window.require(["vs/editor/editor.main"], function () {
+          settle(true);
+        }, function (err) { console.warn("[dsh-ie] monaco editor.main load fail", err); settle(false); });
+      } catch (e) { console.warn("[dsh-ie] monaco init fail", e); settle(false); }
+    };
+    ls.onerror = function () { console.warn("[dsh-ie] monaco loader missing (offline copy absent)"); settle(false); };
+    document.head.appendChild(ls);
+  }
+
+  // monacoLangId 扩展名 → Monaco languageId（unknown → plaintext，由调用方兜底高亮缺失）。
+  function monacoLangId(rel) {
+    if (!rel) return "plaintext";
+    var i = rel.lastIndexOf(".");
+    if (i < 0) return "plaintext";
+    var ext = rel.slice(i).toLowerCase();
+    var map = {
+      ".go": "go", ".js": "javascript", ".mjs": "javascript", ".cjs": "javascript",
+      ".jsx": "javascript", ".ts": "typescript", ".tsx": "typescript", ".py": "python",
+      ".rs": "rust", ".c": "c", ".h": "c", ".cpp": "cpp", ".cc": "cpp", ".hpp": "cpp",
+      ".java": "java", ".json": "json", ".yaml": "yaml", ".yml": "yaml", ".sh": "shell",
+      ".bash": "shell", ".ps1": "powershell", ".sql": "sql", ".xml": "xml",
+      ".html": "html", ".htm": "html", ".css": "css", ".scss": "scss", ".less": "less",
+      ".md": "markdown", ".markdown": "markdown", ".txt": "plaintext", ".log": "plaintext",
+      ".toml": "ini", ".ini": "ini", ".conf": "ini", ".dockerfile": "dockerfile",
+      ".vue": "html", ".rb": "ruby", ".php": "php", ".kt": "kotlin", ".swift": "swift",
+      ".cs": "csharp", ".dart": "dart", ".lua": "lua", ".r": "r", ".pl": "perl"
+    };
+    return map[ext] || "plaintext";
+  }
+
+  // registerKeywordsProvider 给某 languageId 注册补全源（语言关键字 + 文件内标识符）。
+  // 与 textarea 版同一份 KEYWORDS 表；按 ext 查关键字。
+  var providerDone = {}; // 防重复注册
+  function registerKeywordsProvider(langId, ext) {
+    if (providerDone[langId]) return;
+    providerDone[langId] = true;
+    try {
+      monaco.languages.registerCompletionItemProvider(langId, {
+        triggerCharacters: [".", "_", "$"],
+        provideCompletionItems: function (model, position) {
+          var word = model.getWordUntilPosition(position);
+          var range = {
+            startLineNumber: position.lineNumber, endLineNumber: position.lineNumber,
+            startColumn: word.startColumn, endColumn: word.endColumn
+          };
+          var kws = (KEYWORDS[ext] || []).map(function (k) {
+            return { label: k, kind: monaco.languages.CompletionItemKind.Keyword, insertText: k, range: range };
+          });
+          var ids = {}, m, re = /[A-Za-z_$][A-Za-z0-9_$]*/g, txt = model.getValue();
+          while ((m = re.exec(txt))) { if (m[0].length >= 3) ids[m[0]] = true; }
+          var identItems = Object.keys(ids).slice(0, 200).map(function (id) {
+            return { label: id, kind: monaco.languages.CompletionItemKind.Variable, insertText: id, range: range };
+          });
+          return { suggestions: kws.concat(identItems) };
+        }
+      });
+    } catch (e) { console.warn("[dsh-ie] provider register fail", e); }
+  }
+
+  // buildOverlayShell 建覆盖层骨架（bar + 保存按钮 + 空 host），两引擎共用。
+  // 返回 {ovl, save, host}；调用方自行填充 host 内容。
+  function buildOverlayShell(pv, hintText) {
+    var body = previewBody();
+    var ovl = document.createElement("div");
+    ovl.className = NS + "-ovl";
+    var bar = document.createElement("div");
+    bar.className = NS + "-bar";
+    var nm = document.createElement("span");
+    nm.className = "nm";
+    nm.textContent = relPath;
+    var sp = document.createElement("span");
+    sp.className = "sp";
+    var ht = document.createElement("span");
+    ht.className = "ht";
+    ht.textContent = pv && pv.truncated ? "内容超限已截断，保存会覆盖" : hintText;
+    var save = document.createElement("button");
+    save.type = "button";
+    save.className = NS + "-btn save";
+    save.textContent = "保存";
+    save.onclick = doSave;
+    bar.appendChild(nm);
+    bar.appendChild(sp);
+    bar.appendChild(ht);
+    bar.appendChild(save);
+    var host = document.createElement("div");
+    host.className = NS + "-mh";
+    ovl.appendChild(bar);
+    ovl.appendChild(host);
+    body.appendChild(ovl);
+    overlay = ovl;
+    var b = document.querySelector("." + NS + "-btn");
+    if (b) b.textContent = "退出编辑";
+    return { ovl: ovl, save: save, host: host };
+  }
+
+  // openMonacoEditor Monaco 版编辑：加载成功且创建成功才用；否则回退 textarea。
+  function openMonacoEditor(pv, body) {
+    ensureMonaco(function (ok) {
+      if (!ok) { openTaEditor(pv, body); return; }
+      try {
+        var sh = buildOverlayShell(pv, "Ctrl+S 保存 · Esc 退出 · Tab 补全");
+        var langId = monacoLangId(relPath);
+        var ext = langId === "plaintext" ? "" : relPath.slice(relPath.lastIndexOf("."));
+        editorInst = monaco.editor.create(sh.host, {
+          value: (pv && pv.body) || "",
+          language: langId,
+          theme: "vs-dark",
+          automaticLayout: true,
+          fontSize: 13,
+          fontFamily: "Consolas, 'Courier New', monospace",
+          tabSize: 2,
+          insertSpaces: true,
+          minimap: { enabled: false },
+          scrollBeyondLastLine: false,
+          wordWrap: "off",
+          renderWhitespace: "selection",
+          autoClosingBrackets: "always",
+          autoClosingQuotes: "always",
+          matchBrackets: "always",
+          quickSuggestions: { other: true, comments: false, strings: false },
+          tabCompletion: "on",
+          suggestOnTriggerCharacters: true
+        });
+        if (ext && KEYWORDS[ext]) registerKeywordsProvider(langId, ext);
+        editorInst.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, doSave);
+        editorInst.addCommand(monaco.KeyCode.Escape, exitEdit);
+        editorInst.focus();
+      } catch (e) {
+        console.warn("[dsh-ie] monaco create fail, fallback textarea:", e);
+        if (editorInst) { try { editorInst.dispose(); } catch (e2) {} editorInst = null; }
+        if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
+        overlay = null;
+        var bb = document.querySelector("." + NS + "-btn");
+        if (bb) bb.textContent = "✏️ 编辑";
+        openTaEditor(pv, body);
+      }
+    });
+  }
+
+  // openTaEditor textarea 轻量版（Monaco 不可用时的回退；自动补全弹层逻辑完整保留）。
+  function openTaEditor(pv, body) {
+    var sh = buildOverlayShell(pv, "Tab 缩进 · Ctrl+S 保存 · Esc 退出");
+    var ta = document.createElement("textarea");
+    ta.className = NS + "-ta";
+    ta.spellcheck = false;
+    ta.value = (pv && pv.body) || "";
+    ta.__lang = langOf(relPath);
+    ta.addEventListener("input", function () { scheduleComplete(ta, false); });
+    ta.addEventListener("keydown", function (e) {
+      // 补全弹层开着: Enter/Tab 接受选中项, ↑/↓ 导航（IDE 习惯：弹层开时 Tab 不再缩进）
+      if (completeBox && completeBox.__ta === ta && (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Enter" || e.key === "Tab")) {
+        e.preventDefault();
+        if (e.key === "ArrowDown") { moveComplete(1); return; }
+        if (e.key === "ArrowUp") { moveComplete(-1); return; }
+        applyComplete();
+        return;
+      }
+      // Tab 缩进（仅在补全弹层没开时生效——补全开着时上面的分支已接管 Tab）
+      if (e.key === "Tab") {
+        e.preventDefault();
+        var s = ta.selectionStart, en = ta.selectionEnd;
+        ta.value = ta.value.slice(0, s) + "  " + ta.value.slice(en);
+        ta.selectionStart = ta.selectionEnd = s + 2;
+      }
+      if (e.key === "s" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); doSave(); }
+      if (e.key === "Escape") { e.preventDefault(); hideComplete(); if (!completeBox) exitEdit(); }
+      if ((e.key === " " || e.key === ".") && (e.ctrlKey || e.metaKey)) { e.preventDefault(); scheduleComplete(ta, true); }
+    });
+    sh.host.appendChild(ta);
+    ta.focus();
+  }
+
+  // currentTA 取当前 overlay 里的 textarea（仅 textarea 模式；Monaco 模式返回 null）。
   function currentTA() {
     return overlay ? overlay.querySelector("." + NS + "-ta") : null;
   }
 
-  // doSave 把 textarea 当前内容经 WriteFileForTab 写回文件：
+  // getEditorText 取当前编辑器内容（Monaco → getValue；textarea → value）。
+  function getEditorText() {
+    if (editorInst) { try { return editorInst.getValue(); } catch (e) { return ""; } }
+    var ta = currentTA();
+    return ta ? ta.value : "";
+  }
+
+  // doSave 把当前编辑器内容经 WriteFileForTab 写回文件：
   // 保存中禁用按钮防重复提交；成功 → 提示 + 退出编辑 + 点一下活动行触发原生重读预览；
   // 失败 → 恢复按钮并提示（不改动已编辑内容，用户可继续改）。
   function doSave() {
-    var ta = currentTA();
-    if (!ta || !relPath || !overlay) return;
+    if (!overlay) return;
+    var text = getEditorText();
+    if (!relPath) return;
     var app = A();
     if (!app || !app.WriteFileForTab) { toast("WriteFileForTab 不可用"); return; }
     var sb = overlay.querySelector("." + NS + "-btn.save");
     if (sb) { sb.disabled = true; sb.textContent = "保存中…"; }
-    app.WriteFileForTab(tabId, relPath, ta.value).then(function (r) {
+    app.WriteFileForTab(tabId, relPath, text).then(function (r) {
       if (r && r.ok) {
         toast("✓ 已保存 " + relPath);
         exitEdit();
@@ -1761,8 +1913,13 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
     });
   }
 
-  // 退出编辑：仅移除自己的 overlay（React 节点零触碰）
+  // 退出编辑：释放 Monaco 实例 + 仅移除自己的 overlay（React 节点零触碰）
   function exitEdit() {
+    if (editorInst) {
+      try { editorInst.dispose(); } catch (e) {}
+      editorInst = null;
+    }
+    hideComplete();
     if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
     overlay = null;
     relPath = "";
@@ -1783,8 +1940,14 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
       if (overlay && rel && rel !== relPath) exitEdit();
       lastRel = rel;
     }
-    // overlay 节点被外部移除(React 重建 body)而状态残留 → 复位
-    if (overlay && !overlay.isConnected) { overlay = null; relPath = ""; var bb = document.querySelector("." + NS + "-btn"); if (bb) bb.textContent = "✏️ 编辑"; }
+    // overlay 节点被外部移除(React 重建 body)而状态残留 → 复位状态与按钮文案
+    if (overlay && !overlay.isConnected) {
+      if (editorInst) { try { editorInst.dispose(); } catch (e) {} editorInst = null; }
+      hideComplete();
+      overlay = null; relPath = "";
+      var bb = document.querySelector("." + NS + "-btn");
+      if (bb) bb.textContent = "✏️ 编辑";
+    }
   }
 
   // boot 挂全局 MutationObserver 监听 DOM 变化（React 懒加载的面板随时可能出现），
