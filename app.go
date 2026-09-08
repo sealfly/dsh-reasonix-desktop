@@ -37,6 +37,8 @@ func (a *App) startup(ctx context.Context) {
 	a.startShowEventListener()
 	// 预装记忆插件（首次启动后台自动安装，幂等；不阻塞启动、失败可重试）
 	go a.preinstallMemoryPlugins()
+	// 默认附加插件 seed（离线包优先注入；记忆插件 + dsh-agent-teams，幂等）
+	go a.seedDefaultPlugins()
 	// 记忆插件默认关闭（根 patch disabled，仅首次应用一次）
 	go ensureMemoryDefaultOff()
 	// 预热会话列表缓存（DSH session.list 投影计算慢，预热后左侧任务栏秒开）

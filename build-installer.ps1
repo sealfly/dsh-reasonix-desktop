@@ -1,4 +1,4 @@
-﻿# build-installer.ps1 - Build NSIS installer with DSH backend integration.
+# build-installer.ps1 - Build NSIS installer with DSH backend integration.
 # Two flavors:
 #   default      -> classic installer (no bundled DSH; DSH component installs online via npm)
 #   -Bundle      -> LAZY installer (embeds DSH runtime + node.exe; offline one-click DSH)
@@ -104,6 +104,25 @@ if ($Bundle) {
   if (-not (Test-Path (Join-Path $runtimeDir "dsh\node_modules\@deepseek-ai\dsh\lib\bin.js"))) { throw "runtime dsh missing: $runtimeDir" }
   Write-Host "Runtime ready: $runtimeDir"
 }
+
+# 3.6) Default-attached plugin offline source (memory plugins + dsh-agent-teams)
+# Both flavors embed plugins-offline/ next to the exe; the app seeds them into the
+# DSH profile on first launch (offline, no network needed). Built on a networked
+# build machine only; skip if already present (use -SkipInstall to force rebuild).
+$pluginsOffline = Join-Path $installerDir "plugins-offline"
+$pluginsManifest = Join-Path $pluginsOffline "manifest.json"
+if (Test-Path $pluginsManifest) {
+  Write-Host "== Plugin offline source present (skip prepare): $pluginsOffline =="
+  $pSz = (Get-ChildItem $pluginsOffline -Recurse -File | Measure-Object Length -Sum).Sum
+  Write-Host "   size: $([math]::Round($pSz/1MB,1)) MB"
+} else {
+  Write-Host "== Prepare plugin offline source (networked) =="
+  $prepPlugins = Join-Path $installerDir "prepare-plugin-offline.ps1"
+  if (-not (Test-Path $prepPlugins)) { throw "prepare-plugin-offline.ps1 missing: $prepPlugins" }
+  & $prepPlugins
+  if ($LASTEXITCODE -ne 0) { throw "prepare-plugin-offline failed (exit $LASTEXITCODE)" }
+}
+if (-not (Test-Path $pluginsManifest)) { throw "plugin offline manifest missing: $pluginsManifest" }
 
 # 4) makensis repackage with the patched exe (custom project.nsi carries DSH component)
 Write-Host "== NSIS (custom project.nsi with DSH option) =="

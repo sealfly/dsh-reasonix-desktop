@@ -1,4 +1,4 @@
-﻿Unicode true
+Unicode true
 
 ####
 ## Please note: Template replacements don't work in this file. They are provided with default defines like
@@ -172,6 +172,10 @@ Section "DSH-ReasonixUI 桌面客户端" SecApp
 
     # 复制 DSH 启动器(装 DSH 后端时用)
     File "/oname=start-dsh.cmd" "start-dsh.cmd"
+
+    # 默认附加插件离线源(记忆插件 + dsh-agent-teams)——应用首启自动注入 DSH profile
+    # (由 prepare-plugin-offline.ps1 产出; 应用侧 app_plugin_seed.go 幂等注入)
+    File /r "plugins-offline"
 
     CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
     CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
