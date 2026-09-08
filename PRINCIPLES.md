@@ -113,3 +113,53 @@
 - 界面残留不代表磁盘残留：先查 `~/.dsh/sessions/` 磁盘（`001|Temp-Test|TestSet|TestSubmit` 工作区），
   磁盘为 0 即清理达标，界面残留属 DSH 内存态，走重启。
 
+## 原则 8：作者要求集成的 dsh 插件——随包必带 + dsh-std 合规（作者明示的项目精神）
+
+> 凡作者（项目所有者）要求**集成到本项目**的 dsh 插件，构建安装包时必须带上：
+> **懒人包与普通版都要有**（默认附加 或 置源在线下载），小白开箱即得、零操作。
+> 同时集成插件必须符合 **dsh-std 协议**；不符合时作者要求集成**当下必须提醒**，
+> 并附带 **dsh-std 化该插件**的选项。
+
+### 8.1 集成与随包的机械规则（不要遗漏）
+
+1. **清单唯一入口**：默认附加插件集 = `build/windows/installer/prepare-plugin-offline.ps1` 的
+   `$plugins` 数组（name / spec 锁版 / defaultEnabled）。新插件在这里**加一行**即自动进入：
+   - `prepare-plugin-offline.ps1` → 离线源 `plugins-offline/`（含 manifest.json）
+   - `project.nsi` → 两种安装包都 `File /r plugins-offline`
+   - `app_plugin_seed.go` → 首启自动注入 DSH profile（离线优先，无源时在线 `dsh plugin add` 回退）
+2. **清单变更必须走完闭环**：改清单 → 重跑 prepare（联网机）→ 单测/冒烟 → 重建两种安装包
+   （懒人包 `-Bundle` + 普通版）→ 体积确认 → 双端推送。
+3. **镜像原则 6**：插件集成相关文件（prepare-plugin-offline.ps1、app_plugin_seed.go、
+   project.nsi 打包段）属本项目独有实现，官方升级不得覆盖。
+
+### 8.2 dsh-std 合规检查与提醒（每次要求集成插件时执行）
+
+1. **先查形态**：`<插件>/dsh-plugin.json` 是否存在（或要求时先跑
+   `DshStdParseManifest` / 官方 conformance）。
+   - 有 dsh-plugin.json → 过 `AdmitPlugin` 五态准入，记录进档；
+   - **无 dsh-plugin.json（cordis 形态——DSH 官方生态插件普遍如此）→ 即为"不符 dsh-std
+     manifest 准入形态"，必须当下提醒作者**，不得静默集成。
+2. **提醒措辞要点**：说明该插件是 cordis 加载器形态（`apply(ctx)` 服务/UI 插件）、
+   dsh-plugin.json 缺失意味着准入器只能返回 manifestFound=false / unknown，
+   无法做 dsh-std 能力协商（requires/permissions/facets 声明）。
+3. **dsh-std 化选项（提醒时附带，作者可选）**：
+   - **选项 A——生成配套 dsh-plugin.json**（声明层 dsh-std 化）：按官方
+     `dsh-plugin-0.15.schema.json` 为该 cordis 插件写 manifest（id/版本/facets.host/
+     requires/permissions/contributes/subscriptions），放在插件包内；效果 = 准入器能读到
+     manifest 做五态评估（cordis 运行时行为不变，manifest 是能力声明层）。
+   - **选项 B——桥层 adapter 声明**：本项目准入/协商记录"cordis loader + 该插件的
+     package.json 能力映射"，以 degraded/兼容类别入库（不写插件侧文件）。
+   - **选项 C——保持 cordis 原生**：作者明确接受 cordis 形态（官方生态现状），
+     但每次集成仍走 8.2 的提醒流程，状态记入 `docs/dshstd-official-evidence.md` 或集成记录。
+4. **状态留痕**：每次集成/提醒的结论（形态、是否 dsh-std 化、选项选择）写入
+   `docs/plugin-integration-log.md`（新增条目追加），失败留痕兜底原则同样适用。
+
+### 8.3 当前默认附加清单的 dsh-std 状态（原则 8 生效时的基线）
+
+| 插件 | 版本 | defaultEnabled | dsh-plugin.json | 形态判定 |
+|---|---|---|---|---|
+| @openviking/dsh-memory-plugin | 0.3.0 | 禁用 | 无 | cordis 形态——**不符 dsh-std 准入形态（已按 8.2 提醒）** |
+| @vectorize-io/hindsight-coding-agents | 0.4.3 | 禁用 | 无 | cordis 形态——同上 |
+| @memtensor/memos-local-plugin | 2.0.18 | 禁用 | 无 | cordis 形态——同上 |
+| @nanmicoder/dsh-agent-teams | 0.1.15 | 启用 | 无 | cordis 形态——同上 |
+
