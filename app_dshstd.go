@@ -374,14 +374,16 @@ func Negotiate(declarations []ProtocolDeclaration) NegotiationReport {
 
 // ===== dsh-plugin.json 解析（@dsh-std/manifest 核心，Community v0.15 schema） =====
 
-// dshPluginManifest Community v0.15 dsh-plugin.json 结构。
+// dshPluginManifest Community v0.15 dsh-plugin.json 结构（对齐官方 schema：
+// vendor/dsh-std/packages/manifest/schema/dsh-plugin-0.15.schema.json——顶层无 supports、
+// facets 仅 host 必填、$schema/manifestVersion/id/name/version/facets/requires/
+// permissions/contributes/subscriptions 全部必填；未知顶层字段一律拒绝）。
 type dshPluginManifest struct {
 	Schema          string `json:"$schema"`
 	ManifestVersion string `json:"manifestVersion"`
 	ID              string `json:"id"`
 	Name            string `json:"name"`
 	Version         string `json:"version"`
-	Description     string `json:"description,omitempty"`
 	License         string `json:"license,omitempty"`
 	Source          string `json:"source,omitempty"`
 	Facets          struct {
@@ -399,29 +401,66 @@ type dshPluginManifest struct {
 		} `json:"contracts"`
 		Services []json.RawMessage `json:"services"` // v0.15 maxItems 0 → 出现即拒绝
 	} `json:"requires"`
-	Supports struct {
-		Contracts []struct {
-			APIVersion string `json:"apiVersion"`
-			Kind       string `json:"kind"`
-		} `json:"contracts"`
-	} `json:"supports"`
+	// 顶层必填（可为空数组）：permissions / contributes / subscriptions
 	Permissions []struct {
 		Name   string `json:"name"`
 		Scope  string `json:"scope"`
 		Reason string `json:"reason,omitempty"`
 	} `json:"permissions"`
-	Subscriptions []json.RawMessage `json:"subscriptions"`
-	Contributes   struct {
-		Commands []json.RawMessage `json:"commands"`
-		Panels   []json.RawMessage `json:"panels"` // v0.15 maxItems 0 → 出现即拒绝
+	Contributes struct {
+		Commands []struct {
+			ID          string `json:"id"`
+			Title       string `json:"title"`
+			Description string `json:"description,omitempty"`
+		} `json:"commands"`
+		Panels []json.RawMessage `json:"panels"` // v0.15 maxItems 0 → 出现即拒绝
 	} `json:"contributes"`
+	Subscriptions []json.RawMessage `json:"subscriptions"`
+	// 可选扩展字段（官方 schema 合法；不解析细节，仅允许存在）
+	Artifact  json.RawMessage `json:"artifact,omitempty"`
+	Compat    json.RawMessage `json:"compat,omitempty"`
+	Overrides json.RawMessage `json:"overrides,omitempty"`
 	// v0.15 直接拒绝的字段（显式捕获，避免 json 忽略后漏检）
 	Provides json.RawMessage `json:"provides,omitempty"`
 	Services json.RawMessage `json:"services,omitempty"`
 }
 
-// ParseDshPluginManifest 解析并校验 dsh-plugin.json（Community v0.15）。
+// dshPluginTopAllowed v0.15 顶层合法字段白名单（unknown → reject，与官方 schema
+// additionalProperties=false 一致）。
+var dshPluginTopAllowed = map[string]bool{
+	"$schema": true, "manifestVersion": true, "id": true, "name": true,
+	"version": true, "facets": true, "requires": true, "permissions": true,
+	"contributes": true, "subscriptions": true, "license": true, "source": true,
+	"artifact": true, "compat": true, "overrides": true,
+}
+
+// dshNamespacedIDRe v0.15 namespacedId：小写段，至少含一个 . 或 - 分隔（com.example.x / a-b）。
+var dshNamespacedIDRe = regexp.MustCompile(`^[a-z][a-z0-9]*(?:[.-][a-z0-9][a-z0-9-]*)+$`)
+
+// validFacetEntry 校验 facets.host.entry：相对入口——非绝对路径、非盘符开头、无 .. 段
+// （对应官方 schema entry 的 pattern；RE2 无 lookahead，故手写等价校验）。
+func validFacetEntry(entry string) bool {
+	if entry == "" || strings.ContainsAny(entry, "\\") {
+		return false
+	}
+	if strings.HasPrefix(entry, "/") {
+		return false // 绝对路径
+	}
+	if len(entry) >= 2 && entry[1] == ':' && ((entry[0] >= 'A' && entry[0] <= 'Z') || (entry[0] >= 'a' && entry[0] <= 'z')) {
+		return false // 盘符 C:/
+	}
+	for _, seg := range strings.Split(entry, "/") {
+		if seg == ".." {
+			return false
+		}
+	}
+	return true
+}
+
+// ParseDshPluginManifest 解析并校验 dsh-plugin.json（Community v0.15，对齐官方 schema）。
 // 返回 {valid, manifest, issues}。
+// 校验强度对齐官方 @dsh-std/manifest：未知顶层字段拒绝、顶层必填字段齐全、
+// facets.host 必填(entry+apiVersion)、optional 契约必须带 fallback、命令 id 须 namespaced。
 func ParseDshPluginManifest(data []byte) map[string]any {
 	var m dshPluginManifest
 	issues := []any{}
@@ -432,9 +471,20 @@ func ParseDshPluginManifest(data []byte) map[string]any {
 		}
 	}
 
-	// 顶层 requires/services 与 provides 在 v0.15 直接拒绝
+	// 0. 未知顶层字段 → 拒绝（官方 additionalProperties=false；description/supports 等全拒）
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err == nil {
+		for k := range raw {
+			if !dshPluginTopAllowed[k] {
+				issues = append(issues, map[string]any{"code": "unknown-field", "severity": "error",
+					"message": "community v0.15 plugin manifest contains unknown field \"" + k + "\""})
+			}
+		}
+	}
+
+	// 0b. 顶层 requires/services 与 provides 在 v0.15 直接拒绝
 	if len(m.Provides) > 0 {
-		issues = append(issues, map[string]any{"code": "rejected-field", "severity": "error", "message": "provides is rejected in manifest v0.15 (use requires/supports contracts)"})
+		issues = append(issues, map[string]any{"code": "rejected-field", "severity": "error", "message": "provides is rejected in manifest v0.15 (use requires.contracts + contributes)"})
 	}
 	if len(m.Services) > 0 {
 		issues = append(issues, map[string]any{"code": "rejected-field", "severity": "error", "message": "top-level services is rejected in manifest v0.15"})
@@ -446,7 +496,8 @@ func ParseDshPluginManifest(data []byte) map[string]any {
 		issues = append(issues, map[string]any{"code": "rejected-field", "severity": "error", "message": "contributes.panels is rejected in manifest v0.15 (maxItems 0)"})
 	}
 
-	// 必填字段
+	// 1. 顶层必填（schema required：$schema manifestVersion id name version facets
+	//    requires permissions contributes subscriptions）
 	if m.Schema == "" {
 		issues = append(issues, map[string]any{"code": "missing-field", "severity": "error", "message": "$schema is required"})
 	}
@@ -457,6 +508,9 @@ func ParseDshPluginManifest(data []byte) map[string]any {
 	}
 	if m.ID == "" {
 		issues = append(issues, map[string]any{"code": "missing-field", "severity": "error", "message": "id is required"})
+	} else if !dshNamespacedIDRe.MatchString(m.ID) {
+		issues = append(issues, map[string]any{"code": "invalid-id", "severity": "error",
+			"message": "id " + m.ID + " must be a namespaced id (lowercase, dot/hyphen separated, e.g. com.example.x)"})
 	}
 	if m.Name == "" {
 		issues = append(issues, map[string]any{"code": "missing-field", "severity": "error", "message": "name is required"})
@@ -466,16 +520,35 @@ func ParseDshPluginManifest(data []byte) map[string]any {
 	} else if !validSemver(m.Version) {
 		issues = append(issues, map[string]any{"code": "invalid-version", "severity": "error", "message": "version " + m.Version + " is not a valid semver (expected x.y.z)"})
 	}
-	if m.Facets.Host.Entry == "" {
-		issues = append(issues, map[string]any{"code": "missing-field", "severity": "warning", "message": "facets.host.entry is missing (headless plugin)"})
+	// permissions / contributes / subscriptions / requires 顶层必填（可空数组/空契约集）
+	if !jsonFieldPresent(raw, "requires") {
+		issues = append(issues, map[string]any{"code": "missing-field", "severity": "error", "message": "requires is required (contracts may be empty array)"})
 	}
-	if m.Facets.Host.APIVersion != "" {
-		if _, err := parseApiVersion("host.dsh/" + m.Facets.Host.APIVersion); err != nil {
-			issues = append(issues, map[string]any{"code": "invalid-facet-apiVersion", "severity": "error", "message": err.Error(), "path": m.Facets.Host.APIVersion})
-		}
+	if m.Permissions == nil {
+		issues = append(issues, map[string]any{"code": "missing-field", "severity": "error", "message": "permissions is required (may be empty array)"})
+	}
+	if m.Contributes.Commands == nil && len(m.Contributes.Panels) == 0 && !jsonFieldPresent(raw, "contributes") {
+		issues = append(issues, map[string]any{"code": "missing-field", "severity": "error", "message": "contributes is required (commands may be empty array)"})
+	}
+	if m.Subscriptions == nil {
+		issues = append(issues, map[string]any{"code": "missing-field", "severity": "error", "message": "subscriptions is required (may be empty array)"})
 	}
 
-	// requires.contracts：坐标 + optional 必须带 fallback（TUI-PKG-002）
+	// 2. facets：host 必填（entry + apiVersion 必填；官方 facets additionalProperties=false，
+	//    无 plugin/其它 facet——对齐：仅校验 host 存在性）
+	if m.Facets.Host.Entry == "" {
+		issues = append(issues, map[string]any{"code": "missing-field", "severity": "error", "message": "facets.host.entry is required"})
+	} else if !validFacetEntry(m.Facets.Host.Entry) {
+		issues = append(issues, map[string]any{"code": "invalid-facet-entry", "severity": "error",
+			"message": "facets.host.entry must be a relative path (no drive/absolute, no .. segments)"})
+	}
+	if m.Facets.Host.APIVersion == "" {
+		issues = append(issues, map[string]any{"code": "missing-field", "severity": "error", "message": "facets.host.apiVersion is required (e.g. v1alpha1)"})
+	} else if !regexp.MustCompile(`^v[1-9][0-9]*(?:(?:alpha|beta)[1-9][0-9]*)?$`).MatchString(m.Facets.Host.APIVersion) {
+		issues = append(issues, map[string]any{"code": "invalid-facet-apiVersion", "severity": "error", "message": "facets.host.apiVersion must look like v1 / v1beta1 / v1alpha1"})
+	}
+
+	// 3. requires.contracts：坐标 + optional 必须带 fallback（TUI-PKG-002）
 	reqContracts := []any{}
 	for _, c := range m.Requires.Contracts {
 		if c.APIVersion == "" || c.Kind == "" {
@@ -494,28 +567,16 @@ func ParseDshPluginManifest(data []byte) map[string]any {
 		})
 	}
 
-	// supports.contracts：坐标解析
-	supContracts := []any{}
-	for _, c := range m.Supports.Contracts {
-		if c.APIVersion == "" || c.Kind == "" {
-			issues = append(issues, map[string]any{"code": "missing-field", "severity": "error", "message": "supports.contracts entry must have apiVersion and kind"})
-			continue
-		}
-		if _, err := parseApiVersion(c.APIVersion); err != nil {
-			issues = append(issues, map[string]any{"code": "invalid-apiVersion", "severity": "error", "message": err.Error(), "path": c.APIVersion})
-			continue
-		}
-		supContracts = append(supContracts, map[string]any{
-			"apiVersion": c.APIVersion, "kind": c.Kind,
-		})
-	}
-
-	// permissions：name/scope 必填 + 未注册权限 fail-closed 警告（TUI 授权语义）
+	// 4. permissions：name/scope 必填 + namespaced name + 未注册权限 fail-closed 警告
 	perms := []any{}
 	for _, p := range m.Permissions {
 		if p.Name == "" || p.Scope == "" {
 			issues = append(issues, map[string]any{"code": "missing-field", "severity": "error", "message": "permissions entry must have name and scope"})
 			continue
+		}
+		if !dshNamespacedIDRe.MatchString(p.Name) {
+			issues = append(issues, map[string]any{"code": "invalid-permission-name", "severity": "error",
+				"message": "permission name " + p.Name + " must be namespaced (e.g. net.dsh.connect)"})
 		}
 		known := false
 		for k := range registeredPermissions {
@@ -530,11 +591,25 @@ func ParseDshPluginManifest(data []byte) map[string]any {
 		perms = append(perms, map[string]any{"name": p.Name, "scope": p.Scope, "reason": p.Reason})
 	}
 
-	// subscriptions：解析为可展示列表（string 或 {apiVersion,kind,scope}）
+	// 5. contributes.commands：id(namespaced) + title 必填
+	cmds := []any{}
+	for _, c := range m.Contributes.Commands {
+		if c.ID == "" || c.Title == "" {
+			issues = append(issues, map[string]any{"code": "missing-field", "severity": "error", "message": "contributes.commands entry must have id and title"})
+			continue
+		}
+		if !dshNamespacedIDRe.MatchString(c.ID) {
+			issues = append(issues, map[string]any{"code": "invalid-command-id", "severity": "error",
+				"message": "command id " + c.ID + " must be namespaced (e.g. com.example.x.hello)"})
+		}
+		cmds = append(cmds, map[string]any{"id": c.ID, "title": c.Title, "description": c.Description})
+	}
+
+	// 6. subscriptions：解析为可展示列表（string 或 {apiVersion,kind,scope}）
 	subs := []any{}
-	for _, raw := range m.Subscriptions {
+	for _, rawm := range m.Subscriptions {
 		var s string
-		if json.Unmarshal(raw, &s) == nil {
+		if json.Unmarshal(rawm, &s) == nil {
 			subs = append(subs, map[string]any{"topic": s})
 			continue
 		}
@@ -543,7 +618,7 @@ func ParseDshPluginManifest(data []byte) map[string]any {
 			Kind       string `json:"kind"`
 			Scope      string `json:"scope"`
 		}
-		if json.Unmarshal(raw, &sub) == nil && sub.APIVersion != "" && sub.Kind != "" {
+		if json.Unmarshal(rawm, &sub) == nil && sub.APIVersion != "" && sub.Kind != "" {
 			subs = append(subs, map[string]any{"apiVersion": sub.APIVersion, "kind": sub.Kind, "scope": sub.Scope})
 		} else {
 			issues = append(issues, map[string]any{"code": "invalid-subscription", "severity": "error", "message": "invalid subscription entry"})
@@ -560,14 +635,25 @@ func ParseDshPluginManifest(data []byte) map[string]any {
 	return map[string]any{
 		"valid": valid, "manifest": map[string]any{
 			"id": m.ID, "name": m.Name, "version": m.Version,
-			"description": m.Description, "manifestVersion": m.ManifestVersion,
-			"license": m.License, "source": m.Source,
-			"facets": map[string]any{"host": map[string]any{"entry": m.Facets.Host.Entry, "apiVersion": m.Facets.Host.APIVersion}},
-			"requires": reqContracts, "supports": supContracts,
-			"permissions": perms, "subscriptions": subs,
+			"manifestVersion": m.ManifestVersion,
+			"license":         m.License, "source": m.Source,
+			"facets":      map[string]any{"host": map[string]any{"entry": m.Facets.Host.Entry, "apiVersion": m.Facets.Host.APIVersion}},
+			"requires":    reqContracts,
+			"permissions": perms,
+			"contributes": map[string]any{"commands": cmds},
+			"subscriptions": subs,
 		},
 		"issues": issues,
 	}
+}
+
+// jsonFieldPresent 判断原始 JSON 是否含某顶层键（用于区分"缺字段"与"空结构"）。
+func jsonFieldPresent(raw map[string]json.RawMessage, key string) bool {
+	if raw == nil {
+		return false
+	}
+	_, ok := raw[key]
+	return ok
 }
 
 // ===== Admission v0.15 准入评估（dsh-ecosystem-spec admission evaluator 等价） =====
@@ -790,7 +876,7 @@ func (a *App) DshStdHostDescriptor() map[string]any {
 	sort.Slice(perms, func(i, j int) bool { return perms[i].(map[string]any)["name"].(string) < perms[j].(map[string]any)["name"].(string) })
 	return map[string]any{
 		"schemaVersion": "host-descriptor/0.15",
-		"id":            "com.dsh-reasonix/desktop",
+		"id":            "com.dsh-reasonix.desktop",
 		"name":          "DSH-ReasonixUI",
 		"version":       "0.2.0",
 		"facets": map[string]any{
@@ -811,34 +897,24 @@ func (a *App) DshStdHostDescriptor() map[string]any {
 	}
 }
 
-// DshStdSelfManifest 返回本客户端自己的 dsh-plugin.json 内容。
+// DshStdSelfManifest 返回本客户端自己的 dsh-plugin.json 内容（官方 v0.15 形态——
+// 无 description/supports；permissions/contributes/subscriptions 顶层必填；requires
+// 空契约集 = registry 声明闭合可过（官方 conformance 实测 compatible，
+// core.dsh#Negotiation 属协商层声明，不在 tui profile registry 的 manifest 坐标集）。
 func (a *App) DshStdSelfManifest() map[string]any {
 	self := map[string]any{
 		"$schema": "https://dsh-std.dev/schemas/dsh-plugin-0.15.schema.json",
 		"manifestVersion": "0.15",
-		"id": "com.dsh-reasonix/desktop",
+		"id": "com.dsh-reasonix.desktop",
 		"name": "DSH-ReasonixUI",
 		"version": "0.2.0",
-		"description": "DSH-Reasonix 桌面客户端（Wails）——dsh-std 合规 Host",
 		"facets": map[string]any{
 			"host": map[string]any{"entry": "dsh-reasonix-ui", "apiVersion": "v1alpha1"},
 		},
-		"requires": map[string]any{
-			"contracts": []any{
-				map[string]any{"apiVersion": "core.dsh/v1alpha1", "kind": "Negotiation"},
-				map[string]any{"apiVersion": "connection.dsh/v1alpha1", "kind": "Connection"},
-				map[string]any{"apiVersion": "session.dsh/v1alpha1", "kind": "Session"},
-			},
-		},
-		"supports": map[string]any{
-			"contracts": []any{
-				map[string]any{"apiVersion": "command.dsh/v1", "kind": "CommandRuntime"},
-				map[string]any{"apiVersion": "tool.dsh/v1", "kind": "Tool"},
-				map[string]any{"apiVersion": "model.dsh/v1", "kind": "ModelCatalog"},
-				map[string]any{"apiVersion": "presentation.dsh/v1alpha1", "kind": "Presentation"},
-				map[string]any{"apiVersion": "manifest.dsh/v1alpha1", "kind": "Manifest"},
-			},
-		},
+		"requires":     map[string]any{"contracts": []any{}},
+		"permissions":  []any{},
+		"contributes":  map[string]any{"commands": []any{}},
+		"subscriptions": []any{},
 	}
 	return self
 }

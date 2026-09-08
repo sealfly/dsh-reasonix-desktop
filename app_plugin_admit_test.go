@@ -56,9 +56,10 @@ func TestLocateNoPanic(t *testing.T) {
 
 // 用构造的 manifest 验证五态准入路径(临时文件 → 手动定位 → 解析)。
 func TestAdmitSampleManifest(t *testing.T) {
-	// 造一个合法 v0.15 清单临时文件
+	// 造一个合法 v0.15 清单临时文件（官方形态：无 supports/description，facets.host 必填，
+	// 顶层 permissions/contributes/subscriptions 必填）
 	dir := t.TempDir()
-	mf := `{"$schema":"https://dsh-std.dev/schemas/dsh-plugin-0.15.schema.json","manifestVersion":"0.15","id":"com.example/test-plugin","name":"Test","version":"0.1.0","description":"t","facets":{"plugin":{"entry":"index.js","apiVersion":"plugin.dsh/v1alpha1"}},"requires":{"contracts":[{"apiVersion":"core.dsh/v1alpha1","kind":"Negotiation","optional":false}]},"supports":{"contracts":[{"apiVersion":"tool.dsh/v1","kind":"Tool"}]}}`
+	mf := `{"$schema":"https://dsh-std.dev/schemas/dsh-plugin-0.15.schema.json","manifestVersion":"0.15","id":"com.example.test-plugin","name":"Test","version":"0.1.0","facets":{"host":{"entry":"index.js","apiVersion":"v1alpha1"}},"requires":{"contracts":[{"apiVersion":"core.dsh/v1alpha1","kind":"Negotiation"}]},"permissions":[],"contributes":{"commands":[]},"subscriptions":[]}`
 	p := filepath.Join(dir, "dsh-plugin.json")
 	if err := os.WriteFile(p, []byte(mf), 0o644); err != nil {
 		t.Fatal(err)
