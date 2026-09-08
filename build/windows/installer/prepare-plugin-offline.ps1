@@ -128,7 +128,9 @@ $manifest = @{
   source  = "npm:$Registry"
   plugins = $rows
 }
-$manifest | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $outDir "manifest.json") -Encoding UTF8
+# 无 BOM UTF-8（Go json.Unmarshal 对 BOM 会失败）
+$json = $manifest | ConvertTo-Json -Depth 6
+[System.IO.File]::WriteAllText((Join-Path $outDir "manifest.json"), $json, (New-Object System.Text.UTF8Encoding($false)))
 
 $sz = (Get-ChildItem $outDir -Recurse -File | Measure-Object Length -Sum).Sum
 Write-Host "== plugins-offline ready: $outDir =="

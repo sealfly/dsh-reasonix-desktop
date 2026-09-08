@@ -115,6 +115,24 @@ func waitProfileReady(timeout time.Duration) bool {
 	return false
 }
 
+// readSeedManifest 读 plugins-offline/manifest.json（容忍 UTF-8 BOM——PowerShell
+// Set-Content -Encoding UTF8 会写 BOM，Go json.Unmarshal 直接失败）。
+func readSeedManifest(dir string) (*seedPluginManifest, error) {
+	data, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
+	if err != nil {
+		return nil, err
+	}
+	data = []byte(strings.TrimPrefix(string(data), "\uFEFF"))
+	var manifest seedPluginManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return nil, err
+	}
+	if len(manifest.Plugins) == 0 {
+		return nil, fmt.Errorf("empty plugin manifest")
+	}
+	return &manifest, nil
+}
+
 // locateSeedOffline 查找安装目录旁的 plugins-offline（exe 同级；懒人包 DSH 运行时同层）。
 // 返回 (离线目录, 解析后的 manifest, error)。
 func locateSeedOffline() (string, *seedPluginManifest, error) {
@@ -123,21 +141,16 @@ func locateSeedOffline() (string, *seedPluginManifest, error) {
 		return "", nil, err
 	}
 	candidates := []string{
-		filepath.Join(filepath.Dir(exe), seedOfflineDirName),                    // 安装根
-		filepath.Join(filepath.Dir(exe), "dsh-runtime", seedOfflineDirName),     // 懒人包运行时旁
-		filepath.Join(filepath.Dir(exe), "resources", seedOfflineDirName),       // 资源目录
+		filepath.Join(filepath.Dir(exe), seedOfflineDirName),                // 安装根
+		filepath.Join(filepath.Dir(exe), "dsh-runtime", seedOfflineDirName), // 懒人包运行时旁
+		filepath.Join(filepath.Dir(exe), "resources", seedOfflineDirName),   // 资源目录
 	}
 	for _, dir := range candidates {
-		mf := filepath.Join(dir, "manifest.json")
-		data, err := os.ReadFile(mf)
+		manifest, err := readSeedManifest(dir)
 		if err != nil {
 			continue
 		}
-		var manifest seedPluginManifest
-		if json.Unmarshal(data, &manifest) != nil || len(manifest.Plugins) == 0 {
-			continue
-		}
-		return dir, &manifest, nil
+		return dir, manifest, nil
 	}
 	return "", nil, fmt.Errorf("plugins-offline not found next to executable")
 }
@@ -377,9 +390,8 @@ func seedOnlineFallback() {
 		return
 	}
 	dir := filepath.Join(filepath.Dir(exe), seedOfflineDirName)
-	data, _ := os.ReadFile(filepath.Join(dir, "manifest.json"))
-	var manifest seedPluginManifest
-	if json.Unmarshal(data, &manifest) != nil {
+	manifest, err := readSeedManifest(dir)
+	if err != nil {
 		return // 无清单 → 不知道装什么 → 保持现状（记忆插件走旧 preinstall 通道）
 	}
 	seeded := []string{}
