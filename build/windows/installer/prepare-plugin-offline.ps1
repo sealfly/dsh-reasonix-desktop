@@ -41,7 +41,7 @@ $plugins = @(
 )
 
 # locate node/npm
-$nodeCandidates = @("C:\Users\chenz\nodejs\node-v24.19.0-win-x64\node.exe", "$env:ProgramFiles\nodejs\node.exe", "$env:APPDATA\npm\node.exe")
+$nodeCandidates = @("C:\Users\ROG Zephyrus G16\AppData\Local\Programs\nodejs\node.exe", "C:\Users\chenz\nodejs\node-v24.19.0-win-x64\node.exe", "$env:ProgramFiles\nodejs\node.exe", "$env:APPDATA\npm\node.exe")
 $node = $nodeCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
 if (-not $node) { Write-Error "node.exe not found"; exit 1 }
 $npm = Join-Path (Split-Path $node) "npm.cmd"
