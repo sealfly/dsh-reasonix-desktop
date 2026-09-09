@@ -133,7 +133,30 @@ func (a *App) warmTabsCache() {
 	resumeLog("Tabs: warm done")
 }
 
-// fetchTabs 直接调 DSH session.list（无缓存）。
+// fetchArchivedSessionIDs 读 DSH workspace.list 的全局归档集合
+// （官方语义：archived sessions are visible nowhere——列表层必须过滤）。
+// 失败返回空集（宁可多显示也不因归档读取失败吞掉整个列表）。
+func (a *App) fetchArchivedSessionIDs() map[string]bool {
+	raw, err := a.dsh.RPC("workspace.list", map[string]any{})
+	if err != nil {
+		resumeLog("archived fetch err=%v", err)
+		return nil
+	}
+	var wl struct {
+		ArchivedSessionIDs []string `json:"archivedSessionIds"`
+	}
+	if err := DecodeRPC(raw, &wl); err != nil {
+		resumeLog("archived decode err=%v", err)
+		return nil
+	}
+	set := make(map[string]bool, len(wl.ArchivedSessionIDs))
+	for _, id := range wl.ArchivedSessionIDs {
+		set[id] = true
+	}
+	return set
+}
+
+// fetchTabs 直接调 DSH session.list（无缓存），并按官方语义过滤归档会话。
 func (a *App) fetchTabs() []any {
 	raw, err := a.dsh.RPC("session.list", map[string]any{})
 	if err != nil {
@@ -147,11 +170,15 @@ func (a *App) fetchTabs() []any {
 		resumeLog("Tabs decode err=%v", err)
 		return []any{}
 	}
+	archived := a.fetchArchivedSessionIDs()
 	tabs := make([]any, 0, len(list.Items))
 	for i, s := range list.Items {
+		if archived[s.SessionID] {
+			continue // 归档会话对 UI 不可见（官方语义），过滤
+		}
 		tabs = append(tabs, a.tabMeta(s, i))
 	}
-	resumeLog("Tabs: %d sessions", len(tabs))
+	resumeLog("Tabs: %d sessions (%d archived filtered)", len(tabs), len(list.Items)-len(tabs))
 	return tabs
 }
 
