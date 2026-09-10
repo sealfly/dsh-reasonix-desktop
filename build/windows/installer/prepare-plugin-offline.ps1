@@ -1,4 +1,4 @@
-# prepare-plugin-offline.ps1 - Prepare offline cordis plugin bundles for installers.
+﻿# prepare-plugin-offline.ps1 - Prepare offline cordis plugin bundles for installers.
 #
 # Runs on a NETWORKED build machine. Installs the "default-attached" plugin set
 # (memory plugins + dsh-agent-teams) into a self-contained offline tree that
@@ -40,10 +40,20 @@ $plugins = @(
   @{ name = "@nanmicoder/dsh-agent-teams";           spec = "@nanmicoder/dsh-agent-teams@0.1.15";          defaultEnabled = $true  }
 )
 
-# locate node/npm
-$nodeCandidates = @("C:\Users\ROG Zephyrus G16\AppData\Local\Programs\nodejs\node.exe", "C:\Users\chenz\nodejs\node-v24.19.0-win-x64\node.exe", "$env:ProgramFiles\nodejs\node.exe", "$env:APPDATA\npm\node.exe")
-$node = $nodeCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-if (-not $node) { Write-Error "node.exe not found"; exit 1 }
+# locate node/npm——动态探测优先（不硬编码任何机器的用户名路径）：
+# 1) PATH 里的 node（nvm / 自定义安装 / 便携版最可靠来源）
+# 2) 官方安装器默认位置（per-user = %LOCALAPPDATA%，all-users = %ProgramFiles%）
+# 3) 历史兜底（本机解压版）
+$nodeCandidates = @(
+  (Get-Command node -ErrorAction SilentlyContinue).Source,
+  "$env:LOCALAPPDATA\Programs\nodejs\node.exe",
+  "$env:ProgramFiles\nodejs\node.exe",
+  "$env:APPDATA\npm\node.exe",
+  "C:\Users\chenz\nodejs\node-v24.19.0-win-x64\node.exe"
+)
+$node = $nodeCandidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+if (-not $node) { Write-Error "node.exe not found（请装 Node.js 或把 node.exe 所在目录加入 PATH）"; exit 1 }
+Write-Host "node: $node"
 $npm = Join-Path (Split-Path $node) "npm.cmd"
 
 $stage = Join-Path $env:TEMP "plugins-offline-stage"
