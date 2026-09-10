@@ -2,6 +2,32 @@
 
 > 此文件记录 logo SVG 的最终正确布局，防止将来误改。修改 logo 前必读。
 
+## 🆕 2026-09-10：品牌 logo 更换为豆包设计稿（位图版）
+
+作者提供新 logo（`SH-Reasonix_去水印.png`，2048×683，白底）：**左侧图标本身就是字母 D 的造型
+（蓝色圆角方形 + 白色留白成 D 形 + 黑色虎鲸），右侧 "SH-Reasonix" 蓝色粗体**——
+图标 + 文字整体读作 **DSH-Reasonix**（不是少写了 D）。
+
+- 原始附件留存：`~/.dsh/attachments/v1/objects/83/8302e4d8…`（sha256:8302e4d8…）
+- 处理脚本与素材：`%TEMP%\logo-prep.ps1`（白底抠透明 + 去白边 + 切分 + 缩放）→
+  `%TEMP%\logo-prep\`（`mark-256.png`/`mark-128.png`/`wordmark-1024.png`）
+- 替换脚本：`%TEMP%\apply-logo.ps1`（含 dist 原文件备份 `%TEMP%\logo-backup-<时间戳>\`）
+- 落地形式：位图 PNG 以 **base64 内嵌进 SVG 包装**（保持原文件名，JS 引用不变）：
+  - `frontend/dist/assets/logo-wordmark-0KJq8oA3.svg` ← wordmark 1024×131（侧边栏左上角 + 欢迎页）
+  - `frontend/dist/assets/logo-C8rTDnTH.svg` ← 方形 mark 256×256（引导页）
+  - `frontend/dist/index.html` boot-shell `<img src>` ← mark PNG data-URI（加载页 56×56）
+  - `frontend/dist/assets/index-*.js` startup-splash 内联图标 ← mark PNG data-URI（启动闪屏 64×64）
+- **CSS 覆盖**（注入在 `index.html` 的内联 `<style>` 里）：原 `.sidebar__brand-logo` 带
+  `filter:brightness(0)invert()`（为单色 logo 反白用），会把彩色位图变成纯白剪影——
+  已覆盖为 `filter:none!important`，并把尺寸/负边距按新比例适配
+  （150×34、workbench 132×26、`margin-left:0`）。
+- 旧版单色 SVG logo 的字母路径布局记录见下方（历史存档；若需回退可用
+  `%TEMP%\logo-backup-*` 恢复）。
+
+---
+
+## （历史）单色 SVG 字标布局
+
 > ## ⛔ 升级规则（重要）：logo 类文件不参与官方对照更新
 >
 > 对照 Reasonix 官方源码升级前端时，**以下文件一律保留本地定制版本，不参与官方对照/替换**：
@@ -9,6 +35,7 @@
 > - `frontend/dist/assets/logo-C8rTDnTH.svg`（方形图标）
 > - `frontend/dist/index.html` 中的 **boot-shell 内联 SVG**（加载页 logo，aria-label="DSH-Reasonix"）
 > - `frontend/dist/index.html` 中的 **boot-shell 名称**（`boot-shell__name`=DSH-Reasonix）
+> - `frontend/dist/index.html` 内联 `<style>` 里的 **logo 覆盖 CSS**（filter:none + 尺寸适配）
 >
 > 升级流程：官方 dist 覆盖后，**从旧 dist 备份恢复以上 logo/品牌内容**（文件名/内容均为本地定制版）。
 > 备份位置参考：`$env:TEMP\dsh-dist-backup-v1290`（v1.29.0 定制版，含 DSH boot SVG 550 字节）。
