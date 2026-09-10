@@ -24,6 +24,27 @@
 - 旧版单色 SVG logo 的字母路径布局记录见下方（历史存档；若需回退可用
   `%TEMP%\logo-backup-*` 恢复）。
 
+## 🟠 2026-09-10 追加：深色主题专用橙色版
+
+深色背景（#111214）上蓝色 logo 对比度偏中等，故按作者要求加**橙色版**（品牌橙
+`#E58A3A`——与加载页跳动点的颜色一致）：
+
+- 生成：`%TEMP%\logo-orange.ps1`——把蓝色像素映射为橙色（判据 `(B-R)/255` 的 blueness，
+  by blueness 加权混合，**不做亮度压缩**以免变暗；黑鲸鱼与白色 D 形留白保持不变，
+  抗锯齿过渡由 alpha 承载）→ `%TEMP%\logo-prep\*-dark-*.png`
+- 落地：
+  - **恒深色的位置直接换橙色**：`index.html` boot-shell 加载图标、两个 `index-*.js` 的
+    startup-splash 内联图标（PNG data-URI 换成橙色 mark）
+  - **随主题切换的位置**：新增 `frontend/dist/assets/logo-wordmark-dark.svg`（橙色字标）与
+    `logo-mark-dark.svg`（橙色方形），在 `index.html` 内联 `<style>` 里按主题切换：
+    ```css
+    :root[data-theme=dark] .sidebar__brand-logo,:root:not([data-theme]) .sidebar__brand-logo,
+    :root[data-theme=dark] .welcome__brand-logo,:root:not([data-theme]) .welcome__brand-logo{content:url("./assets/logo-wordmark-dark.svg")}
+    :root[data-theme=dark] .onboarding__logo,:root:not([data-theme]) .onboarding__logo{content:url("./assets/logo-mark-dark.svg")}
+    ```
+    （浅色主题 `data-theme=light` 不匹配 → 仍用蓝色版 `logo-wordmark-0KJq8oA3.svg`）
+- 备份：`%TEMP%\logo-backup-orange-<时间戳>\`（替换前的 index.html 与两个 index-*.js）
+
 ---
 
 ## （历史）单色 SVG 字标布局
