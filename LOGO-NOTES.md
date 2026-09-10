@@ -26,12 +26,14 @@
 
 ## 🟠 2026-09-10 追加：深色主题专用橙色版
 
-深色背景（#111214）上蓝色 logo 对比度偏中等，故按作者要求加**橙色版**（品牌橙
-`#E58A3A`——与加载页跳动点的颜色一致）：
+深色背景（#111214）上蓝色 logo 对比度偏中等，故按作者要求加**橙色版**——用 **Reasonix 品牌亮橙
+`#FF5A2C`**（实证依据：`frontend/dist/assets/styles-*.css` 里 `--accent:#ff5a2c`、`--accent-strong:#df471f`
+及 `--sidebar-active/--workspace-selection-*` 系列均用该值，是 UI 强调色/选中态用色；
+另注：`#f59e0b` 是 `--warn` 语义色，**不是**品牌色，勿混用）：
 
 - 生成：`%TEMP%\logo-orange.ps1`——把蓝色像素映射为橙色（判据 `(B-R)/255` 的 blueness，
   by blueness 加权混合，**不做亮度压缩**以免变暗；黑鲸鱼与白色 D 形留白保持不变，
-  抗锯齿过渡由 alpha 承载）→ `%TEMP%\logo-prep\*-dark-*.png`
+  抗锯齿过渡由 alpha 承载）→ `%TEMP%\logo-prep\*-dark-*.png`（采样验证 = R255 G90 B44 ✓）
 - 落地：
   - **恒深色的位置直接换橙色**：`index.html` boot-shell 加载图标、两个 `index-*.js` 的
     startup-splash 内联图标（PNG data-URI 换成橙色 mark）
@@ -44,6 +46,8 @@
     ```
     （浅色主题 `data-theme=light` 不匹配 → 仍用蓝色版 `logo-wordmark-0KJq8oA3.svg`）
 - 备份：`%TEMP%\logo-backup-orange-<时间戳>\`（替换前的 index.html 与两个 index-*.js）
+- ⚠️ 注意：`frontend/dist/` 整体在 `.gitignore` 里，**新增的 dist 资源必须 `git add -f`** 才能入库
+- 迭代记录：初版用 `#E58A3A`（加载点同色）→ 作者反馈偏暗 → 改为品牌亮橙 `#FF5A2C` ✓
 
 ---
 
