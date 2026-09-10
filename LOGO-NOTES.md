@@ -49,6 +49,33 @@
 - ⚠️ 注意：`frontend/dist/` 整体在 `.gitignore` 里，**新增的 dist 资源必须 `git add -f`** 才能入库
 - 迭代记录：初版用 `#E58A3A`（加载点同色）→ 作者反馈偏暗 → 改为品牌亮橙 `#FF5A2C` ✓
 
+## 🔷 2026-09-10 追加：应用图标（exe / 任务栏 / 桌面快捷方式 / 安装包）
+
+**关键坑（换图标前必读）**：本项目的 exe 图标**不是**由 wails 从 `build/windows/icon.ico` 取的，
+而是由 **`go-winres patch`**（见 `build-deploy.ps1` / `build-installer.ps1`）按
+**`build/windows/winres.json`** 嵌入——该文件里 `RT_GROUP_ICON.APP.0000` 指向
+**`../appicon-256.png`**。**只改 `windows/icon.ico` 无效**（实测换完图标没变）。
+
+换图标的正确步骤：
+1. 覆盖 `build/appicon-256.png`（256×256，winres 真正的图标源）
+2. 覆盖 `build/appicon.png`（1024×1024，保持一致；历史上存在此文件）
+3. （可选，保持一致）重建 `build/windows/icon.ico`——多尺寸 DIB 帧 16/24/32/48/64/128/256，
+   生成脚本 `%TEMP%\make-icon2.ps1`（**必须用 DIB 帧，不要 PNG 帧**：PNG-in-ICO 仅 Vista+
+   且 System.Drawing 读不出来，无法验证；DIB 全平台兼容）
+4. 重新 `build-deploy.ps1` / `build-installer.ps1`（会重新 patch + 签名）
+5. 备份：旧 appicon 在 `%TEMP%\logo-prep\appicon-backup\`、旧 ico 在 `%TEMP%\logo-prep\icon.ico.old`
+
+当前应用图标 = 橙色 mark（`#FF5A2C` 圆角 D + 黑鲸鱼 + 白腹），验证方式：
+`[System.Drawing.Icon]::ExtractAssociatedIcon(exe)` 取图预览。
+
+## 📌 加载状态 logo 覆盖点（两处，都必须改）
+
+1. `frontend/dist/index.html` 的 boot-shell `<img src="data:image/png;base64,…">`（HTML 首屏加载页，恒深色 → 用橙色 mark）
+2. `frontend/dist/assets/index-*.js` 的 startup-splash 内联 data-URI（React 启动闪屏，恒深色 → 橙色 mark）
+
+> 旧版"D 一撇"单色线条 logo（`#0153e5` stroke）已无残留（已核查 `M270,105`、`stroke-width:34` 特征）。
+> 注意 `#0153e5` 仍出现在本项目自建的"DSH 连接状态浮窗/设置面板"按钮配色里——那是功能性 UI，非 logo。
+
 ---
 
 ## （历史）单色 SVG 字标布局
