@@ -91,6 +91,32 @@
 3. 验证方式：**把 exe 复制成新文件名**再 `[System.Drawing.Icon]::ExtractAssociatedIcon()`（同路径会被
    Windows 图标缓存命中，看不出变化）；32×32 帧应与 `icon-frames/icon-32.png` 完全一致。
 
+### 🐋 商标风险与备件（2026-09-11）
+
+角色领口的**虎鲸图案即 DeepSeek 商标**（代码 MIT 开源，但商标授权是另一回事）。为防将来纠纷，
+作者提供了**去掉虎鲸标的同款立绘**作为备件，已随仓库归档：
+
+```
+build/windows/icon-assets/
+  current-notext-1920.png      当前在用：无文字版（含虎鲸标）
+  current-captioned-1920.png   当前在用：含文字版（含虎鲸标）
+  nologo-notext-1920.png       备件：无文字版（已去虎鲸标）
+  nologo-captioned-1920.png    备件：含文字版（已去虎鲸标）
+  frames-nologo/icon-{16..256}.png   备件帧（与在用帧同规格：小尺寸无文字版中心 80% + 圆角）
+```
+
+**一键替换流程**（若需去掉虎鲸标）：
+1. `Copy-Item build\windows\icon-assets\frames-nologo\* build\windows\icon-frames\ -Force`
+2. 用 `nologo-captioned-1920.png` 重新生成 `appicon-256.png` / `appicon.png`
+3. `build-deploy.ps1` + `build-installer.ps1 -Bundle` 重建
+（`%TEMP%\icon-round.ps1` 已包含两套帧的生成逻辑，改 `$framesNoLogo` 目标即可）
+
+### 🔲 圆角规格（2026-09-11 起）
+
+图标为**现代圆角正方形**：圆角半径 = **边长的 18%**，四角透明（`GraphicsPath` 圆角遮罩 + 抗锯齿，
+不内缩、画面满幅）。生成脚本 `%TEMP%\icon-round.ps1`。若要调整圆润度，改其中 `$RADIUS` 后重跑
+→ 重建即可（16px 下半径约 2.9px，256px 下约 46px）。
+
 ## 📌 加载状态 logo 覆盖点（两处，都必须改）
 
 1. `frontend/dist/index.html` 的 boot-shell `<img src="data:image/png;base64,…">`（HTML 首屏加载页，恒深色 → 用橙色 mark）
