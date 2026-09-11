@@ -68,6 +68,15 @@
 当前应用图标 = 橙色 mark（`#FF5A2C` 圆角 D + 黑鲸鱼 + 白腹），验证方式：
 `[System.Drawing.Icon]::ExtractAssociatedIcon(exe)` 取图预览。
 
+当前应用图标 = **作者亲自绘制的角色立绘**（`DSH-ReasonixUI` 图标，2026-09-10 起）：
+- 素材：附件 `~/.dsh/attachments/v1/objects/4e/4e6a7b12…`（1920×1920 PNG）
+- **分尺寸双源策略**（小尺寸可读性）：底部 `DSH-ReasonixUI` 文字带从 y=1616 起（占 15.8%）
+  - 16/24/32/48 尺寸帧 → **裁掉文字带的角色版**（居中正方裁，脸为主体，小尺寸不糊）
+  - 64/128/256 尺寸帧 → **含文字的完整版**
+  - `build/appicon-256.png`（winres 源）与 `build/appicon.png`（1024）用完整版
+- 生成脚本：`%TEMP%\icon-prep2.ps1`（彩色度判据检测文字带）+ `%TEMP%\icon-build.ps1`（多源多尺寸 ico）
+- 前一代（橙色 mark）图标已覆盖，旧件备份在 `%TEMP%\logo-prep\appicon-backup\`
+
 ## 📌 加载状态 logo 覆盖点（两处，都必须改）
 
 1. `frontend/dist/index.html` 的 boot-shell `<img src="data:image/png;base64,…">`（HTML 首屏加载页，恒深色 → 用橙色 mark）
