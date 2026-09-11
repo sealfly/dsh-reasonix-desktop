@@ -105,6 +105,8 @@ func (a *App) eventStreamLoop() {
 			continue
 		}
 		resumeLog("agent:event stream connected (events.mux)")
+		// DSH 可用信号 → 补发提交兜底队列（HTTP 主通道曾失败的消息）。
+		go a.flushSubmitQueue()
 		ok := true
 		for ok {
 			_, data, err := conn.ReadMessage()

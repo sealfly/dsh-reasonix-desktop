@@ -19,6 +19,11 @@ type App struct {
 	dsh *DshClient
 	st  *Settings
 	term *TerminalManager
+	// dshAlts 备用上行通道（同一 DSH 实例的其他网络路径：localhost / [::1]）。
+	// 主通道 HTTP 不可用时逐个尝试；测试可注入。
+	dshAlts []*DshClient
+	// submitQueuePath 提交兜底队列文件（默认 ~/.reasonix/submit-queue.json；测试可注入）。
+	submitQueuePath string
 }
 
 // NewApp 创建 App（main.go 里调用）。
@@ -31,6 +36,7 @@ func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	cfg := loadDshConnConfig()
 	a.dsh = NewDshClientAt(cfg.Host, cfg.Port)
+	a.dshAlts = defaultAltDshClients(cfg.Host, cfg.Port)
 	a.st = NewSettings()
 	a.term = NewTerminalManager()
 	a.startEventStream()
