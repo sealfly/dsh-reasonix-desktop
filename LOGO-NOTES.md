@@ -69,13 +69,27 @@
 `[System.Drawing.Icon]::ExtractAssociatedIcon(exe)` 取图预览。
 
 当前应用图标 = **作者亲自绘制的角色立绘**（`DSH-ReasonixUI` 图标，2026-09-10 起）：
-- 素材：附件 `~/.dsh/attachments/v1/objects/4e/4e6a7b12…`（1920×1920 PNG）
-- **分尺寸双源策略**（小尺寸可读性）：底部 `DSH-ReasonixUI` 文字带从 y=1616 起（占 15.8%）
-  - 16/24/32/48 尺寸帧 → **裁掉文字带的角色版**（居中正方裁，脸为主体，小尺寸不糊）
-  - 64/128/256 尺寸帧 → **含文字的完整版**
-  - `build/appicon-256.png`（winres 源）与 `build/appicon.png`（1024）用完整版
-- 生成脚本：`%TEMP%\icon-prep2.ps1`（彩色度判据检测文字带）+ `%TEMP%\icon-build.ps1`（多源多尺寸 ico）
-- 前一代（橙色 mark）图标已覆盖，旧件备份在 `%TEMP%\logo-prep\appicon-backup\`
+- 素材（两个版本，均在附件目录）：
+  - 含 `DSH-ReasonixUI` 文字带版：`~/.dsh/attachments/v1/objects/4e/4e6a7b12…`（1920×1920，文字带从 y=1616 起，占 15.8%）
+  - **无文字版**：`~/.dsh/attachments/v1/objects/11/1155dfd8…`（1920×1920，右下角有"豆包AI生成"极淡水印——小尺寸下不可见）
+- **分尺寸双源策略**（小尺寸可读性 + 大尺寸品牌信息）：
+  - 16/24/32/48/64 → **无文字版中心 80% 裁切**（脸清晰且保留手势特征）——任务栏实际显示的就是这档
+  - 128/256 → **含文字的完整版**
+- 生成脚本：`%TEMP%\icon-prep2.ps1`（彩色度判据检测文字带）、`%TEMP%\icon-candidates.ps1`（裁剪比例候选对比）、`%TEMP%\icon-frames.ps1`（输出各尺寸 PNG 帧）
+
+### ⚠️⚠️ 图标嵌入机制的两个硬坑（改图标前必读）
+
+1. **exe 图标源 = `build/windows/winres.json` 的 `RT_GROUP_ICON`**，由 `go-winres patch` 嵌入
+   （`build-deploy.ps1` L55 / `build-installer.ps1`）。`build/windows/icon.ico` **只用于 NSIS 安装器外壳**
+   （`project.nsi` 的 `MUI_ICON`），**不影响 exe/任务栏图标**——只改 ico 会发现"图标没变"。
+2. **`RT_GROUP_ICON` 必须用「多个 PNG 帧」而不是单张 PNG**：
+   - 写成单张（如 `../appicon-256.png`）→ go-winres 会用**同一张图缩放生成所有尺寸**，
+     小尺寸会出现糊掉的文字带，**分尺寸策略失效**；
+   - 写成数组（`["icon-frames/icon-16.png", …, "icon-frames/icon-256.png"]`）→ 每个 PNG 成为一个尺寸帧 ✓
+   - **也不要指向手写的 .ico**：go-winres 读自建 DIB 帧 ico 会报 `image: unknown format`（实测）。
+   - 当前配置：`build/windows/icon-frames/icon-{16,24,32,48,64,128,256}.png`（前五档无文字版、后两档完整版）
+3. 验证方式：**把 exe 复制成新文件名**再 `[System.Drawing.Icon]::ExtractAssociatedIcon()`（同路径会被
+   Windows 图标缓存命中，看不出变化）；32×32 帧应与 `icon-frames/icon-32.png` 完全一致。
 
 ## 📌 加载状态 logo 覆盖点（两处，都必须改）
 
