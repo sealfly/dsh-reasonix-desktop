@@ -401,8 +401,8 @@ func seedOnlineFallback() {
 			skipped = append(skipped, p.Name)
 			continue
 		}
-		if dshCliPath() == "" {
-			resumeLog("seedOnlineFallback: dsh CLI not found (skip %s)", p.Name)
+		if !dshAvailable() {
+			resumeLog("seedOnlineFallback: no usable dsh invocation (skip %s)", p.Name)
 			continue
 		}
 		out, err := runDshPlugin("add", p.Name+"@"+p.InstalledVersion)

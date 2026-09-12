@@ -220,6 +220,8 @@ func (a *App) MemoryPlugins() map[string]any {
 		"installed":   installedList,
 		"profilePath": dshProfileWebPath(),
 		"dshCli":      dshCliPath(),
+		"dshAvailable": dshAvailable(),
+		"nodeExe":     findNodeExe(),
 		"checkedAt":   time.Now().UnixMilli(),
 	}
 }
@@ -281,15 +283,16 @@ func (a *App) MemoryPluginMarket(query string, page int) map[string]any {
 
 // runDshPlugin 执行 dsh plugin 命令（带超时），返回尾部输出。
 func runDshPlugin(args ...string) (string, error) {
-	cli := dshCliPath()
-	if cli == "" {
-		return "", fmt.Errorf("dsh CLI not found (install DeepSeek Harness Desktop or add dsh to PATH)")
+	// 统一调用方式：dsh CLI（.cmd/exe）或 node + apps/cli/lib/bin.js（源码/包布局）
+	exe, prefix, ok := dshInvocation()
+	if !ok {
+		return "", fmt.Errorf("dsh CLI not found (install DeepSeek Harness Desktop, npm -g @deepseek-ai/dsh, or run from the source checkout)")
 	}
-	full := append([]string{"plugin", "--profile", "web"}, args...)
+	full := append(append([]string{}, prefix...), append([]string{"plugin", "--profile", "web"}, args...)...)
 	// 直接 exec dsh.cmd：Go 的 os/exec 在 Windows 上对 .bat/.cmd 自动经 cmd.exe
 	// 正确转义包装——不要手动再包 cmd /c（手动包裹会因 cmd 引号规则吞掉参数，
 	// 导致 dsh CLI 报 "--profile <name> is required"）。
-	cmd := exec.Command(cli, full...)
+	cmd := exec.Command(exe, full...)
 	cmd.Dir = filepath.Join(os.Getenv("USERPROFILE"), ".dsh", "profiles", "web")
 	var buf strings.Builder
 	cmd.Stdout = &buf
@@ -763,10 +766,10 @@ func (a *App) preinstallMemoryPlugins() {
 	}
 	// 后台逐个安装（不阻塞启动）；先装前置依赖，再装插件本身
 	go func() {
-		cli := dshCliPath()
+		available := dshAvailable()
 		installOne := func(spec string) string {
-			if cli == "" {
-				return "dsh CLI not found"
+			if !available {
+				return "no usable dsh invocation (CLI or node+bin.js not found)"
 			}
 			if out, err := runDshPlugin("add", spec); err != nil {
 				return tail(err.Error()+" :: "+out, 200)
