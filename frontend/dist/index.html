@@ -1652,9 +1652,48 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
     return document.querySelector(".workspace-preview__window-actions") || null;
   }
 
+  // "改动"标签页预览区专属类名（WorkspacePanel 打包产物里这三个只在
+  // 视图状态 He==="changed" 且选中文件时渲染：当前改动 diff / 提交历史）。
+  // 这些视图复用同一个 .workspace-preview__body，但显示的不是文件内容——
+  // 在那里注入编辑按钮会指向文件树里选中的文件（而不是 diff 里的文件），必须屏蔽。
+  // 注意：.workspace-change-scope / .workspace-change-row 是通用渲染函数
+  // （renderChangeScope），文件视图也可能出现，不能作为判据。
+  var CHANGE_VIEW_SELECTORS = [
+    ".workspace-current-change",
+    ".workspace-git-history",
+    ".workspace-commit-history",
+  ];
+  // 另一条入口：切到"改动"标签后文件树被卸载 → 没有活动行 → 按钮必须跟着移除，
+  // 否则它会残留在共用的 .workspace-preview__window-actions 上（见 editablePreview 的 currentRel 检查）。
+
+  // inChangeView 当前右侧栏是否处于"改动"视图。
+  function inChangeView() {
+    for (var i = 0; i < CHANGE_VIEW_SELECTORS.length; i++) {
+      try { if (document.querySelector(CHANGE_VIEW_SELECTORS[i])) return true; } catch (e) {}
+    }
+    return false;
+  }
+
+  // editablePreview 当前预览区是否真的是"可编辑的文件内容预览"：
+  // 有活动文件 + 有预览容器 + 不在改动视图。
+  function editablePreview() {
+    if (!currentRel()) return false;
+    if (!previewBody()) return false;
+    return !inChangeView();
+  }
+
+  // hideEditBtn 移除编辑按钮；若正在编辑则先退出（切到改动视图时调用）。
+  function hideEditBtn() {
+    if (overlay) exitEdit();
+    var b = document.querySelector("." + NS + "-btn");
+    if (b && b.parentNode) b.parentNode.removeChild(b);
+  }
+
   // ensureEditBtn 保证操作栏里存在编辑按钮（没有就补一个，已存在则跳过——防重复注入）。
+  // 仅文件内容预览注入；改动/diff 与提交历史视图一律移除（见 editablePreview）。
   // 按钮文案按当前是否在编辑态切换（"✏️ 编辑"/"退出编辑"）。
   function ensureEditBtn() {
+    if (!editablePreview()) { hideEditBtn(); return; }
     var actions = windowActions();
     if (!actions || actions.querySelector("." + NS + "-btn")) return;
     var b = document.createElement("button");
@@ -1673,6 +1712,7 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
   // 4) Ctrl+S 保存、Esc 退出。
   function enterEdit() {
     if (overlay) return;
+    if (inChangeView()) { toast("改动视图不支持就地编辑，请切到「文件」标签"); return; }
     var rel = currentRel();
     if (!rel) { toast("未识别当前文件，请先在文件树选中文件"); return; }
     var app = A();
@@ -2122,6 +2162,9 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
 })();
 
 </script>
+
+
+
 
 
 </body>

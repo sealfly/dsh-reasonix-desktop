@@ -72,8 +72,10 @@
 
 1. **品牌与视觉定制**：logo 文件（wordmark/square）、`index.html` 的 boot-shell 内联 SVG 与名称
    （见 `LOGO-NOTES.md` 的升级规则）。
-2. **前端注入脚本**：插件市场（`__DSH_PLUGIN_MARKET`，现位于 `index.html`）、错误捕获等
-   本项目注入，升级后按 `scripts/dsh-plugin-market-inject.js` 重新注入。
+2. **前端注入脚本**：插件市场（`__DSH_PLUGIN_MARKET`，现位于 `index.html`）、错误捕获、
+   就地代码编辑器（`scripts/dsh-inline-editor.js`，含"编辑按钮只在文件内容预览出现"的门禁）等
+   本项目注入，升级后按 `scripts/dsh-plugin-market-inject.js` 与
+   `node scripts/apply-inline-editor.js`（幂等重放）重新注入。
 3. **桥方法适配**：`app_*.go` 中所有"DSH 语义"实现（持久化桥：MCP、子智能体、技能偏好、
    插件市场等）——官方实现基于 Reasonix 自身后端（skill 文件、配置服务），与 DSH 桥不同，
    升级时**不得用官方实现覆盖本项目实现**，只吸收官方新增的方法面。
@@ -84,6 +86,7 @@
 升级流程检查清单（对照官方 diff 时逐项勾选）：
 - [ ] dist 中 logo/boot 品牌是否仍是本项目版
 - [ ] `index.html` 是否仍含插件市场注入脚本
+- [ ] `index.html` 是否仍含就地编辑器内联（`node scripts/apply-inline-editor.js` 幂等重放，脚本内会校验 `__DSH_INLINE_EDITOR__` 标记）
 - [ ] 桥方法：本项目持久化实现（MCP/子智能体/技能偏好/插件市场）未被官方实现替换
 - [ ] 本项目独有桥方法（`DshStd*`、`MarketPage`、`Terminal*` 等 23 个）未被删除
 - [ ] `~/.reasonix/` 用户数据完整

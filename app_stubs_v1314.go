@@ -105,5 +105,3 @@ func (a *App) SetBotDingtalkToolApprovalMode(_mode string) error { return nil }
 // TestDingtalkBot 测试钉钉机器人（返回空诊断）。
 func (a *App) TestDingtalkBot() map[string]any { return map[string]any{} }
 
-// WorkspaceGitCommitDetail Git 提交详情（空）。
-func (a *App) WorkspaceGitCommitDetail(_a1 string, _a2 string, _a3 string) map[string]any { return map[string]any{} }

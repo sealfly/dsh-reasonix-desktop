@@ -162,17 +162,8 @@ func (a *App) ListSessionsForTab(_tabID string) []any { return []any{} }
 // ListTrashedSessions 回收站会话列表。
 func (a *App) ListTrashedSessions() []any { return []any{} }
 
-// WorkspaceChanges Git 变更（DSH 无 git 集成，空）。
-func (a *App) WorkspaceChanges(_tabID string) []any { return []any{} }
-
-// WorkspaceChangeDetail Git 变更详情。
-func (a *App) WorkspaceChangeDetail(_tabID, _path string) map[string]any { return nil }
-
 // WorkspaceConflictForTab 工作区冲突。
 func (a *App) WorkspaceConflictForTab(_tabID string) map[string]any { return nil }
-
-// WorkspaceGitHistory Git 历史。
-func (a *App) WorkspaceGitHistory(_tabID, _path string) []any { return []any{} }
 
 // SetCloseBehavior 关闭行为（quit/background）。
 func (a *App) SetCloseBehavior(behavior string) error {
