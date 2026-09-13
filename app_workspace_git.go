@@ -78,6 +78,128 @@ func gitExecutable() string {
 	return gitExePath
 }
 
+// resolveWorkspaceRoot 解析会话工作区根，带多级兜底（"改动页识别不了工作区"的根治）：
+//  1) Tabs 缓存（常规路径，tabId = DSH sessionId）；
+//  2) 强制刷新会话列表后再找（缓存过期 / 启动期竞态 / 刚建的会话）；
+//  3) 把 tabID 当工作区路径用（前端个别路径传的是 root 本身）；
+//  4) 直接问 DSH 要该 sessionId 的 cwd（Tabs 不可用时不至于整条链断掉）。
+// 全部落空时按节流写诊断日志（~/.reasonix/workspace-git.log），便于事后定位。
+func (a *App) resolveWorkspaceRoot(tabID string) string {
+	if r := a.workspaceRootForTabID(tabID); r != "" {
+		return r
+	}
+	// 负面缓存：30 秒内重复的坏 tabId 不再重试（否则每次刷新都要打两次 session.list）。
+	if workspaceGitMissRecent(strings.TrimSpace(tabID)) {
+		return ""
+	}
+	invalidateTabsCache()
+	if r := a.workspaceRootForTabID(tabID); r != "" {
+		workspaceGitLog("root ok(after-refresh) tab=%s root=%s", tabID, r)
+		return r
+	}
+	id := strings.TrimSpace(tabID)
+	if id == "" {
+		workspaceGitMarkMiss("empty")
+		workspaceGitLog("root MISS tab 为空；known=%s", a.tabsIDSummary())
+		return ""
+	}
+	if st, err := os.Stat(id); err == nil && st.IsDir() {
+		workspaceGitLog("root ok(path-like) tab=%s", id)
+		return id
+	}
+	if r := a.cwdForSessionID(id); r != "" {
+		workspaceGitLog("root ok(direct session.list) tab=%s root=%s", id, r)
+		return r
+	}
+	workspaceGitMarkMiss(id)
+	workspaceGitLog("root MISS tab=%q known=%s", id, a.tabsIDSummary())
+	return ""
+}
+
+// cwdForSessionID 直接向 DSH 要某会话的 cwd（不经过 Tabs 缓存）。
+func (a *App) cwdForSessionID(sessionID string) string {
+	if a.dsh == nil {
+		return ""
+	}
+	raw, err := a.dsh.RPC("session.list", map[string]any{})
+	if err != nil {
+		return ""
+	}
+	var list struct {
+		Items []dshSession `json:"items"`
+	}
+	if err := DecodeRPC(raw, &list); err != nil {
+		return ""
+	}
+	for _, s := range list.Items {
+		if s.SessionID != sessionID {
+			continue
+		}
+		if s.Cwd != "" {
+			return s.Cwd
+		}
+		return homeDir()
+	}
+	return ""
+}
+
+// tabsIDSummary 诊断用：当前会话表里的前几个 tabId。
+func (a *App) tabsIDSummary() string {
+	tabs := a.Tabs()
+	ids := make([]string, 0, 6)
+	for i, t := range tabs {
+		if i >= 6 {
+			break
+		}
+		if m, ok := t.(map[string]any); ok {
+			if id, _ := m["tabId"].(string); id != "" {
+				ids = append(ids, id)
+			}
+		}
+	}
+	return fmt.Sprintf("%d tabs [%s]", len(tabs), strings.Join(ids, ", "))
+}
+
+// workspaceGitLog 追加一行工作区-git 诊断日志（上限 512KB，超限截断重来）。
+func workspaceGitLog(format string, args ...any) {
+	path := filepath.Join(homeDir(), ".reasonix", "workspace-git.log")
+	workspaceGitLogMu.Lock()
+	defer workspaceGitLogMu.Unlock()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return
+	}
+	if st, err := os.Stat(path); err == nil && st.Size() > 512*1024 {
+		_ = os.Remove(path)
+	}
+	fh, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer fh.Close()
+	_, _ = fmt.Fprintf(fh, "%s %s\n", time.Now().Format("2006-01-02 15:04:05"), fmt.Sprintf(format, args...))
+}
+
+var (
+	workspaceGitLogMu  sync.Mutex
+	workspaceGitMissMu sync.Mutex
+	workspaceGitMissAt = map[string]time.Time{}
+)
+
+// workspaceGitMissRecent 该 key 是否在 30 秒内刚失败过（负面缓存，读）。
+func workspaceGitMissRecent(key string) bool {
+	workspaceGitMissMu.Lock()
+	defer workspaceGitMissMu.Unlock()
+	t, ok := workspaceGitMissAt[key]
+	return ok && time.Since(t) < 30*time.Second
+}
+
+// workspaceGitMarkMiss 记录一次解析失败（负面缓存 + 日志节流，写）。
+func workspaceGitMarkMiss(key string) {
+	workspaceGitMissMu.Lock()
+	workspaceGitMissAt[key] = time.Now()
+	workspaceGitMissMu.Unlock()
+}
+
 // runWorkspaceGit 在 root 下执行 git，返回 stdout；err 为人类可读的 stderr。
 func (a *App) runWorkspaceGit(root string, args ...string) (string, error) {
 	if strings.TrimSpace(root) == "" {
@@ -123,7 +245,7 @@ func (a *App) gitRepoPrefix(root string) (string, bool) {
 
 // WorkspaceChanges 工作区改动 + 分支（前端右侧"改动"栏）。
 func (a *App) WorkspaceChanges(tabID string) map[string]any {
-	root := a.workspaceRootForTabID(tabID)
+	root := a.resolveWorkspaceRoot(tabID)
 	if root == "" {
 		return map[string]any{"files": []any{}, "gitAvailable": false, "gitBranch": "", "gitErr": "workspace root unknown for tab"}
 	}
@@ -186,7 +308,7 @@ func (a *App) workspaceChangesAt(root string) map[string]any {
 
 // WorkspaceChangeDetail 单个文件的当前改动（未暂存优先，其次已暂存，最后合成未跟踪新文件 diff）。
 func (a *App) WorkspaceChangeDetail(tabID, path string) map[string]any {
-	root := a.workspaceRootForTabID(tabID)
+	root := a.resolveWorkspaceRoot(tabID)
 	if root == "" {
 		return map[string]any{"err": "workspace root unknown for tab"}
 	}
@@ -242,7 +364,7 @@ func (a *App) workspaceChangeDetailAt(root, abs, rel string) map[string]any {
 
 // WorkspaceGitHistory 提交历史（path 为空 = 整个仓库；否则该文件的历史）。
 func (a *App) WorkspaceGitHistory(tabID, path string) []any {
-	root := a.workspaceRootForTabID(tabID)
+	root := a.resolveWorkspaceRoot(tabID)
 	if root == "" {
 		return []any{}
 	}
@@ -288,7 +410,7 @@ func (a *App) WorkspaceGitCommitDetail(tabID, commit, path string) map[string]an
 	if commit == "" || strings.HasPrefix(commit, "-") {
 		return map[string]any{}
 	}
-	root := a.workspaceRootForTabID(tabID)
+	root := a.resolveWorkspaceRoot(tabID)
 	if root == "" {
 		return map[string]any{}
 	}
