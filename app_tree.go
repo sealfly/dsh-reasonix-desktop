@@ -15,7 +15,13 @@ type dshSessionList struct {
 	Items []dshSession `json:"items"`
 }
 
-// fetchSessions 读取 session.list（带缓存语义，这里简单直接调用）。
+// fetchSessions 读取 session.list，并按官方语义过滤归档会话。
+//
+// ★ 归档过滤必须在这里做：DSH 的 archive 只是把 sessionId 记进 workspace.list 的
+// archivedSessionIds，session.list 与 DSH 内存态仍然返回该会话。任何"列会话"的路径
+// 漏掉过滤，已归档/已清理的会话就会一直挂在侧栏项目树里。
+// 实测事故：集成测试留下的 14 个 Temp\...\TestXxx\001 会话，磁盘目录早已清干净，
+// 项目树里却长期显示 6 个 "001" 项目（fetchTabs 过滤了，这条路径没有）。
 func (a *App) fetchSessions() []dshSession {
 	if a.dsh == nil {
 		return nil
@@ -28,7 +34,24 @@ func (a *App) fetchSessions() []dshSession {
 	if err := DecodeRPC(raw, &list); err != nil {
 		return nil
 	}
-	return list.Items
+	return filterArchivedSessions(list.Items, a.fetchArchivedSessionIDs())
+}
+
+// filterArchivedSessions 按归档集合过滤会话（纯函数，便于单测）。
+// archived 为空 = 归档读取失败或确实没有归档：宁可多显示，
+// 也不因为一次读取失败把整个会话列表吞掉。
+func filterArchivedSessions(items []dshSession, archived map[string]bool) []dshSession {
+	if len(archived) == 0 {
+		return items
+	}
+	out := make([]dshSession, 0, len(items))
+	for _, s := range items {
+		if archived[s.SessionID] {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
 }
 
 // projectTree 是 buildProjectTree 的返回结构（前端 ProjectTree 期望）。

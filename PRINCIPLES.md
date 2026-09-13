@@ -111,10 +111,25 @@
 
 - 清理逻辑只存在于**测试辅助**（`test_helpers_test.go`，不进产品代码）；
   **产品功能不做任何自动清理**（用户明确要求）。
-- **磁盘清理 ≠ DSH 内存清理**：`session.list` 返回 DSH 内存索引，历史测试会话
-  需**重启 DSH（Harness Desktop）重建索引**才会从界面消失（磁盘已净 → 重建后只剩真实会话）。
+- **磁盘清理 ≠ DSH 内存清理**：`session.list` 返回 DSH 内存索引。归档
+  （`workspace.archiveSession`）会立刻把会话从所有走 `fetchTabs`/`fetchSessions` 的列表里去掉；
+  DSH 自身在索引维护时也会丢弃磁盘已不存在的会话。真正的坑是**列表路径漏过滤**（见 7.3），
+  而不是"非得重启 DSH"。
 - 界面残留不代表磁盘残留：先查 `~/.dsh/sessions/` 磁盘（`001|Temp-Test|TestSet|TestSubmit` 工作区），
-  磁盘为 0 即清理达标，界面残留属 DSH 内存态，走重启。
+  磁盘为 0 即磁盘达标；界面仍残留则按 7.3 查过滤路径，最后才考虑重启 DSH。
+
+### 7.3 归档过滤：每条"列会话"的路径都必须过滤
+
+`workspace.archiveSession` **只是把 sessionId 记进** `workspace.list` 的 `archivedSessionIds`；
+`session.list` 与 DSH 内存态**仍然返回该会话**。因此：
+
+- 任何列举会话的桥方法都必须走 `fetchTabs()` / `fetchSessions()`（两者内部都过滤归档），
+  **不要自己直接调 `session.list`**——漏一处就是界面长期残留。
+- 事故记录（2026-09-13）：集成测试留下的 14 个 `Temp\...\TestXxx\001` 会话，磁盘目录早被
+  `createTempSession` 的清理删干净、归档也做了，但 `app_tree.go` 的 `fetchSessions()` 当时没有
+  过滤归档 → 侧栏项目树长期显示 6 个 "001" 项目，被作者发现。已修 + 加回归测试。
+- 回归测试：`app_tree_archived_live_test.go`（**只读，不建会话**）断言 `fetchSessions`/`Tabs`/
+  项目树里不出现归档会话与测试工作区；`app_tree_archived_test.go` 覆盖纯过滤函数。
 
 ## 原则 8：作者要求集成的 dsh 插件——随包必带 + dsh-std 合规（作者明示的项目精神）
 
