@@ -23,7 +23,8 @@
   "permissions": [
     { "name": "storage.local.read", "scope": "workspace", "reason": "读取本地记忆存储与 skill 文件" },
     { "name": "storage.local.write", "scope": "workspace", "reason": "写入捕获的上下文与记忆条目" },
-    { "name": "messages.observe.read", "scope": "session", "reason": "在会话回合前后观察消息以捕获记忆" }
+    { "name": "messages.observe.read", "scope": "session", "reason": "在会话回合前后观察消息以捕获记忆" },
+    { "name": "net.dsh.connect", "scope": "network", "reason": "连接火山引擎 VikingDB 云端记忆库 api.vikingdb.cn-beijing.volces.com（经 MCP 代理）" }
   ],
   "contributes": {
     "commands": []

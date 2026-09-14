@@ -21,7 +21,8 @@
   "permissions": [
     { "name": "storage.local.read", "scope": "workspace", "reason": "读取仓库记忆与知识页" },
     { "name": "storage.local.write", "scope": "workspace", "reason": "写入知识页与 ingest 的文档" },
-    { "name": "messages.observe.read", "scope": "session", "reason": "检索历史会话与记忆以回答上下文问题" }
+    { "name": "messages.observe.read", "scope": "session", "reason": "检索历史会话与记忆以回答上下文问题" },
+    { "name": "net.dsh.connect", "scope": "network", "reason": "连接云端记忆服务 api.hindsight.vectorize.io（实测 32 处调用点，另经 MCP @modelcontextprotocol/sdk）" }
   ],
   "contributes": {
     "commands": []

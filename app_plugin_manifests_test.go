@@ -34,6 +34,14 @@ func TestPluginManifestsAdmit(t *testing.T) {
 		if v, _ := parsed["valid"].(bool); !v {
 			t.Fatalf("%s: manifest invalid: %v", name, parsed["issues"])
 		}
+		// 声明的权限必须全部在 Host 权限注册表内（否则解析器会给出 unregistered-permission
+		// warning）——网络能力用扩展开的 net.dsh.connect，不得出现未注册权限。
+		for _, iss := range parsed["issues"].([]any) {
+			m := iss.(map[string]any)
+			if m["code"] == "unregistered-permission" {
+				t.Fatalf("%s: %v", name, m["message"])
+			}
+		}
 		state, compatible, issues := AdmitPlugin(parsed)
 		if !compatible {
 			t.Fatalf("%s: not compatible (state=%s issues=%v)", name, state, issues)

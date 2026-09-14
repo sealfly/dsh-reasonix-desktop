@@ -59,3 +59,30 @@ dsh-std 化选项（供选择）：
    （`DSH-deskop/plugins/dsh-agent-teams/dsh-plugin.json`）——**建议**把这份声明合进插件本体仓库，
    这样 registry 版本自带声明，Host 侧无需补写。
 5. 网络能力（hindsight 经 MCP 联网）不在 Host 的 8 项权限注册表内 → 未声明，属协议覆盖范围外。
+
+### 2026-09-14 追加：网络能力补充（Host 权限注册表扩展 net 域）
+
+作者指出应把网络能力如实声明，故做两件事：
+
+1. **Host 权限注册表扩展**（`app_dshstd.go` 的 `registeredPermissions`）新增
+   `net.dsh.connect`（**defaultAllow=false**，fail-closed）。依据：
+   - 官方 schema 的权限名示例即 `net.dsh.connect`（namespaced 网络域形态）；
+   - 本项目默认附加插件确有联网行为（实证）：hindsight 连 `api.hindsight.vectorize.io`
+     （32 处调用点）、memos 连 `generativelanguage.googleapis.com` / github（模型与可选云端 LLM）、
+     openviking 连 `api.vikingdb.cn-beijing.volces.com`（火山 VikingDB）；
+   - 该扩展**不改变安全边界**（本 Host 为 trusted-in-process，权限是行为约束而非隔离），
+     只让插件能如实声明网络能力、宿主能如实陈列。
+2. **三份声明补 `net.dsh.connect`**（带具体 reason 与目标域名）：
+   `hindsight-coding-agents`、`memos-local-plugin`、`dsh-memory-plugin`。
+   **`dsh-agent-teams` 不声明**——实测其源码无外部域名（6 处网络调用点为本地/DSH 自身 API）。
+
+**新增回归断言**：`app_plugin_manifests_test.go` 要求所有配套声明的权限**必须全部在 Host 注册表内**
+（出现 `unregistered-permission` 即测试失败）——保证"声明即已注册"，不产生空洞提示。
+
+**准入结果**：补网络权限后仍然全部 `compatible`（degraded 仍为那 2 款，与网络无关）。
+
+### 上游贡献材料
+
+`docs/upstream/agent-teams/UPSTREAM-PR.md`——供把 `dsh-agent-teams` 的声明合进插件本体仓库
+（新增 `dsh-plugin.json` + `package.json` 的 `files` 加一项），含逐字段依据、diff、提交信息与验证方式。
+本机插件目录（Junction 到 `DSH-deskop/plugins/dsh-agent-teams`）已完成这两处改动。

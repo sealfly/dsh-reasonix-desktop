@@ -197,8 +197,16 @@ func protocolResolvable(ref ApiReference) bool {
 
 // ===== 权限注册表（Admission v0.15 授权存储语义） =====
 
-// registeredPermissions 本 Host 的权限注册表（TUI Admission 8 权限）。
+// registeredPermissions 本 Host 的权限注册表（TUI Admission 8 权限 + net 域扩展）。
 // defaultAllow: commands.invoke 默认允许，其余默认拒绝（fail-closed）。
+//
+// net.dsh.connect 为本 Host 的扩展项（不属于 TUI 基线 8 权限）：
+//   依据 ①官方 schema 的权限名示例即 `net.dsh.connect`（namespaced 网络域形态）；
+//   ②本项目默认附加插件里确有联网能力——实测 @vectorize-io/hindsight-coding-agents
+//   连 api.hindsight.vectorize.io（32 处）、@memtensor/memos-local-plugin 连
+//   generativelanguage.googleapis.com / github.com、@openviking/dsh-memory-plugin 连
+//   api.vikingdb.cn-beijing.volces.com（火山 VikingDB）；
+//   ③默认拒绝（fail-closed），仅用于让插件可如实声明网络能力，不做网络隔离边界。
 var registeredPermissions = map[string]bool{
 	"commands.invoke":         true, // 默认允许
 	"session.input.intercept": false,
@@ -208,6 +216,7 @@ var registeredPermissions = map[string]bool{
 	"messages.observe.read":   false,
 	"presentation.dialog":     false,
 	"presentation.approval":   false,
+	"net.dsh.connect":         false, // net 域扩展：出站网络连接（如实声明，不隔离）
 }
 
 // ===== 五态准入（Admission v0.15） =====

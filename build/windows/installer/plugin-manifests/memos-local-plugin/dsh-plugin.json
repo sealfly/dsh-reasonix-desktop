@@ -24,7 +24,8 @@
     { "name": "storage.local.read", "scope": "workspace", "reason": "读取本地 sqlite 记忆库与技能索引" },
     { "name": "storage.local.write", "scope": "workspace", "reason": "写入记忆条目、时间线与技能数据" },
     { "name": "session.create", "scope": "session", "reason": "派生子智能体会话用于记忆整理与技能抽取" },
-    { "name": "messages.observe.read", "scope": "session", "reason": "观察会话消息以生成记忆与时间线" }
+    { "name": "messages.observe.read", "scope": "session", "reason": "观察会话消息以生成记忆与时间线" },
+    { "name": "net.dsh.connect", "scope": "network", "reason": "可选云端 LLM 提供方（generativelanguage.googleapis.com）与 HuggingFace 嵌入模型下载（local provider 首用时拉取）" }
   ],
   "contributes": {
     "commands": []
