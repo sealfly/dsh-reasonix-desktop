@@ -1,0 +1,33 @@
+{
+  "$schema": "https://dsh.dev/schemas/dsh-plugin-0.15.schema.json",
+  "manifestVersion": "0.15",
+  "id": "io.memtensor.memos-local-plugin",
+  "name": "@memtensor/memos-local-plugin",
+  "version": "2.0.18",
+  "license": "MIT",
+  "source": "npm:@memtensor/memos-local-plugin@2.0.18",
+  "facets": {
+    "host": {
+      "entry": "dist/core/index.js",
+      "apiVersion": "v1alpha1"
+    }
+  },
+  "requires": {
+    "contracts": [
+      { "apiVersion": "tool.dsh/v1", "kind": "Tool" },
+      { "apiVersion": "session.dsh/v1alpha1", "kind": "Session" },
+      { "apiVersion": "model.dsh/v1", "kind": "ModelCatalog" },
+      { "apiVersion": "storage.dsh/v1alpha1", "kind": "Storage", "optional": true, "fallback": "in-memory-only" }
+    ]
+  },
+  "permissions": [
+    { "name": "storage.local.read", "scope": "workspace", "reason": "读取本地 sqlite 记忆库与技能索引" },
+    { "name": "storage.local.write", "scope": "workspace", "reason": "写入记忆条目、时间线与技能数据" },
+    { "name": "session.create", "scope": "session", "reason": "派生子智能体会话用于记忆整理与技能抽取" },
+    { "name": "messages.observe.read", "scope": "session", "reason": "观察会话消息以生成记忆与时间线" }
+  ],
+  "contributes": {
+    "commands": []
+  },
+  "subscriptions": []
+}

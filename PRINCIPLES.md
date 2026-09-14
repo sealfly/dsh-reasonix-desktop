@@ -174,10 +174,18 @@
 
 ### 8.3 当前默认附加清单的 dsh-std 状态（原则 8 生效时的基线）
 
-| 插件 | 版本 | defaultEnabled | dsh-plugin.json | 形态判定 |
+> 2026-09-14 更新：作者拍板**选项 A**，4 款均已补配套 `dsh-plugin.json`（声明层 dsh-std 化），
+> 真实安装链准入全部 `compatible`。声明文件在 `build/windows/installer/plugin-manifests/`，
+> 依据与边界见 `docs/plugin-integration-log.md`。
+
+| 插件 | 版本 | defaultEnabled | dsh-plugin.json | 准入状态 |
 |---|---|---|---|---|
-| @openviking/dsh-memory-plugin | 0.3.0 | 禁用 | 无 | cordis 形态——**不符 dsh-std 准入形态（已按 8.2 提醒）** |
-| @vectorize-io/hindsight-coding-agents | 0.4.3 | 禁用 | 无 | cordis 形态——同上 |
-| @memtensor/memos-local-plugin | 2.0.18 | 禁用 | 无 | cordis 形态——同上 |
-| @nanmicoder/dsh-agent-teams | 0.1.15 | 启用 | 无 | cordis 形态——同上 |
+| @openviking/dsh-memory-plugin | 0.3.0 | 禁用 | ✅ 配套（本项目补写） | compatible_degraded |
+| @vectorize-io/hindsight-coding-agents | 0.4.3 | 禁用 | ✅ 配套 | compatible |
+| @memtensor/memos-local-plugin | 2.0.18 | 禁用 | ✅ 配套 | compatible_degraded |
+| @nanmicoder/dsh-agent-teams | 0.1.15 | 启用 | ✅ 配套 | compatible |
+
+**新增插件时的强制动作**（原则 8.2 落地）：集成新插件必须同时补一份配套 manifest 到
+`plugin-manifests/<dir>/`，并在 `prepare-plugin-offline.ps1` 的 `$plugins` 条目里填 `manifestDir`；
+`app_plugin_manifests_test.go` 会在缺失时报错（声明与集成清单必须一一对应）。
 

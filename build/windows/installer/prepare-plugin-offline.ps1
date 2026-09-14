@@ -30,14 +30,16 @@ if ($SkipInstall -and (Test-Path (Join-Path $outDir "manifest.json"))) {
   exit 0
 }
 
-# Default-attached plugin set (name, npm spec pinned, defaultEnabled)
+# Default-attached plugin set (name, npm spec pinned, defaultEnabled, manifestDir)
 #   memory plugins: installed but disabled by default (save tokens; one-click in 设置-记忆)
 #   dsh-agent-teams: enabled (pure capability, no token side effect)
+#   manifestDir: 配套 dsh-std 声明（plugin-manifests/<dir>/dsh-plugin.json，原则 8.2 选项 A）——
+#   插件本体是 cordis 形态，由其配套 manifest 让准入器可做五态评估；缺失则该插件无声明。
 $plugins = @(
-  @{ name = "@openviking/dsh-memory-plugin";         spec = "@openviking/dsh-memory-plugin@0.3.0";         defaultEnabled = $false },
-  @{ name = "@vectorize-io/hindsight-coding-agents"; spec = "@vectorize-io/hindsight-coding-agents@0.4.3"; defaultEnabled = $false },
-  @{ name = "@memtensor/memos-local-plugin";         spec = "@memtensor/memos-local-plugin@2.0.18";       defaultEnabled = $false },
-  @{ name = "@nanmicoder/dsh-agent-teams";           spec = "@nanmicoder/dsh-agent-teams@0.1.15";          defaultEnabled = $true  }
+  @{ name = "@openviking/dsh-memory-plugin";         spec = "@openviking/dsh-memory-plugin@0.3.0";         defaultEnabled = $false; manifestDir = "dsh-memory-plugin" },
+  @{ name = "@vectorize-io/hindsight-coding-agents"; spec = "@vectorize-io/hindsight-coding-agents@0.4.3"; defaultEnabled = $false; manifestDir = "hindsight-coding-agents" },
+  @{ name = "@memtensor/memos-local-plugin";         spec = "@memtensor/memos-local-plugin@2.0.18";       defaultEnabled = $false; manifestDir = "memos-local-plugin" },
+  @{ name = "@nanmicoder/dsh-agent-teams";           spec = "@nanmicoder/dsh-agent-teams@0.1.15";          defaultEnabled = $true;  manifestDir = "dsh-agent-teams" }
 )
 
 # locate node/npm——动态探测优先（不硬编码任何机器的用户名路径）：
@@ -118,6 +120,24 @@ Get-ChildItem $srcNm -Force -ErrorAction SilentlyContinue | ForEach-Object {
   $copied++
 }
 Write-Host "copied $copied top-level entries"
+
+# Companion dsh-std manifests (option A of PRINCIPLES 8.2): the plugins themselves are
+# cordis-format (no dsh-plugin.json), so each gets a declaration-layer manifest next to its
+# package.json — this is what lets the bridge admit them (five-state admission) instead of
+# reporting "no dsh-plugin.json found". Shipped inside the offline tree so a seeded install
+# carries them automatically.
+Write-Host "== Companion dsh-std manifests =="
+$mfRoot = Join-Path $PSScriptRoot "plugin-manifests"
+foreach ($p in $plugins) {
+  if (-not $p.manifestDir) { continue }
+  $src = Join-Path $mfRoot (Join-Path $p.manifestDir "dsh-plugin.json")
+  if (-not (Test-Path $src)) { Write-Host "  WARN no companion manifest for $($p.name)"; continue }
+  $dst = Join-Path $dstNm ($p.name.Replace("/", "\") + "\dsh-plugin.json")
+  $dstDir = Split-Path $dst -Parent
+  if (-not (Test-Path $dstDir)) { Write-Host "  WARN plugin dir missing: $($p.name)"; continue }
+  Copy-Item $src $dst -Force
+  Write-Host "  $($p.name) <- $($p.manifestDir)/dsh-plugin.json"
+}
 
 # Manifest with real installed versions
 $rows = @()

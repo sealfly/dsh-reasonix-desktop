@@ -191,8 +191,49 @@ func seedFromOffline(dir string, manifest *seedPluginManifest) {
 		}
 	}
 
+	// 配套 dsh-std 声明（原则 8.2 选项 A）：插件本体是 cordis 形态（无 dsh-plugin.json），
+	// 由本项目补一份声明层 manifest，准入器才能做五态评估。对"已在 profile 里"的插件
+	// 同样补写（复制路径已被跳过，但 manifest 可能从未写入或被重装清掉）。
+	companions := ensureCompanionManifests(offlineNm, profileNm, manifest)
+
 	recordSeedState(seeded, skipped)
-	resumeLog("seedDefaultPlugins done: seeded=%v skipped=%v", seeded, skipped)
+	resumeLog("seedDefaultPlugins done: seeded=%v skipped=%v companionManifests=%d", seeded, skipped, companions)
+}
+
+// ensureCompanionManifests 把离线源里的配套 dsh-plugin.json 补写到 profile 插件目录。
+// 只写缺失的情况（已存在的不覆盖，避免踩掉插件自带或用户手工维护的声明）。
+func ensureCompanionManifests(offlineNm, profileNm string, manifest *seedPluginManifest) int {
+	if manifest == nil {
+		return 0
+	}
+	written := 0
+	for _, p := range manifest.Plugins {
+		rel := strings.Split(p.Name, "/") // @scope/name
+		if len(rel) != 2 {
+			continue
+		}
+		src := filepath.Join(offlineNm, rel[0], rel[1], "dsh-plugin.json")
+		if _, err := os.Stat(src); err != nil {
+			continue // 离线源未带配套声明（旧包）→ 跳过
+		}
+		dstDir := filepath.Join(profileNm, rel[0], rel[1])
+		if _, err := os.Stat(dstDir); err != nil {
+			continue // 插件未安装 → 等真正复制后再补
+		}
+		dst := filepath.Join(dstDir, "dsh-plugin.json")
+		if _, err := os.Stat(dst); err == nil {
+			continue // 已有声明 → 不覆盖
+		}
+		if data, err := os.ReadFile(src); err == nil {
+			if err := os.WriteFile(dst, data, 0644); err == nil {
+				written++
+				resumeLog("companion manifest written: %s", p.Name)
+			} else {
+				resumeLog("companion manifest write failed %s: %v", p.Name, err)
+			}
+		}
+	}
+	return written
 }
 
 // profileHasBundle 检查 profile package.json 的 dsh.profile.bundles 是否已含该插件。

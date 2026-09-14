@@ -1,0 +1,38 @@
+{
+  "$schema": "https://dsh.dev/schemas/dsh-plugin-0.15.schema.json",
+  "manifestVersion": "0.15",
+  "id": "com.openviking.dsh-memory-plugin",
+  "name": "@openviking/dsh-memory-plugin",
+  "version": "0.3.0",
+  "license": "Apache-2.0",
+  "source": "npm:@openviking/dsh-memory-plugin@0.3.0",
+  "facets": {
+    "host": {
+      "entry": "index.mjs",
+      "apiVersion": "v1alpha1"
+    }
+  },
+  "requires": {
+    "contracts": [
+      { "apiVersion": "session.dsh/v1alpha1", "kind": "Session" },
+      { "apiVersion": "model.dsh/v1", "kind": "ModelCatalog" },
+      { "apiVersion": "tool.dsh/v1", "kind": "Tool" },
+      { "apiVersion": "storage.dsh/v1alpha1", "kind": "Storage", "optional": true, "fallback": "disable-skill-file-persistence" }
+    ]
+  },
+  "permissions": [
+    { "name": "storage.local.read", "scope": "workspace", "reason": "读取本地记忆存储与 skill 文件" },
+    { "name": "storage.local.write", "scope": "workspace", "reason": "写入捕获的上下文与记忆条目" },
+    { "name": "messages.observe.read", "scope": "session", "reason": "在会话回合前后观察消息以捕获记忆" }
+  ],
+  "contributes": {
+    "commands": []
+  },
+  "subscriptions": [
+    "agent/session-start",
+    "agent/pre-step",
+    "session/event",
+    "session/flush",
+    "tools/pre-execute"
+  ]
+}

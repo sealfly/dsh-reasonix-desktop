@@ -1,0 +1,30 @@
+{
+  "$schema": "https://dsh.dev/schemas/dsh-plugin-0.15.schema.json",
+  "manifestVersion": "0.15",
+  "id": "io.vectorize.hindsight-coding-agents",
+  "name": "@vectorize-io/hindsight-coding-agents",
+  "version": "0.4.3",
+  "source": "npm:@vectorize-io/hindsight-coding-agents@0.4.3",
+  "facets": {
+    "host": {
+      "entry": "dist/index.js",
+      "apiVersion": "v1alpha1"
+    }
+  },
+  "requires": {
+    "contracts": [
+      { "apiVersion": "tool.dsh/v1", "kind": "Tool" },
+      { "apiVersion": "session.dsh/v1alpha1", "kind": "Session" },
+      { "apiVersion": "model.dsh/v1", "kind": "ModelCatalog" }
+    ]
+  },
+  "permissions": [
+    { "name": "storage.local.read", "scope": "workspace", "reason": "读取仓库记忆与知识页" },
+    { "name": "storage.local.write", "scope": "workspace", "reason": "写入知识页与 ingest 的文档" },
+    { "name": "messages.observe.read", "scope": "session", "reason": "检索历史会话与记忆以回答上下文问题" }
+  ],
+  "contributes": {
+    "commands": []
+  },
+  "subscriptions": []
+}
