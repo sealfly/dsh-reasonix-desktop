@@ -175,7 +175,7 @@ func (a *App) DshLaunch() map[string]any {
 		if !found {
 			// 自动安装：探测 Node/npm，存在则后台 npm i -g @deepseek-ai/dsh（装默认最新版）
 			if npmPath, err := exec.LookPath("npm"); err == nil {
-				inst := exec.Command(npmPath, "install", "-g", "@deepseek-ai/dsh")
+				inst := hiddenCmd(npmPath, "install", "-g", "@deepseek-ai/dsh")
 				if err := inst.Start(); err == nil {
 					go func() { _ = inst.Wait() }()
 					return map[string]any{"ok": true, "installing": true, "note": "未找到 dsh, 已开始自动安装 @deepseek-ai/dsh (npm), 完成后点启动"}
@@ -185,7 +185,7 @@ func (a *App) DshLaunch() map[string]any {
 		}
 	}
 	// 后台启动 dsh web（不阻塞应用）
-	cmd := exec.Command(dshCmd, "web")
+	cmd := hiddenCmd(dshCmd, "web")
 	if err := cmd.Start(); err != nil {
 		return map[string]any{"ok": false, "error": "启动 DSH 失败: " + err.Error()}
 	}

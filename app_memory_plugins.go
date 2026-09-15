@@ -292,7 +292,7 @@ func runDshPlugin(args ...string) (string, error) {
 	// 直接 exec dsh.cmd：Go 的 os/exec 在 Windows 上对 .bat/.cmd 自动经 cmd.exe
 	// 正确转义包装——不要手动再包 cmd /c（手动包裹会因 cmd 引号规则吞掉参数，
 	// 导致 dsh CLI 报 "--profile <name> is required"）。
-	cmd := exec.Command(exe, full...)
+	cmd := hiddenCmd(exe, full...)
 	cmd.Dir = filepath.Join(os.Getenv("USERPROFILE"), ".dsh", "profiles", "web")
 	var buf strings.Builder
 	cmd.Stdout = &buf

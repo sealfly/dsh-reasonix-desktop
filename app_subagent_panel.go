@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"os/exec"
 	"sort"
 	"strings"
 	"sync"
@@ -429,7 +428,7 @@ func enumerateRelatedProcesses() []map[string]any {
 	ps := `$ErrorActionPreference='SilentlyContinue'; Get-CimInstance Win32_Process | ` +
 		`Select-Object ProcessId,ParentProcessId,Name,WorkingSetSize,CommandLine | ` +
 		`ConvertTo-Json -Compress -Depth 2`
-	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", ps)
+	cmd := hiddenCmd("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", ps)
 	out, err := cmd.Output()
 	if err != nil || len(out) == 0 {
 		resumeLog("process enumerate failed: %v", err)

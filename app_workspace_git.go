@@ -214,7 +214,7 @@ func (a *App) runWorkspaceGit(root string, args ...string) (string, error) {
 	full := make([]string, 0, len(args)+3)
 	full = append(full, "--no-pager", "-c", "core.quotepath=false")
 	full = append(full, args...)
-	cmd := exec.CommandContext(ctx, exe, full...)
+	cmd := hiddenCmdContext(ctx, exe, full...)
 	cmd.Dir = root
 	var out, errb bytes.Buffer
 	cmd.Stdout = &out
