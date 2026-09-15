@@ -1,4 +1,4 @@
-﻿# build-installer.ps1 - Build NSIS installer with DSH backend integration.
+# build-installer.ps1 - Build NSIS installer with DSH backend integration.
 # Two flavors:
 #   default      -> classic installer (no bundled DSH; DSH component installs online via npm)
 #   -Bundle      -> LAZY installer (embeds DSH runtime + node.exe; offline one-click DSH)
@@ -52,6 +52,26 @@ $winresTool = Join-Path $root "tools\go-winres.exe"
 $winresJson = Join-Path $root "build\windows\winres.json"
 if ($Bundle) {
   $installerOut = Join-Path $root "build\bin\dsh-reasonix-wails-amd64-installer-lazy.exe"
+}
+
+# 0) Frontend injections: dist is a build artifact (upstream upgrades overwrite it), so every
+#    DSH adaptation patching index.html must be re-applied here; apply scripts are idempotent
+#    (PRINCIPLES P6). Missing node is fatal: without injection the UI features are lost.
+if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+  foreach ($cand in @((Join-Path $env:LOCALAPPDATA "Programs\nodejs\node.exe"),
+                      (Join-Path $env:ProgramFiles "nodejs\node.exe"),
+                      (Join-Path $env:APPDATA "npm\node.exe"))) {
+    if (Test-Path $cand) { $env:Path = "$(Split-Path $cand);$env:Path"; break }
+  }
+}
+if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+  Write-Error "node not found (frontend injections require node; install Node.js or add it to PATH)"
+  exit 1
+}
+Write-Host "== Frontend injections =="
+foreach ($ij in @("apply-inline-editor.js", "apply-subagent-panel.js")) {
+  & node (Join-Path $root "scripts\$ij")
+  if ($LASTEXITCODE -ne 0) { throw "frontend injection failed: $ij (exit $LASTEXITCODE)" }
 }
 
 # 1) wails build -nsis: main exe + wails_tools.nsh + initial installer

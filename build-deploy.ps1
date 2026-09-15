@@ -23,6 +23,27 @@ if (-not (Test-Path $WailsBin)) {
   exit 1
 }
 
+# 0) Frontend injections: frontend/dist is a build artifact (an upstream upgrade overwrites
+#    it), so every DSH adaptation that patches index.html must be re-applied here, and the
+#    apply scripts are idempotent (PRINCIPLES P6). Missing node is fatal on purpose: without
+#    these injections the injected UI features silently disappear from the build.
+if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+  foreach ($cand in @((Join-Path $env:LOCALAPPDATA "Programs\nodejs\node.exe"),
+                      (Join-Path $env:ProgramFiles "nodejs\node.exe"),
+                      (Join-Path $env:APPDATA "npm\node.exe"))) {
+    if (Test-Path $cand) { $env:Path = "$(Split-Path $cand);$env:Path"; break }
+  }
+}
+if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+  Write-Error "node not found (frontend injections require node; install Node.js or add it to PATH)"
+  exit 1
+}
+Write-Host "== Frontend injections =="
+foreach ($ij in @("apply-inline-editor.js", "apply-subagent-panel.js")) {
+  & node (Join-Path $root "scripts\$ij")
+  if ($LASTEXITCODE -ne 0) { throw "frontend injection failed: $ij (exit $LASTEXITCODE)" }
+}
+
 # 1) Build
 Write-Host "== Build =="
 # Ensure go is on PATH (wails build needs it); try common install locations

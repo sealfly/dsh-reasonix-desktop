@@ -73,9 +73,18 @@
 1. **品牌与视觉定制**：logo 文件（wordmark/square）、`index.html` 的 boot-shell 内联 SVG 与名称
    （见 `LOGO-NOTES.md` 的升级规则）。
 2. **前端注入脚本**：插件市场（`__DSH_PLUGIN_MARKET`，现位于 `index.html`）、错误捕获、
-   就地代码编辑器（`scripts/dsh-inline-editor.js`，含"编辑按钮只在文件内容预览出现"的门禁）等
-   本项目注入，升级后按 `scripts/dsh-plugin-market-inject.js` 与
-   `node scripts/apply-inline-editor.js`（幂等重放）重新注入。
+   就地代码编辑器（`scripts/dsh-inline-editor.js`，含"编辑按钮只在文件内容预览出现"的门禁）、
+   **右侧栏「子代理」页**（`scripts/dsh-subagent-panel.js`：显示当前会话子智能体 + 相关后台进程）
+   等本项目注入，升级后按 `scripts/dsh-plugin-market-inject.js` 与幂等重放脚本
+   `node scripts/apply-inline-editor.js`、`node scripts/apply-subagent-panel.js` 重新注入。
+
+   > **2026-09-14 起已自动化**：`build-deploy.ps1` 与 `build-installer.ps1` 在 wails build **之前**
+   > 统一执行两个 apply 脚本（幂等可重复）——上游 dist 覆盖后**重新构建即自动恢复**注入，
+   > 不需手工处理。注入步骤缺 node 会直接失败（宁可构建失败，也不静默产出缺功能的包）。
+   >
+   > 注入脚本的验证：`node scripts/subagent-panel-domtest.js`——在最小假 DOM 里执行
+   > **dist 中的真实内联块**，断言 tab 注入 / overlay 挂载 / 定位加固 / 卡片与进程行渲染 /
+   > React 节点未被动 / 幂等（14 项）。
 3. **桥方法适配**：`app_*.go` 中所有"DSH 语义"实现（持久化桥：MCP、子智能体、技能偏好、
    插件市场等）——官方实现基于 Reasonix 自身后端（skill 文件、配置服务），与 DSH 桥不同，
    升级时**不得用官方实现覆盖本项目实现**，只吸收官方新增的方法面。

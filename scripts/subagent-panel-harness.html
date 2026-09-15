@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>subagent-panel 注入脚本验证（mock 桥）</title>
+<style>
+  :root{--bg:#111214;--bg-elev:#191b1f;--bg-elev-2:#22252b;--bg-soft:#1e2126;--fg:#e8eaed;--fg-dim:#9aa0a6;--fg-faint:#85888f;
+        --border:#2a2d33;--border-soft:#23262b;--accent:#ff5a2c;--accent-fg:#fff}
+  html,body{margin:0;height:100%;background:#0c0d0f;color:var(--fg);font:13px/1.5 system-ui,'Segoe UI',sans-serif}
+  .stage{display:flex;gap:16px;padding:16px}
+  .sim{flex:0 0 420px;height:640px;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--bg)}
+  /* 模拟 Reasonix 右侧栏结构（静态定位，用于检验 overlay 加固） */
+  .workspace-panel{display:flex;flex-direction:column;height:100%}
+  .workspace-files{display:flex;flex-direction:column;height:100%;background:var(--bg)}
+  .workspace-files__tools{display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid var(--border-soft)}
+  .workspace-files__tabs{display:flex;align-items:center;gap:4px}
+  .workspace-files__tab{padding:4px 9px;border:0;background:transparent;color:var(--fg-dim);border-radius:6px;font:inherit;font-size:12px;cursor:pointer}
+  .workspace-files__tab--active{background:var(--bg-elev-2);color:var(--fg)}
+  .placeholder{padding:10px;color:var(--fg-faint)}
+  .hint{color:var(--fg-faint);max-width:420px}
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="sim">
+    <div class="workspace-panel">
+      <div class="workspace-files">
+        <div class="workspace-files__tools">
+          <div class="workspace-files__tabs" role="tablist">
+            <button class="workspace-files__tab">文件</button>
+            <button class="workspace-files__tab workspace-files__tab--active">改动</button>
+          </div>
+        </div>
+        <div class="placeholder">（原生文件/改动内容占位，不应被注入脚本改动）</div>
+      </div>
+    </div>
+  </div>
+  <div class="hint">
+    <p>验证目标：</p>
+    <ol>
+      <li>「子代理」按钮出现在 tab 栏（与 文件/改动 并列）</li>
+      <li>点击后面板 overlay 覆盖文件区，显示 mock 的子智能体 + 后台进程</li>
+      <li>React 节点未被删改（占位文本仍在 DOM 中）</li>
+      <li>宿主为 position:static 时被加固为 relative</li>
+    </ol>
+    <p id="selfcheck">自检中…</p>
+  </div>
+</div>
+
+<script>
+// mock Go 桥（Wails 注入形态）
+window.go = { main: { App: {
+  SubagentPanel: function (sid) {
+    return Promise.resolve({
+      ok: true,
+      sessionId: "session-8b83f456-aa4c-4a16-bc28-325a099d0590",
+      parentTitle: "工作区内容与项目精神了解",
+      counts: { subagents: 3, active: 1, processes: 4 },
+      sources: { subagents: "subagent.list", processes: "win32-process" },
+      notes: [
+        "子智能体来自 DSH subagent.list（parentSessionId=当前会话）；插件（如 dsh-agent-teams）派生的成员会话同样登记在此",
+        "后台进程为本机 Win32_Process 中与本项目/DSH 相关的进程",
+        "DSH 进程内的后台任务（如 bash 后台 job）不产生独立进程，故不出现在进程列表"
+      ],
+      subagents: [
+        { id: "5b6e39ff-c165-4b0d-8ef8-6f3647d168b4", sessionId: "session-5b6e39ff-c165-4b0d-8ef8-6f3647d168b4",
+          kind: "child", mode: "continuable", label: "安全审计三个记忆插件", activity: "active",
+          hasChildren: false, running: true, cwd: "C:\\Users\\chenz\\Desktop\\dsh-reasonix-desktop",
+          agentPreset: "standard", title: "你是 DSH 插件安全审计员", updatedAt: Date.now() - 60000 },
+        { id: "6294ec21-c8c5-4fd3-ae47-4beefdd2276e", sessionId: "session-6294ec21-c8c5-4fd3-ae47-4beefdd2276e",
+          kind: "child", mode: "one-shot", label: "调研 dsh-std 协议记忆规范", activity: "inactive",
+          hasChildren: false, running: false, cwd: "C:\\Users\\chenz\\Desktop\\dsh-reasonix-desktop",
+          agentPreset: "standard", title: "调研民间（社区）维护的 dsh-…", updatedAt: Date.now() - 3600000 },
+        { id: "535e67b4-86c4-4955-8786-d4832c03c5e0", sessionId: "session-535e67b4-86c4-4955-8786-d4832c03c5e0",
+          kind: "child", mode: "one-shot", label: "调研 DSH 官方记忆插件规范", activity: "inactive",
+          hasChildren: true, running: false, cwd: "C:\\Users\\chenz\\Desktop\\dsh-reasonix-desktop",
+          agentPreset: "standard", title: "调研 DeepSeek Harness（dsh）官方", updatedAt: Date.now() - 7200000 }
+      ],
+      processes: [
+        { pid: 11268, ppid: 100, name: "node.exe", memMb: 2596.2, category: "DSH", cmd: "node C:\\...\\dsh\\bin\\dsh.js" },
+        { pid: 9240, ppid: 40016, name: "msedgewebview2.exe", memMb: 110.4, category: "本项目", cmd: "msedgewebview2.exe --user-data-dir=...dsh-reasonix..." },
+        { pid: 6456, ppid: 11268, name: "go.exe", memMb: 38.2, category: "子进程", cmd: "go test ./..." },
+        { pid: 40208, ppid: 1, name: "python.exe", memMb: 22.1, category: "MCP", cmd: "python -m mcp_server --stdio" }
+      ]
+    });
+  }
+} } };
+</script>
+<script src="../scripts/dsh-subagent-panel.js"></script>
+<script>
+// 自检：点击「子代理」按钮后断言注入结果
+setTimeout(function () {
+  var tab = document.getElementById('dsh-sp-tab');
+  var ok = [];
+  ok.push('tab 注入: ' + (tab ? '✓' : '✗'));
+  if (tab) {
+    tab.click();
+    setTimeout(function () {
+      var panel = document.getElementById('dsh-sp-panel');
+      ok.push('面板 overlay: ' + (panel ? '✓' : '✗'));
+      ok.push('子智能体卡片: ' + (document.querySelectorAll('.dsh-sp-card').length || 0) + ' 张');
+      ok.push('进程行: ' + (document.querySelectorAll('.dsh-sp-table tbody tr').length || 0) + ' 行');
+      var host = document.querySelector('.workspace-files');
+      ok.push('宿主定位加固: ' + (host && getComputedStyle(host).position === 'relative' ? '✓ relative' : '✗ ' + (host ? getComputedStyle(host).position : 'n/a')));
+      var ph = document.querySelector('.placeholder');
+      ok.push('React 占位仍在: ' + (ph && ph.textContent.indexOf('占位') >= 0 ? '✓' : '✗'));
+      document.getElementById('selfcheck').textContent = 'SELFCHECK ' + ok.join(' | ');
+      document.title = 'DONE ' + ok.join(' | ');
+    }, 400);
+  } else {
+    document.getElementById('selfcheck').textContent = 'SELFCHECK ' + ok.join(' | ');
+    document.title = 'DONE ' + ok.join(' | ');
+  }
+}, 1800);
+</script>
+</body>
+</html>
