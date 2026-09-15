@@ -75,7 +75,9 @@
     "." + NS + "-empty{color:var(--fg-faint,#85888f);padding:10px 2px;font-size:11.5px;line-height:1.6}",
     "." + NS + "-err{color:#ff8a65;padding:8px 2px;font-size:11.5px;white-space:pre-wrap}",
     "." + NS + "-note{color:var(--fg-faint,#85888f);font-size:10.5px;line-height:1.6;margin-top:10px;padding-top:8px;",
-    "border-top:1px solid var(--border-soft,rgba(255,255,255,.07))}"
+    "border-top:1px solid var(--border-soft,rgba(255,255,255,.07))}",
+    "." + NS + "-skeleton{animation:" + NS + "-pulse 1.2s ease-in-out infinite}",
+    "@keyframes " + NS + "-pulse{0%,100%{opacity:.45}50%{opacity:.95}}"
   ].join("");
 
   function ensureStyle() {
@@ -323,7 +325,20 @@
       body.appendChild(el("div", NS + "-err", state.error));
     }
     if (!data) {
-      body.appendChild(el("div", NS + "-empty", state.loading ? "正在读取子智能体与后台进程…" : "暂无数据"));
+      // 骨架：面板一打开就有结构（三个区块标题 + 读取提示），不让人对着空面板等
+      [
+        ["子智能体", "读取中…"],
+        ["后台任务", "读取中…"],
+        ["后台进程", "读取中…"]
+      ].forEach(function (sec) {
+        var box = el("div", NS + "-sect");
+        box.appendChild(el("div", NS + "-secthead", sec[0]));
+        box.appendChild(el("div", NS + "-empty " + NS + "-skeleton", sec[1]));
+        body.appendChild(box);
+      });
+      if (!state.loading) {
+        body.appendChild(el("div", NS + "-empty", "暂无数据"));
+      }
       panel.appendChild(body);
       return;
     }
@@ -566,6 +581,10 @@
     try {
       ensureTab();
       updateBadge();          // 值未变时不写 DOM（updateBadge 内部有比对）
+      // 恢复"补挂载"：面板该开着却没挂上（首次挂载撞上 React 重建宿主、或宿主被换掉）时重试。
+      // 安全性：renderPanel 现在有内容签名比对——内容未变时一个 DOM 都不动，因此周期调用不会
+      // 重蹈 MutationObserver 自激的覆辙（那次的根因是"观察者回调 → 重建 DOM → 再回调"）。
+      renderPanel();
       teardownIfDetached();
     } catch (e) {
       diag("scan-error", (e && e.message) ? e.message : String(e));

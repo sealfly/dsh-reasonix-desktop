@@ -49,6 +49,9 @@ func (a *App) startup(ctx context.Context) {
 	go ensureMemoryDefaultOff()
 	// 预热会话列表缓存（DSH session.list 投影计算慢，预热后左侧任务栏秒开）
 	go a.warmTabsCache()
+	// 预热「子代理」面板缓存（session.list + subagent.list + 本机进程枚举）：面板打开即出数据，
+	// 不用"打开后再等一两秒"（进程枚举走 PowerShell 约 1s，是打开延迟的大头）
+	go a.warmSubagentPanelCaches()
 }
 
 // startShowEventListener 监听命名事件 "Local\DSH-ReasonixUI-Show"：

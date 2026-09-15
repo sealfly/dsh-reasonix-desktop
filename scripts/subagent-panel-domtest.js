@@ -128,6 +128,7 @@ const inlined = html.slice(open + '<script>'.length, close);
 console.log('[1] 提取内联块: ' + inlined.length + ' 字节');
 
 // ---------- 2) 构建假 DOM + mock 桥 ----------
+const scanIntervals = [];
 const doc = makeDoc();
 doc.body.innerHTMLLike = true;
 
@@ -168,7 +169,7 @@ const mockResult = {
 const sandbox = {
   window: null, document: doc, console: console,
   getComputedStyle: function (el) { return { position: (el && el.style && el.style.position) || 'static' }; },
-  setInterval: function () { return 0; },
+  setInterval: function (fn) { scanIntervals.push(fn); return scanIntervals.length; },
   clearInterval: function () { },
   setTimeout: function (fn, t) { return setTimeout(fn, t); },
   MutationObserver: undefined,
@@ -264,6 +265,23 @@ setTimeout(function () {
   sandbox.window.__DSH_SUBAGENT_PANEL__ = true; // 模拟已加载
   vm.runInContext(inlined, sandbox, { filename: 'inlined-subagent-panel-again.js' });
   check('幂等：重复加载不新增 tab', tabs.children.length === 3, 'children=' + tabs.children.length);
+
+  // 回归（2026-09-14 "打开后要等加载完才出现" 的 bug）：首次挂载时宿主暂时找不到 →
+  // 轮询 scan 必须补挂载，而不是等下一次数据返回才画出来。
+  check('轮询已注册(可补挂载)', scanIntervals.length > 0, 'intervals=' + scanIntervals.length);
+  if (scanIntervals.length && tab && tab.onclick) {
+    if (doc.getElementById('dsh-sp-panel')) { const cb = panel.querySelectorAll('.dsh-sp-iconbtn'); if (cb.length) cb[cb.length - 1].onclick(); }
+    bodyHost.className = 'workbench-dock__body--hidden';   // 模拟宿主暂时不匹配
+    const saved = bodyHost.className;
+    tab.onclick();                                          // 打开 → 此时找不到宿主
+    const mountedWhileHidden = !!doc.getElementById('dsh-sp-panel');
+    bodyHost.className = 'workbench-dock__body';            // 宿主恢复（React 重建完成）
+    scanIntervals.forEach(function (fn) { try { fn(); } catch (e) { } });   // 轮询触发
+    check('宿主恢复后轮询补挂载面板', !!doc.getElementById('dsh-sp-panel'), 'mountedWhileHidden=' + mountedWhileHidden);
+    bodyHost.className = saved;
+  } else {
+    check('宿主恢复后轮询补挂载面板', false, 'no interval captured');
+  }
 
   const failed = results.filter(function (r) { return !r.ok; });
   results.forEach(function (r) {

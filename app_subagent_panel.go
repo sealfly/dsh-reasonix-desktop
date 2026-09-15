@@ -100,7 +100,18 @@ func (a *App) SubagentPanel(sessionId string) map[string]any {
 	out["sessionId"] = sid
 	out["parentTitle"] = sessionTitle(sessions, sid)
 
-	entries := a.fetchSubagentEntries(sid)
+	// 并行取数：子智能体列表与进程枚举互不依赖，串行会让面板打开延迟变成两项之和
+	// （进程枚举走 PowerShell 约 1s，占大头）。这里并发执行，延迟取"最慢一项"。
+	var (
+		entries []subagentEntry
+		procs   []map[string]any
+		wg      sync.WaitGroup
+	)
+	wg.Add(2)
+	go func() { defer wg.Done(); entries = a.fetchSubagentEntries(sid) }()
+	go func() { defer wg.Done(); procs = cachedRelatedProcesses() }()
+	wg.Wait()
+
 	rows := mergeSubagentRows(entries, sessions, sid)
 	if len(entries) == 0 {
 		// 退回：session.list 里 parent 指向本会话的会话（含插件生成的成员会话）
@@ -124,7 +135,7 @@ func (a *App) SubagentPanel(sessionId string) map[string]any {
 		"jobsActive": countJobsRunning(jobs),
 	}
 
-	procs := cachedRelatedProcesses()
+	// procs 已在上面与子智能体列表并行取得
 	out["processes"] = procs
 	out["counts"].(map[string]any)["processes"] = len(procs)
 
@@ -134,6 +145,29 @@ func (a *App) SubagentPanel(sessionId string) map[string]any {
 		"后台进程为本机 Win32_Process 中与本项目/DSH 相关的系统进程（命令行关键词 dsh / deepseek-harness / mcp / dsh-reasonix / agent-teams，含一轮父子传播）",
 	}
 	return out
+}
+
+// warmSubagentPanelCaches 后台预热「子代理」面板所需的数据缓存：
+//   - session.list（DSH 对巨型会话的 projections 计算 0.5~1.3s）
+//   - subagent.list（当前活跃会话）
+//   - 本机进程枚举（PowerShell 查询约 1s）
+//
+// 这样用户点开面板时直接命中缓存，不必"打开后再等一两秒"（缓存 TTL 分别 3s / 8s）。
+func (a *App) warmSubagentPanelCaches() {
+	defer func() {
+		if r := recover(); r != nil {
+			resumeLog("warmSubagentPanel panic=%v", r)
+		}
+	}()
+	if a.dsh == nil {
+		return
+	}
+	sessions := a.fetchPanelSessions()
+	if sid := pickActiveSession(sessions); sid != "" {
+		_ = a.fetchSubagentEntries(sid)
+	}
+	_ = cachedRelatedProcesses()
+	resumeLog("subagentPanel caches warmed (sessions=%d)", len(sessions))
 }
 
 func (a *App) fetchPanelSessions() []panelSession {
