@@ -38,6 +38,12 @@
     "." + NS + "-sub{color:var(--fg-faint,#85888f);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1 1 auto}",
     "." + NS + "-btn{all:unset;cursor:pointer;padding:3px 8px;border-radius:6px;border:1px solid var(--border,rgba(255,255,255,.14));font-size:11px}",
     "." + NS + "-btn:hover{background:var(--bg-soft,rgba(255,255,255,.06))}",
+    // 纯图标按钮（同原生工具栏风格：正方形、悬停底色、无文字）
+    "." + NS + "-iconbtn{all:unset;box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;",
+    "width:22px;height:22px;border-radius:6px;color:var(--fg-dim,#9aa0a6);cursor:pointer;flex:0 0 auto}",
+    "." + NS + "-iconbtn:hover{background:var(--bg-soft,rgba(255,255,255,.08));color:var(--fg,#e8eaed)}",
+    "." + NS + "-iconbtn:focus-visible{outline:1px solid var(--accent,#ff5a2c);outline-offset:1px}",
+    "." + NS + "-iconbtn--busy{opacity:.55}",
     "." + NS + "-body{flex:1 1 auto;overflow:auto;padding:8px 10px 14px}",
     "." + NS + "-sect{margin-bottom:14px}",
     "." + NS + "-secthead{display:flex;align-items:center;gap:6px;margin:2px 0 6px;color:var(--fg-dim,#9aa0a6);",
@@ -88,11 +94,34 @@
   }
 
   var SVG_NS = "http://www.w3.org/2000/svg";
-  // tab 图标：与原生 workbench-dock__tab 同风格（lucide 线条图标，13px，currentColor，stroke 2）
-  function tabIcon() {
+  // 与原生一致的 lucide 线条图标（13~14px、currentColor、stroke 2）
+  var ICON_PATHS = {
+    // 多人协作（子智能体/团队语义）
+    users: [
+      ["path", { d: "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" }],
+      ["circle", { cx: "9", cy: "7", r: "4" }],
+      ["path", { d: "M22 21v-2a4 4 0 0 0-3-3.87" }],
+      ["path", { d: "M16 3.13a4 4 0 0 1 0 7.75" }]
+    ],
+    // lucide refresh-cw
+    refresh: [
+      ["path", { d: "M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" }],
+      ["path", { d: "M21 3v5h-5" }],
+      ["path", { d: "M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" }],
+      ["path", { d: "M8 16H3v5" }]
+    ],
+    // lucide x
+    close: [
+      ["path", { d: "M18 6 6 18" }],
+      ["path", { d: "m6 6 12 12" }]
+    ]
+  };
+
+  function svgIcon(name, size) {
+    var px = String(size || 13);
     var svg = document.createElementNS(SVG_NS, "svg");
-    svg.setAttribute("width", "13");
-    svg.setAttribute("height", "13");
+    svg.setAttribute("width", px);
+    svg.setAttribute("height", px);
     svg.setAttribute("viewBox", "0 0 24 24");
     svg.setAttribute("fill", "none");
     svg.setAttribute("stroke", "currentColor");
@@ -100,18 +129,25 @@
     svg.setAttribute("stroke-linecap", "round");
     svg.setAttribute("stroke-linejoin", "round");
     svg.setAttribute("aria-hidden", "true");
-    // lucide "users"：多人协作（子智能体/团队语义）
-    [
-      ["path", { d: "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" }],
-      ["circle", { cx: "9", cy: "7", r: "4" }],
-      ["path", { d: "M22 21v-2a4 4 0 0 0-3-3.87" }],
-      ["path", { d: "M16 3.13a4 4 0 0 1 0 7.75" }]
-    ].forEach(function (spec) {
+    (ICON_PATHS[name] || []).forEach(function (spec) {
       var n = document.createElementNS(SVG_NS, spec[0]);
       Object.keys(spec[1]).forEach(function (k) { n.setAttribute(k, spec[1][k]); });
       svg.appendChild(n);
     });
     return svg;
+  }
+
+  // tab 图标：与原生 workbench-dock__tab 同风格
+  function tabIcon() { return svgIcon("users", 13); }
+
+  // 纯图标按钮（同原生工具栏按钮：只有符号，文字仅作 title/aria-label 提示）
+  function iconButton(iconName, title) {
+    var b = el("button", NS + "-iconbtn");
+    b.type = "button";
+    b.title = title;
+    b.setAttribute("aria-label", title);
+    b.appendChild(svgIcon(iconName, 14));
+    return b;
   }
 
   function shortId(id) {
@@ -271,10 +307,12 @@
       sub.textContent = state.loading ? "读取中…" : "等待桥数据";
     }
     head.appendChild(sub);
-    var btn = el("button", NS + "-btn", state.loading ? "刷新中" : "刷新");
+    // 纯符号按钮（与原生工具栏一致，文字仅作 tooltip / 无障碍标签）
+    var btn = iconButton("refresh", state.loading ? "刷新中…" : "刷新");
+    if (state.loading) btn.className = NS + "-iconbtn " + NS + "-iconbtn--busy";
     btn.onclick = function () { refresh(true); };
     head.appendChild(btn);
-    var close = el("button", NS + "-btn", "关闭");
+    var close = iconButton("close", "关闭");
     close.onclick = function () { setOpen(false); };
     head.appendChild(close);
     panel.appendChild(head);

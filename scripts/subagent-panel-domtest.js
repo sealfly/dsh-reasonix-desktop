@@ -237,8 +237,12 @@ setTimeout(function () {
 
   // 关闭面板：只应移除我们自己的 overlay，React 节点不受影响
   if (panel) {
-    const btns = panel.querySelectorAll('.dsh-sp-btn');
-    const closeBtn = btns[btns.length - 1];
+    const iconBtns = panel.querySelectorAll('.dsh-sp-iconbtn');
+    check('工具栏按钮为纯图标(2 个)', iconBtns.length === 2, 'got ' + iconBtns.length);
+    check('图标按钮含 svg 且无文字', iconBtns.every(function (b) { return !!b.querySelector('svg') && b.textContent.trim() === ''; }));
+    check('图标按钮有 title/aria-label 提示', iconBtns.every(function (b) { return !!b.title && !!b.getAttribute('aria-label'); }),
+      iconBtns.map(function (b) { return b.title; }).join(','));
+    const closeBtn = iconBtns[iconBtns.length - 1];
     if (closeBtn && closeBtn.onclick) closeBtn.onclick();
     check('关闭后 overlay 移除', !doc.getElementById('dsh-sp-panel'));
     check('关闭后 React 节点完好', bodyHost.childNodes.indexOf(reactPlaceholder) >= 0 && tabs.children.length === 3);
