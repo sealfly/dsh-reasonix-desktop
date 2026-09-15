@@ -207,3 +207,47 @@
 `plugin-manifests/<dir>/`，并在 `prepare-plugin-offline.ps1` 的 `$plugins` 条目里填 `manifestDir`；
 `app_plugin_manifests_test.go` 会在缺失时报错（声明与集成清单必须一一对应）。
 
+## 原则 9：双端推送与同步（GitHub / CNB）
+
+> 双远程（GitHub + CNB）同步是本项目的日常动作，但踩过两次同样的坑。以下三条是硬要求。
+
+### 9.1 GitHub 推送必须用 HTTP/1.1（本网络环境）
+
+- **症状**：`git push origin master` 连续失败，报
+  `Failed to connect to github.com port 443 after 21064 ms: Could not connect to server`；
+  重试 20 次全败，看起来像"GitHub 挂了"。**实际不是网络断，是 HTTP/2 被阻断。**
+- **判据（区分"真断网"与"协议被卡"）**：
+  - `api.github.com`（200）、`codeload.github.com`（200）可达；
+  - `curl --resolve github.com:443:20.205.243.166 https://github.com/` 也返回 200，
+    连 `/info/refs?service=git-upload-pack` 都是 200；
+  - 说明 TCP+证书+端点都通，只有 git 走的 HTTP/2 连接建立失败。
+- **修复（仓库级即可，不必动全局）**：`git config http.version HTTP/1.1`。
+  改完第一次 push 就从 `exit=128（连接失败）` 变成 `exit=1（已进入协商阶段）`。
+- 另：本机 `~/.ssh` 无私钥，所以 SSH-over-443（`ssh.github.com:443` 可达）这条退路走不通；
+  `.tools/bin/gh.exe` 已认证（scopes 含 `repo`）可作 API 兜底。
+
+### 9.2 并行链：内容相同、SHA 不同
+
+同一份改动在 GitHub 与 CNB 各自的 clone 里分别提交，会产生**两条内容等价但 SHA 不同的链**
+（提交标题逐字相同）。此时 push 报 `! [rejected] master -> master (fetch first)`。
+
+- **判定**（必须先做，这一步决定能不能强推）：
+  `git diff --name-only <remote>/master master` **为空** = 内容零差异。
+- **统一**：`git push --force-with-lease origin master`。
+  用 `--force-with-lease` 而不是 `--force`——前者在远程被他人更新时会拒绝，不会误伤。
+- **禁止**：本地存在**未推送的独有提交**时强推（会丢提交）。
+  先用 `git rev-list --left-right --count <remote>/master...master` 确认右侧（本地独有）的来源可解释。
+
+### 9.3 标准同步动作（照抄执行）
+
+```powershell
+git fetch origin --prune; git fetch cnb --prune          # 1) 两端都拉
+git rev-parse origin/master cnb/master master            # 2) 三方 SHA 对比
+git diff --name-only origin/master cnb/master            # 3) 空 = 两条链内容等价
+git merge --ff-only <较新的那一侧>                        # 4) 本地无独有提交时快进
+git push --force-with-lease <落后的一侧> master            # 5) 统一 SHA（见 9.2）
+git push <已同步的一侧> master                            # 6) 确认 Everything up-to-date
+```
+
+同步完成后，三方 `git rev-parse` 必须完全一致；`git status --porcelain` 必须为空。
+
