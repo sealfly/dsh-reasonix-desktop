@@ -1,4 +1,4 @@
-# build-deploy.ps1 - Standard build + sign + deploy pipeline.
+﻿# build-deploy.ps1 - Standard build + sign + deploy pipeline.
 # Portable: all paths derive from $PSScriptRoot / %USERPROFILE%; missing cert warns only.
 # Usage: .\build-deploy.ps1 [-WailsBin <path>] [-CertThumbprint <thumb>] [-DeployName <name>] [-GoProxy <proxy>] [-Launch]
 
