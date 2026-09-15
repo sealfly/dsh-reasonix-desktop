@@ -2305,15 +2305,35 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
   function findFilePanel() { var m = findPanelHost(); return m ? m.node : null; }
 
   // ===== 面板渲染（overlay，绝不动 React 节点）=====
+  // 防止无谓重建：内容签名不变时直接返回（scan 会周期性调用本函数）。
+  function panelSignature() {
+    if (!state.open) return "closed";
+    if (state.error) return "err:" + state.error;
+    if (!state.last) return "loading";
+    var subs = (state.last.subagents || []).map(function (s) {
+      return (s.id || "") + ":" + (s.activity || "") + ":" + (s.running ? 1 : 0);
+    }).join(",");
+    var procs = (state.last.processes || []).map(function (p) { return p.pid; }).join(",");
+    return [state.loading ? "L" : "", state.last.sessionId || "", subs, procs,
+      JSON.stringify(state.last.counts || {})].join("|");
+  }
+
   function renderPanel() {
     var host = findFilePanel();
+    if (!state.open) {
+      var old = document.getElementById(NS + "-panel");
+      if (old && old.parentNode) old.parentNode.removeChild(old);
+      state.renderSig = "closed";
+      return;
+    }
     if (!host) return;
     ensureStyle();
     var panel = document.getElementById(NS + "-panel");
-    if (!state.open) {
-      if (panel && panel.parentNode) panel.parentNode.removeChild(panel);
-      return;
-    }
+    var sig = panelSignature();
+    // 已挂载且内容未变 → 一个 DOM 都不动（避免 MutationObserver/轮询引发的反复重建）
+    if (panel && panel.parentNode === host && state.renderSig === sig) return;
+    state.renderSig = sig;
+
     if (!panel) {
       panel = el("div", NS + "-panel");
       panel.id = NS + "-panel";
@@ -2488,8 +2508,11 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
     if (!badge || !state.last) return;
     var c = state.last.counts || {};
     var n = c.active || 0;
-    badge.textContent = String(n);
-    badge.style.display = n > 0 ? "" : "none";
+    var text = String(n);
+    // 只在数值真的变化时才写 DOM（减少无谓改动）
+    if (badge.textContent !== text) badge.textContent = text;
+    var disp = n > 0 ? "" : "none";
+    if (badge.style.display !== disp) badge.style.display = disp;
   }
 
   // ===== tab 按钮（插入到 React 的 tab 栏里；被 React 重排删除时由 scan 补回）=====
@@ -2551,10 +2574,14 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
   }
 
   var scanTimer = null;
+  // scan 只做"轻量维持"：确保 tab 在、宿主失联时收掉 overlay。
+  // ⚠️ 这里绝不重建面板 DOM —— 早期版本在 scan 里重建 + MutationObserver 观察整个文档，
+  // 造成"改 DOM → 观察者回调 → 再改 DOM"的自激循环，把渲染主线程打死（界面冻结）。
+  // 现在：面板内容只在 打开/数据到达/手动刷新 时按"内容签名"决定是否重建，且不再使用
+  // MutationObserver（纯轮询足以在被 React 重排后补回 tab，且不会自激）。
   function scan() {
     try {
       ensureTab();
-      renderPanel();
       teardownIfDetached();
     } catch (e) {
       diag("scan-error", (e && e.message) ? e.message : String(e));
@@ -2564,14 +2591,11 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
   function boot() {
     diag("boot", "readyState=" + document.readyState);
     scan();
-    scanTimer = window.setInterval(scan, 1500);
-    if (window.MutationObserver) {
-      try {
-        var obs = new MutationObserver(function () { scan(); });
-        obs.observe(document.documentElement, { childList: true, subtree: true });
-        diag("observer-on");
-      } catch (e) { diag("observer-fail", String(e)); }
-    }
+    scanTimer = window.setInterval(scan, 2000);
+    document.addEventListener("visibilitychange", function () {
+      // 从后台切回来时补一次（避免长时间不可见导致的陈旧状态）
+      if (!document.hidden) scan();
+    });
     window.addEventListener("beforeunload", function () {
       if (scanTimer) window.clearInterval(scanTimer);
       if (state.timer) window.clearInterval(state.timer);
