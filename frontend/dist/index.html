@@ -2222,6 +2222,15 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
     "." + NS + "-meta{color:var(--fg-faint,#85888f);font-size:11px;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
     "." + NS + "-tag{display:inline-block;padding:0 5px;border-radius:4px;background:var(--bg-elev-2,rgba(255,255,255,.08));",
     "color:var(--fg-dim,#9aa0a6);font-size:10px;margin-right:4px}",
+    "." + NS + "-status{display:inline-block;padding:0 6px;border-radius:4px;font-size:10px;font-weight:600;white-space:nowrap}",
+    "." + NS + "-status--running{background:rgba(255,90,44,.18);color:var(--accent,#ff5a2c)}",
+    "." + NS + "-status--done{background:rgba(90,200,120,.16);color:#5ac878}",
+    "." + NS + "-status--failed{background:rgba(255,90,90,.18);color:#ff6b6b}",
+    "." + NS + "-status--cancelled{background:rgba(255,255,255,.08);color:var(--fg-faint,#85888f)}",
+    "." + NS + "-status--idle{background:rgba(255,255,255,.06);color:var(--fg-dim,#9aa0a6)}",
+    "." + NS + "-jobcmd{font-family:ui-monospace,Consolas,monospace;font-size:10.5px;color:var(--fg-dim,#9aa0a6);",
+    "margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+    "." + NS + "-tab-text{}",
     "." + NS + "-table{width:100%;border-collapse:collapse}",
     "." + NS + "-table th{text-align:left;font-weight:600;color:var(--fg-faint,#85888f);font-size:10.5px;padding:3px 4px;",
     "border-bottom:1px solid var(--border-soft,rgba(255,255,255,.08))}",
@@ -2248,6 +2257,33 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
     return n;
   }
 
+  var SVG_NS = "http://www.w3.org/2000/svg";
+  // tab 图标：与原生 workbench-dock__tab 同风格（lucide 线条图标，13px，currentColor，stroke 2）
+  function tabIcon() {
+    var svg = document.createElementNS(SVG_NS, "svg");
+    svg.setAttribute("width", "13");
+    svg.setAttribute("height", "13");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("fill", "none");
+    svg.setAttribute("stroke", "currentColor");
+    svg.setAttribute("stroke-width", "2");
+    svg.setAttribute("stroke-linecap", "round");
+    svg.setAttribute("stroke-linejoin", "round");
+    svg.setAttribute("aria-hidden", "true");
+    // lucide "users"：多人协作（子智能体/团队语义）
+    [
+      ["path", { d: "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" }],
+      ["circle", { cx: "9", cy: "7", r: "4" }],
+      ["path", { d: "M22 21v-2a4 4 0 0 0-3-3.87" }],
+      ["path", { d: "M16 3.13a4 4 0 0 1 0 7.75" }]
+    ].forEach(function (spec) {
+      var n = document.createElementNS(SVG_NS, spec[0]);
+      Object.keys(spec[1]).forEach(function (k) { n.setAttribute(k, spec[1][k]); });
+      svg.appendChild(n);
+    });
+    return svg;
+  }
+
   function shortId(id) {
     if (!id) return "";
     return String(id).replace(/^session-/, "").slice(0, 8);
@@ -2267,6 +2303,39 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
     var s = String(p).replace(/[\\/]+$/, "");
     var i = Math.max(s.lastIndexOf("\\"), s.lastIndexOf("/"));
     return i >= 0 ? s.slice(i + 1) : s;
+  }
+
+  // 后台任务状态徽标：运行中 / 已完成 / 失败 / 已取消 / 未启动（桥侧已归一 statusLabel）
+  function statusChip(j) {
+    var label = j.statusLabel || jobStatusFallback(j.status);
+    var cls = NS + "-status --cls--";
+    var kind = "idle";
+    if (label === "运行中") kind = "running";
+    else if (label === "已完成") kind = "done";
+    else if (label === "失败") kind = "failed";
+    else if (label === "已取消") kind = "cancelled";
+    return el("span", NS + "-status " + NS + "-status--" + kind, label);
+  }
+
+  // 前端兜底映射（桥未提供 statusLabel 时用）
+  function jobStatusFallback(status) {
+    var s = String(status || "").toLowerCase();
+    if (s === "completed" || s === "done" || s === "success" || s === "succeeded") return "已完成";
+    if (s === "running" || s === "active" || s === "in_progress" || s === "started") return "运行中";
+    if (s === "failed" || s === "error") return "失败";
+    if (s === "cancelled" || s === "canceled" || s === "killed") return "已取消";
+    if (s === "queued" || s === "pending" || s === "created") return "未启动";
+    return status ? String(status) : "未知";
+  }
+
+  // 毫秒 → 人类可读（1.2s / 45s / 2m10s）
+  function humanMs(ms) {
+    if (ms == null || ms < 0) return "";
+    if (ms < 1000) return ms + "ms";
+    var s = ms / 1000;
+    if (s < 60) return (s < 10 ? s.toFixed(1) : Math.round(s)) + "s";
+    var m = Math.floor(s / 60), rs = Math.round(s % 60);
+    return m + "m" + (rs ? rs + "s" : "");
   }
 
   // ===== 状态 =====
@@ -2314,7 +2383,10 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
       return (s.id || "") + ":" + (s.activity || "") + ":" + (s.running ? 1 : 0);
     }).join(",");
     var procs = (state.last.processes || []).map(function (p) { return p.pid; }).join(",");
-    return [state.loading ? "L" : "", state.last.sessionId || "", subs, procs,
+    var jobs = (state.last.jobs || []).map(function (j) {
+      return (j.id || "") + ":" + (j.status || "") + ":" + (j.durationMs >= 0 ? Math.round(j.durationMs / 1000) : -1);
+    }).join(",");
+    return [state.loading ? "L" : "", state.last.sessionId || "", subs, jobs, procs,
       JSON.stringify(state.last.counts || {})].join("|");
   }
 
@@ -2398,7 +2470,7 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
     } else {
       subs.forEach(function (s) {
         var active = s.activity === "active" || s.running;
-        var card = el("div", NS + "-card" + (active ? " " + NS + "-card--active" : ""));
+        var card = el("div", NS + "-card " + NS + "-card--sub" + (active ? " " + NS + "-card--active" : ""));
         var r1 = el("div", NS + "-row1");
         r1.appendChild(el("span", NS + "-dot" + (active ? " " + NS + "-dot--on" : "")));
         r1.appendChild(el("span", NS + "-label", s.label || s.title || shortId(s.id)));
@@ -2420,7 +2492,40 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
     }
     body.appendChild(sec1);
 
-    // 2) 后台进程
+    // 2) 后台任务（DSH session/jobs）：含状态——运行中 / 已完成 / 失败 / 未启动
+    var secJobs = el("div", NS + "-sect");
+    var jobs = data.jobs || [];
+    var runningJobs = jobs.filter(function (j) { return j.running; }).length;
+    secJobs.appendChild(el("div", NS + "-secthead",
+      "后台任务（" + jobs.length + (runningJobs ? "，运行中 " + runningJobs : "") + "）"));
+    if (!jobs.length) {
+      secJobs.appendChild(el("div", NS + "-empty",
+        "当前会话没有后台任务。\n由工具启动的后台命令（pwsh / bash 等）会显示在这里，并带运行状态。"));
+    } else {
+      jobs.forEach(function (j) {
+        var card = el("div", NS + "-card " + NS + "-card--job" + (j.running ? " " + NS + "-card--active" : ""));
+        var r1 = el("div", NS + "-row1");
+        r1.appendChild(statusChip(j));
+        r1.appendChild(el("span", NS + "-label", j.id || ""));
+        r1.appendChild(el("span", NS + "-tag", j.kind || ""));
+        if (j.durationMs >= 0) {
+          r1.appendChild(el("span", NS + "-meta", humanMs(j.durationMs)));
+        }
+        card.appendChild(r1);
+        if (j.label) {
+          var cmd = el("div", NS + "-jobcmd", j.label);
+          cmd.title = j.label;
+          card.appendChild(cmd);
+        }
+        if (j.detail) {
+          card.appendChild(el("div", NS + "-meta", j.detail));
+        }
+        secJobs.appendChild(card);
+      });
+    }
+    body.appendChild(secJobs);
+
+    // 3) 后台进程（本机系统进程，与本项目/DSH 相关）
     var sec2 = el("div", NS + "-sect");
     var procs = data.processes || [];
     sec2.appendChild(el("div", NS + "-secthead", "后台进程（" + procs.length + "）"));
@@ -2551,7 +2656,11 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
     var btn = el("button", tabClassName());
     btn.id = NS + "-tab";
     btn.type = "button";
-    btn.appendChild(document.createTextNode(TAB_LABEL));
+    btn.setAttribute("role", "tab");
+    // 与原生 tab 相同结构：图标 + workbench-dock__tab-label 文本
+    btn.appendChild(tabIcon());
+    var labelCls = state.isDock ? "workbench-dock__tab-label " + NS + "-tab-text" : NS + "-tab-text";
+    btn.appendChild(el("span", labelCls, TAB_LABEL));
     var badge = el("span", NS + "-badge");
     badge.id = NS + "-badge";
     badge.style.display = "none";
@@ -2566,10 +2675,16 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
   }
 
   function teardownIfDetached() {
-    // 面板宿主消失（切到别的视图）时移除 overlay；tab 被 React 移除时由 scan 重插
+    // 面板宿主消失（切到别的视图/布局重排）时移除 overlay，并同步把状态置为关闭，
+    // 否则会出现"状态说开着、DOM 已被移除"的不一致（下次轮询又会重建 → 闪烁）。
     var panel = document.getElementById(NS + "-panel");
     if (panel && state.open && !findFilePanel()) {
       if (panel.parentNode) panel.parentNode.removeChild(panel);
+      state.open = false;
+      state.renderSig = "closed";
+      if (state.timer) { window.clearInterval(state.timer); state.timer = null; }
+      var tab = document.getElementById(NS + "-tab");
+      if (tab) tab.className = tabClassName();
     }
   }
 
@@ -2582,6 +2697,7 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
   function scan() {
     try {
       ensureTab();
+      updateBadge();          // 值未变时不写 DOM（updateBadge 内部有比对）
       teardownIfDetached();
     } catch (e) {
       diag("scan-error", (e && e.message) ? e.message : String(e));

@@ -57,7 +57,14 @@ var (
 	procCacheMu  sync.Mutex
 	procCache    []map[string]any
 	procCacheAt  time.Time
-	procCacheTTL = 4 * time.Second
+	procCacheTTL = 8 * time.Second // PowerShell/Win32_Process 查询约 1s，面板每 5s 刷新 → 8s 缓存足够且省 CPU
+
+	panelSessionsMu  sync.Mutex
+	panelSessionsVal []panelSession
+	panelSessionsAt  time.Time
+	// DSH 对巨型会话的 session.list projections 计算可达 0.5~1.3s；面板刷新频繁，
+	// 这里做 3s 短缓存，避免每次刷新都压 DSH。
+	panelSessionsTTL = 3 * time.Second
 )
 
 // LogFromFrontend 前端注入脚本的诊断上报。
@@ -104,9 +111,18 @@ func (a *App) SubagentPanel(sessionId string) map[string]any {
 		}
 	}
 	out["subagents"] = rows
+	// 后台任务（DSH session/jobs）：来自事件流缓存，含 status（运行中/已完成/失败/未启动）
+	jobs := cachedJobs(sid)
+	out["jobs"] = buildJobRows(jobs)
+	jobAge := jobsCacheAge(sid)
+	if jobAge >= 0 {
+		out["jobsAgeMs"] = jobAge.Milliseconds()
+	}
 	out["counts"] = map[string]any{
-		"subagents": len(rows),
-		"active":    countActive(rows),
+		"subagents":  len(rows),
+		"active":     countActive(rows),
+		"jobs":       len(jobs),
+		"jobsActive": countJobsRunning(jobs),
 	}
 
 	procs := cachedRelatedProcesses()
@@ -115,13 +131,21 @@ func (a *App) SubagentPanel(sessionId string) map[string]any {
 
 	out["notes"] = []any{
 		"子智能体来自 DSH subagent.list（parentSessionId=当前会话）；插件（如 dsh-agent-teams）派生的成员会话同样登记在此",
-		"后台进程为本机 Win32_Process 中与本项目/DSH 相关的进程（命令行关键词 dsh / deepseek-harness / mcp / dsh-reasonix / agent-teams，含一轮父子传播）",
-		"DSH 进程内的后台任务（如 bash 后台 job）不产生独立进程，故不出现在进程列表",
+		"后台任务来自 DSH 事件流 session/jobs（含状态：运行中 / 已完成 / 失败 / 未启动 与退出码、耗时）",
+		"后台进程为本机 Win32_Process 中与本项目/DSH 相关的系统进程（命令行关键词 dsh / deepseek-harness / mcp / dsh-reasonix / agent-teams，含一轮父子传播）",
 	}
 	return out
 }
 
 func (a *App) fetchPanelSessions() []panelSession {
+	panelSessionsMu.Lock()
+	if panelSessionsVal != nil && time.Since(panelSessionsAt) < panelSessionsTTL {
+		cached := panelSessionsVal
+		panelSessionsMu.Unlock()
+		return cached
+	}
+	panelSessionsMu.Unlock()
+
 	raw, err := a.dsh.RPC("session.list", map[string]any{})
 	if err != nil {
 		resumeLog("subagentPanel session.list err=%v", err)
@@ -134,6 +158,10 @@ func (a *App) fetchPanelSessions() []panelSession {
 		resumeLog("subagentPanel session.list decode err=%v", err)
 		return nil
 	}
+	panelSessionsMu.Lock()
+	panelSessionsVal = list.Items
+	panelSessionsAt = time.Now()
+	panelSessionsMu.Unlock()
 	return list.Items
 }
 

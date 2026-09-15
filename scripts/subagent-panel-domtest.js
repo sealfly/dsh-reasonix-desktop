@@ -92,6 +92,7 @@ function makeDoc() {
   doc.head = doc.documentElement.appendChild(new El('head'));
   doc.body = doc.documentElement.appendChild(new El('body'));
   doc.createElement = function (t) { return new El(t); };
+  doc.createElementNS = function (ns, t) { return new El(t); };   // SVG（脚本用 createElementNS）
   doc.createTextNode = function (t) { const e = new El('#text'); e._text = String(t); return e; };
   doc.getElementById = function (id) {
     let found = null;
@@ -145,8 +146,14 @@ const mockResult = {
   ok: true,
   sessionId: 'session-8b83f456-aa4c-4a16-bc28-325a099d0590',
   parentTitle: '工作区内容与项目精神了解',
-  counts: { subagents: 2, active: 1, processes: 3 },
+  counts: { subagents: 2, active: 1, processes: 3, jobs: 2, jobsActive: 1 },
   notes: ['说明一', '说明二'],
+  jobs: [
+    { id: 'pwsh-14', kind: 'pwsh', label: '& "C:\\x\\upload.ps1" 2>&1 | Select-Object -Last 3', status: 'completed',
+      statusLabel: '已完成', detail: 'exit code: 0', startedAt: 1789382071836, finishedAt: 1789382087149, durationMs: 15313, running: false },
+    { id: 'pwsh-15', kind: 'pwsh', label: '.\build-installer.ps1 -Bundle', status: 'running',
+      statusLabel: '运行中', detail: '', startedAt: Date.now() - 4000, finishedAt: 0, durationMs: 4000, running: true }
+  ],
   subagents: [
     { id: 'aaa', sessionId: 'session-aaa', kind: 'child', mode: 'continuable', label: '安全审计三个记忆插件', activity: 'active', running: true, cwd: 'C:/proj/dsh-reasonix-desktop', agentPreset: 'standard', title: '审计员', updatedAt: Date.now() },
     { id: 'bbb', sessionId: 'session-bbb', kind: 'child', mode: 'one-shot', label: '调研 dsh-std 协议', activity: 'inactive', running: false, cwd: 'C:/proj/dsh-reasonix-desktop', hasChildren: true, updatedAt: Date.now() - 1000 }
@@ -205,12 +212,26 @@ setTimeout(function () {
   check('overlay 面板已挂载到 dock body', !!panel && panel.parentNode === bodyHost);
   check('宿主定位加固为 relative（原为 static）', bodyHost.style.position === 'relative', 'position=' + bodyHost.style.position);
   check('React 占位节点仍在', reactPlaceholder.parentNode === bodyHost && reactPlaceholder.textContent.indexOf('占位') >= 0);
-  const cards = doc.querySelectorAll('.dsh-sp-card');
+  const cards = doc.querySelectorAll('.dsh-sp-card--sub');
   const rows = doc.querySelectorAll('.dsh-sp-table tbody tr');
   check('子智能体卡片渲染 2 张', cards.length === 2, 'got ' + cards.length);
   check('进程表渲染 3 行', rows.length === 3, 'got ' + rows.length);
-  const activeCard = doc.querySelectorAll('.dsh-sp-card--active');
+  const activeCard = doc.querySelectorAll('.dsh-sp-card--sub.dsh-sp-card--active');
   check('活跃子智能体高亮 1 张', activeCard.length === 1, 'got ' + activeCard.length);
+  // 图标：tab 内应有 svg（与原生 tab 同风格）
+  check('tab 含 SVG 图标', !!(tab && tab.querySelector('svg')), tab ? tab.textContent : '');
+  check('tab 文本用原生 label 类', !!(tab && tab.querySelector('.workbench-dock__tab-label')));
+  // 后台任务区块（含状态）
+  const jobCards = doc.querySelectorAll('.dsh-sp-card--job');
+  const chips = doc.querySelectorAll('.dsh-sp-status');
+  check('后台任务渲染 2 条', jobCards.length === 2, 'got ' + jobCards.length);
+  check('任务状态徽标 2 个', chips.length === 2, 'got ' + chips.length);
+  check('状态文案含已完成/运行中', (function () {
+    const txt = chips.map(function (c) { return c.textContent; }).join(',');
+    return txt.indexOf('已完成') >= 0 && txt.indexOf('运行中') >= 0;
+  })(), chips.map(function (c) { return c.textContent; }).join(','));
+  check('运行中任务高亮卡片', doc.querySelectorAll('.dsh-sp-card--job.dsh-sp-card--active').length === 1);
+  check('面板含任务计数摘要', panel && /后台任务（2/.test(panel.textContent), panel ? '' : '');
   check('面板含会话与计数摘要', panel && /子智能体 2/.test(panel.textContent) && /进程 3/.test(panel.textContent));
   check('活跃徽标显示 1', (function () { const b = doc.getElementById('dsh-sp-badge'); return b && b.textContent === '1'; })());
 

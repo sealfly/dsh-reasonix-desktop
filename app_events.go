@@ -139,6 +139,11 @@ func (a *App) handleEventFrame(data []byte) {
 	if json.Unmarshal(data, &frame) == nil && cachePendingAsk(frame) {
 		return
 	}
+	// session/jobs（后台任务及其状态）没有 event 字段，parseEventFrame 会丢弃；
+	// 这里单独截获进缓存，供「子代理」面板显示后台任务状态。
+	if captureJobsFrame(data) {
+		return
+	}
 	wire := parseEventFrame(data)
 	if wire == nil {
 		return
