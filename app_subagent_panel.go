@@ -60,6 +60,15 @@ var (
 	procCacheTTL = 4 * time.Second
 )
 
+// LogFromFrontend 前端注入脚本的诊断上报。
+//
+// 生产构建的 WebView2 不带远程调试端口（CDP 不可用），注入脚本一旦探测不到宿主容器
+// 就会静默失效；因此脚本把关键诊断（是否找到 tab 栏、注入结果、异常）回报到桥，
+// 由桥写进 %TEMP%\resume-debug.log，便于事后排查（失败留痕原则）。
+func (a *App) LogFromFrontend(msg string) {
+	resumeLog("frontend: %s", msg)
+}
+
 // SubagentPanel 返回「子代理」页数据。sessionId 为空时自动选最近更新的父会话。
 func (a *App) SubagentPanel(sessionId string) map[string]any {
 	out := map[string]any{

@@ -33,7 +33,10 @@ class El {
   set textContent(v) { this._text = String(v); this.childNodes = []; }
   setAttribute(k, v) { this.attrs[k] = String(v); }
   getAttribute(k) { return Object.prototype.hasOwnProperty.call(this.attrs, k) ? this.attrs[k] : null; }
-  addEventListener() { /* no-op */ }
+  addEventListener(type, fn) {
+    this._listeners = this._listeners || {};
+    this._listeners[type] = (this._listeners[type] || []).concat([fn]);
+  }
   querySelector(sel) {
     let found = null;
     walk(this, function (n) { if (!found && matchesSelector(n, sel)) found = n; });
@@ -127,14 +130,14 @@ console.log('[1] 提取内联块: ' + inlined.length + ' 字节');
 const doc = makeDoc();
 doc.body.innerHTMLLike = true;
 
-// 模拟 Reasonix 右侧栏（.workspace-files 保持 static，用于检验定位加固）
-const panelWrap = doc.body.appendChild(new El('div')); panelWrap.className = 'workspace-panel';
-const files = panelWrap.appendChild(new El('div')); files.className = 'workspace-files';
-const tools = files.appendChild(new El('div')); tools.className = 'workspace-files__tools';
-const tabs = tools.appendChild(new El('div')); tabs.className = 'workspace-files__tabs';
-const tabFiles = tabs.appendChild(new El('button')); tabFiles.className = 'workspace-files__tab'; tabFiles.textContent = '文件';
-const tabChanged = tabs.appendChild(new El('button')); tabChanged.className = 'workspace-files__tab workspace-files__tab--active'; tabChanged.textContent = '改动';
-const reactPlaceholder = files.appendChild(new El('div'));
+// 模拟 Reasonix 右栏（workbench-dock）：tabs 行 + body（body 保持 static，用于检验定位加固）
+const dock = doc.body.appendChild(new El('div')); dock.className = 'workbench-dock';
+const tools = dock.appendChild(new El('div')); tools.className = 'workbench-dock__tools';
+const tabs = tools.appendChild(new El('div')); tabs.className = 'workbench-dock__tabs';
+const nativeTab1 = tabs.appendChild(new El('button')); nativeTab1.className = 'workbench-dock__tab'; nativeTab1.textContent = '概览';
+const nativeTab2 = tabs.appendChild(new El('button')); nativeTab2.className = 'workbench-dock__tab'; nativeTab2.textContent = '终端';
+const bodyHost = dock.appendChild(new El('div')); bodyHost.className = 'workbench-dock__body';
+const reactPlaceholder = bodyHost.appendChild(new El('div'));
 reactPlaceholder.className = 'placeholder';
 reactPlaceholder.textContent = '（原生内容占位）';
 
@@ -166,7 +169,11 @@ const sandbox = {
 };
 sandbox.window = sandbox;
 sandbox.window.__DSH_SUBAGENT_PANEL__ = undefined;
-sandbox.window.go = { main: { App: { SubagentPanel: function () { return Promise.resolve(mockResult); } } } };
+const diagLog = [];
+sandbox.window.go = { main: { App: {
+  SubagentPanel: function () { return Promise.resolve(mockResult); },
+  LogFromFrontend: function (msg) { diagLog.push(String(msg)); }
+} } };
 sandbox.window.setInterval = sandbox.setInterval;
 sandbox.window.clearInterval = sandbox.clearInterval;
 sandbox.window.addEventListener = function () { };
@@ -183,18 +190,21 @@ const results = [];
 function check(name, cond, extra) { results.push({ name: name, ok: !!cond, extra: extra || '' }); }
 
 const tab = doc.getElementById('dsh-sp-tab');
-check('tab 注入到 .workspace-files__tabs', !!tab && tab.parentNode === tabs);
+check('tab 注入到 .workbench-dock__tabs', !!tab && tab.parentNode === tabs, tab ? ('parent=' + (tab.parentNode && tab.parentNode.className)) : 'no tab');
 check('tab 文案为「子代理」', tab && tab.textContent.indexOf('子代理') >= 0, tab ? tab.textContent : '');
-check('原生 tab 未被移除', tabs.children.length === 3 && tabFiles.parentNode === tabs && tabChanged.parentNode === tabs,
+check('按钮融入原生样式类 workbench-dock__tab', tab && classList(tab).indexOf('workbench-dock__tab') >= 0, tab ? tab.className : '');
+check('原生 tab 未被移除', tabs.children.length === 3 && nativeTab1.parentNode === tabs && nativeTab2.parentNode === tabs,
   'children=' + tabs.children.length);
+check('诊断已上报(桥 LogFromFrontend)', diagLog.some(function (m) { return m.indexOf('tab-injected') >= 0; }),
+  diagLog.join(' | ').slice(0, 160));
 
 // 点击打开面板 → 等 Promise 落地
 if (tab && tab.onclick) tab.onclick();
 setTimeout(function () {
   const panel = doc.getElementById('dsh-sp-panel');
-  check('overlay 面板已挂载', !!panel && panel.parentNode === files);
-  check('宿主定位加固为 relative（原为 static）', files.style.position === 'relative', 'position=' + files.style.position);
-  check('React 占位节点仍在', reactPlaceholder.parentNode === files && reactPlaceholder.textContent.indexOf('占位') >= 0);
+  check('overlay 面板已挂载到 dock body', !!panel && panel.parentNode === bodyHost);
+  check('宿主定位加固为 relative（原为 static）', bodyHost.style.position === 'relative', 'position=' + bodyHost.style.position);
+  check('React 占位节点仍在', reactPlaceholder.parentNode === bodyHost && reactPlaceholder.textContent.indexOf('占位') >= 0);
   const cards = doc.querySelectorAll('.dsh-sp-card');
   const rows = doc.querySelectorAll('.dsh-sp-table tbody tr');
   check('子智能体卡片渲染 2 张', cards.length === 2, 'got ' + cards.length);
@@ -210,7 +220,19 @@ setTimeout(function () {
     const closeBtn = btns[btns.length - 1];
     if (closeBtn && closeBtn.onclick) closeBtn.onclick();
     check('关闭后 overlay 移除', !doc.getElementById('dsh-sp-panel'));
-    check('关闭后 React 节点完好', files.childNodes.indexOf(reactPlaceholder) >= 0 && tabs.children.length === 3);
+    check('关闭后 React 节点完好', bodyHost.childNodes.indexOf(reactPlaceholder) >= 0 && tabs.children.length === 3);
+  }
+
+  // 事件委托：点击原生 tab（概览/终端）应收起我们的面板
+  if (tab && tab.onclick) tab.onclick();          // 再次打开
+  const delegated = !!tabs.attrs['dsh-sp-delegated'];
+  check('tab 栏已挂事件委托', delegated);
+  if (tabs._listeners && tabs._listeners.click && tabs._listeners.click.length) {
+    const ev = { target: nativeTab2 };
+    tabs._listeners.click[0](ev);
+    check('点原生 tab 后自动收起面板', !doc.getElementById('dsh-sp-panel'));
+  } else {
+    check('点原生 tab 后自动收起面板', false, 'no click listener captured');
   }
 
   // 幂等：再次执行脚本不应重复注入

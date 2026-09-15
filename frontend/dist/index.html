@@ -2270,15 +2270,39 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
   }
 
   // ===== 状态 =====
-  var state = { open: false, timer: null, loading: false, last: null, error: "" };
+  var state = { open: false, timer: null, loading: false, last: null, error: "", diag: {} };
 
-  function findTabBar() {
-    return document.querySelector(".workspace-files__tabs") ||
-           document.querySelector(".workspace-files__tools .workspace-files__tabs");
+  // 诊断上报（无 devtools 环境下的可观测性；桥侧写入 %TEMP%\resume-debug.log）
+  var diagSent = {};
+  function diag(tag, extra) {
+    try {
+      var app = A();
+      if (!app || !app.LogFromFrontend) return;
+      var key = tag + "|" + (extra || "");
+      if (diagSent[key]) return;      // 同类诊断只报一次，避免刷日志
+      diagSent[key] = true;
+      app.LogFromFrontend("[subagent-panel] " + tag + (extra ? " " + extra : ""));
+    } catch (e) { /* 上报失败绝不影响功能 */ }
   }
-  function findFilePanel() {
-    return document.querySelector(".workspace-files") || document.querySelector(".workspace-panel");
+
+  // 右栏视图 tab 栏（概览/远程/终端…）——真实类名来自 Reasonix 前端 index chunk：
+  //   workbench-dock__tabs / workbench-dock__tab / workbench-dock__body
+  // 兜底候选是"工作区视图"里的 文件/改动 子 tab 栏（旧版布局）。
+  var TAB_BAR_SELECTORS = [".workbench-dock__tabs", ".workspace-files__tabs"];
+  var PANEL_HOST_SELECTORS = [".workbench-dock__body", ".workspace-files", ".workspace-panel"];
+  // 原生 tab 的类名（用于样式融入；仅主容器命中时使用）
+  var NATIVE_TAB_CLASS = "workbench-dock__tab";
+
+  function firstMatch(selectors) {
+    for (var i = 0; i < selectors.length; i++) {
+      var n = document.querySelector(selectors[i]);
+      if (n) return { node: n, selector: selectors[i] };
+    }
+    return null;
   }
+  function findTabBar() { return firstMatch(TAB_BAR_SELECTORS); }
+  function findPanelHost() { return firstMatch(PANEL_HOST_SELECTORS); }
+  function findFilePanel() { var m = findPanelHost(); return m ? m.node : null; }
 
   // ===== 面板渲染（overlay，绝不动 React 节点）=====
   function renderPanel() {
@@ -2447,8 +2471,9 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
   function setOpen(open) {
     state.open = !!open;
     var tab = document.getElementById(NS + "-tab");
-    if (tab) tab.className = NS + "-tab" + (state.open ? " " + NS + "-tab--on" : "");
+    if (tab) tab.className = tabClassName();
     if (state.open) {
+      diag("panel-open");
       refresh(false);
       if (!state.timer) state.timer = window.setInterval(function () { if (state.open) refresh(false); }, REFRESH_MS);
     } else if (state.timer) {
@@ -2468,12 +2493,39 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
   }
 
   // ===== tab 按钮（插入到 React 的 tab 栏里；被 React 重排删除时由 scan 补回）=====
+  function tabClassName() {
+    var cls = NS + "-tab";
+    if (state.isDock) cls += " " + NATIVE_TAB_CLASS;   // 融入右栏原生视图 tab 样式
+    if (state.open) cls += " " + NS + "-tab--on";
+    return cls;
+  }
+
   function ensureTab() {
-    var bar = findTabBar();
-    if (!bar) return;
-    if (document.getElementById(NS + "-tab")) return;
+    var m = findTabBar();
+    if (!m) { diag("no-tab-bar"); return; }
+    diag("tab-bar-found", m.selector);
+    var bar = m.node;
+    // 事件委托：点击"我们的按钮以外"的原生视图 tab（概览/远程/终端…）→ 收起我们的面板。
+    // 用捕获阶段，保证在任何 React 处理器之前响应；只读判断，不改动 React 节点。
+    if (!bar.getAttribute(NS + "-delegated")) {
+      bar.setAttribute(NS + "-delegated", "1");
+      bar.addEventListener("click", function (ev) {
+        var t = ev.target, mine = false;
+        while (t && t !== bar) {
+          if (t.id === NS + "-tab") { mine = true; break; }
+          t = t.parentNode;
+        }
+        if (!mine && state.open) setOpen(false);
+      }, true);
+    }
+    if (document.getElementById(NS + "-tab")) {
+      var ex = document.getElementById(NS + "-tab");
+      if (ex.className !== tabClassName()) ex.className = tabClassName();
+      return;
+    }
     ensureStyle();
-    var btn = el("button", NS + "-tab" + (state.open ? " " + NS + "-tab--on" : ""));
+    state.isDock = m.selector.indexOf("workbench-dock") >= 0;
+    var btn = el("button", tabClassName());
     btn.id = NS + "-tab";
     btn.type = "button";
     btn.appendChild(document.createTextNode(TAB_LABEL));
@@ -2481,8 +2533,12 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
     badge.id = NS + "-badge";
     badge.style.display = "none";
     btn.appendChild(badge);
-    btn.onclick = function () { setOpen(!state.open); };
+    btn.onclick = function (ev) {
+      if (ev && ev.stopPropagation) ev.stopPropagation();
+      setOpen(!state.open);
+    };
     bar.appendChild(btn);
+    diag("tab-injected", m.selector);
     updateBadge();
   }
 
@@ -2500,17 +2556,21 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
       ensureTab();
       renderPanel();
       teardownIfDetached();
-    } catch (e) { /* 失败留痕但不打断前端 */ }
+    } catch (e) {
+      diag("scan-error", (e && e.message) ? e.message : String(e));
+    }
   }
 
   function boot() {
+    diag("boot", "readyState=" + document.readyState);
     scan();
     scanTimer = window.setInterval(scan, 1500);
     if (window.MutationObserver) {
       try {
         var obs = new MutationObserver(function () { scan(); });
         obs.observe(document.documentElement, { childList: true, subtree: true });
-      } catch (e) { /* 轮询已兜底 */ }
+        diag("observer-on");
+      } catch (e) { diag("observer-fail", String(e)); }
     }
     window.addEventListener("beforeunload", function () {
       if (scanTimer) window.clearInterval(scanTimer);
