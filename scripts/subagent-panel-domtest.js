@@ -214,9 +214,9 @@ setTimeout(function () {
   check('宿主定位加固为 relative（原为 static）', bodyHost.style.position === 'relative', 'position=' + bodyHost.style.position);
   check('React 占位节点仍在', reactPlaceholder.parentNode === bodyHost && reactPlaceholder.textContent.indexOf('占位') >= 0);
   const cards = doc.querySelectorAll('.dsh-sp-card--sub');
-  const rows = doc.querySelectorAll('.dsh-sp-table tbody tr');
+  const rows = doc.querySelectorAll('.dsh-sp-procrow');
   check('子智能体卡片渲染 2 张', cards.length === 2, 'got ' + cards.length);
-  check('进程表渲染 3 行', rows.length === 3, 'got ' + rows.length);
+  check('进程行渲染 3 行(原生行样式)', rows.length === 3, 'got ' + rows.length);
   const activeCard = doc.querySelectorAll('.dsh-sp-card--sub.dsh-sp-card--active');
   check('活跃子智能体高亮 1 张', activeCard.length === 1, 'got ' + activeCard.length);
   // 图标：tab 内应有 svg（与原生 tab 同风格）

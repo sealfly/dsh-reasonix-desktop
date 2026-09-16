@@ -2194,58 +2194,75 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
     catch (e) { return null; }
   }
 
+  // 样式对齐原生：数值照抄 Reasonix v1.31.4 源码 styles.css 的真实规则
+  // （.workbench-dock__tab / .workspace-files__tab / .workspace-tree__row /
+  //   .workspace-change / .workspace-iconbtn / .workspace-files__tools / .workspace-empty /
+  //   .workspace-recent-menu__title），颜色统一用原生 CSS 变量，自动跟随主题。
   var css = [
-    "." + NS + "-tab{all:unset;box-sizing:border-box;display:inline-flex;align-items:center;gap:5px;padding:4px 9px;",
-    "border-radius:6px;font:inherit;font-size:12px;line-height:1.4;cursor:pointer;color:var(--fg-dim,#9aa0a6);white-space:nowrap}",
-    "." + NS + "-tab:hover{background:var(--bg-soft,rgba(255,255,255,.06));color:var(--fg,#e8eaed)}",
-    "." + NS + "-tab--on{background:var(--bg-elev-2,rgba(255,255,255,.1));color:var(--fg,#e8eaed);font-weight:600}",
-    "." + NS + "-badge{min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:var(--accent,#ff5a2c);",
-    "color:var(--accent-fg,#fff);font-size:10px;font-weight:700;display:inline-flex;align-items:center;justify-content:center}",
-    "." + NS + "-panel{position:absolute;inset:0;z-index:6;display:flex;flex-direction:column;background:var(--bg,#111214);",
-    "color:var(--fg,#e8eaed);font-size:12px;overflow:hidden}",
-    "." + NS + "-head{display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--border-soft,rgba(255,255,255,.08));flex:0 0 auto}",
-    "." + NS + "-title{font-weight:600;font-size:12.5px}",
-    "." + NS + "-sub{color:var(--fg-faint,#85888f);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1 1 auto}",
-    "." + NS + "-btn{all:unset;cursor:pointer;padding:3px 8px;border-radius:6px;border:1px solid var(--border,rgba(255,255,255,.14));font-size:11px}",
-    "." + NS + "-btn:hover{background:var(--bg-soft,rgba(255,255,255,.06))}",
-    // 纯图标按钮（同原生工具栏风格：正方形、悬停底色、无文字）
-    "." + NS + "-iconbtn{all:unset;box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;",
-    "width:22px;height:22px;border-radius:6px;color:var(--fg-dim,#9aa0a6);cursor:pointer;flex:0 0 auto}",
-    "." + NS + "-iconbtn:hover{background:var(--bg-soft,rgba(255,255,255,.08));color:var(--fg,#e8eaed)}",
-    "." + NS + "-iconbtn:focus-visible{outline:1px solid var(--accent,#ff5a2c);outline-offset:1px}",
+    // tab 按钮：对齐 .workbench-dock__tab（height 24 / padding 0 8 / radius 6 / 11.5px / weight 560）
+    "." + NS + "-tab{all:unset;box-sizing:border-box;--wails-draggable:no-drag;display:inline-flex;align-items:center;",
+    "justify-content:center;gap:5px;height:24px;padding:0 8px;border-radius:6px;background:transparent;",
+    "color:var(--fg-faint);font:inherit;font-size:11.5px;font-weight:560;white-space:nowrap;cursor:pointer}",
+    "." + NS + "-tab:hover{background:var(--tree-row-hover-bg,var(--workspace-files-hover,var(--bg-soft)));color:var(--fg)}",
+    "." + NS + "-tab--on{background:var(--tree-row-current-bg,var(--bg-elev-2));color:var(--fg)}",
+    "." + NS + "-tab-text{font-size:11.5px}",
+    "." + NS + "-badge{min-width:15px;height:15px;padding:0 4px;border-radius:8px;background:var(--accent);",
+    "color:var(--accent-fg);font-size:10px;font-weight:620;display:inline-flex;align-items:center;justify-content:center}",
+    // 面板容器：用原生底色/前景
+    "." + NS + "-panel{position:absolute;inset:0;z-index:6;display:flex;flex-direction:column;",
+    "background:var(--bg);color:var(--fg);font-size:12.5px;overflow:hidden}",
+    // 头部：对齐 .workspace-files__tools（height 42 / padding 7px 8px 3px / gap 4），不另加分隔线
+    "." + NS + "-head{flex:0 0 auto;height:42px;display:flex;align-items:center;gap:4px;padding:7px 8px 3px}",
+    "." + NS + "-title{font-size:12.5px;font-weight:560;color:var(--fg)}",
+    "." + NS + "-sub{color:var(--fg-faint);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1 1 auto}",
+    // 图标按钮：对齐 .workspace-iconbtn（28×28 / radius 7 / transition）
+    "." + NS + "-iconbtn{all:unset;box-sizing:border-box;--wails-draggable:no-drag;display:inline-flex;align-items:center;",
+    "justify-content:center;width:28px;height:28px;border-radius:7px;background:transparent;color:var(--fg-faint);",
+    "cursor:pointer;transition:color .12s,background .12s;flex:0 0 auto}",
+    "." + NS + "-iconbtn:hover{background:var(--tree-row-hover-bg,var(--workspace-files-hover,var(--bg-soft)));color:var(--fg)}",
+    "." + NS + "-iconbtn:focus-visible{outline:1px solid var(--accent);outline-offset:1px}",
     "." + NS + "-iconbtn--busy{opacity:.55}",
-    "." + NS + "-body{flex:1 1 auto;overflow:auto;padding:8px 10px 14px}",
-    "." + NS + "-sect{margin-bottom:14px}",
-    "." + NS + "-secthead{display:flex;align-items:center;gap:6px;margin:2px 0 6px;color:var(--fg-dim,#9aa0a6);",
-    "font-size:11px;font-weight:600;letter-spacing:.02em;text-transform:none}",
-    "." + NS + "-card{border:1px solid var(--border-soft,rgba(255,255,255,.09));border-radius:8px;padding:7px 9px;margin-bottom:6px;",
-    "background:var(--bg-elev,rgba(255,255,255,.03))}",
-    "." + NS + "-card--active{border-color:var(--accent,#ff5a2c)}",
-    "." + NS + "-row1{display:flex;align-items:center;gap:6px}",
-    "." + NS + "-label{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1 1 auto}",
-    "." + NS + "-dot{width:7px;height:7px;border-radius:50%;background:var(--fg-faint,#85888f);flex:0 0 auto}",
-    "." + NS + "-dot--on{background:var(--accent,#ff5a2c);box-shadow:0 0 0 3px rgba(255,90,44,.18)}",
-    "." + NS + "-meta{color:var(--fg-faint,#85888f);font-size:11px;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
-    "." + NS + "-tag{display:inline-block;padding:0 5px;border-radius:4px;background:var(--bg-elev-2,rgba(255,255,255,.08));",
-    "color:var(--fg-dim,#9aa0a6);font-size:10px;margin-right:4px}",
-    "." + NS + "-status{display:inline-block;padding:0 6px;border-radius:4px;font-size:10px;font-weight:600;white-space:nowrap}",
-    "." + NS + "-status--running{background:rgba(255,90,44,.18);color:var(--accent,#ff5a2c)}",
-    "." + NS + "-status--done{background:rgba(90,200,120,.16);color:#5ac878}",
-    "." + NS + "-status--failed{background:rgba(255,90,90,.18);color:#ff6b6b}",
-    "." + NS + "-status--cancelled{background:rgba(255,255,255,.08);color:var(--fg-faint,#85888f)}",
-    "." + NS + "-status--idle{background:rgba(255,255,255,.06);color:var(--fg-dim,#9aa0a6)}",
-    "." + NS + "-jobcmd{font-family:ui-monospace,Consolas,monospace;font-size:10.5px;color:var(--fg-dim,#9aa0a6);",
-    "margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
-    "." + NS + "-tab-text{}",
-    "." + NS + "-table{width:100%;border-collapse:collapse}",
-    "." + NS + "-table th{text-align:left;font-weight:600;color:var(--fg-faint,#85888f);font-size:10.5px;padding:3px 4px;",
-    "border-bottom:1px solid var(--border-soft,rgba(255,255,255,.08))}",
-    "." + NS + "-table td{padding:3px 4px;border-bottom:1px solid var(--border-soft,rgba(255,255,255,.05));vertical-align:top}",
+    // 内容区：滚动但不显示滚动条（原生全局 ::-webkit-scrollbar{display:none}）
+    "." + NS + "-body{flex:1 1 auto;overflow:auto;padding:2px 0 10px}",
+    "." + NS + "-body::-webkit-scrollbar{display:none}",
+    "." + NS + "-sect{margin-bottom:10px}",
+    // 分组标题：对齐 .workspace-recent-menu__title
+    "." + NS + "-secthead{padding:6px 8px 4px;color:var(--fg-faint);font-size:11px;font-weight:620}",
+    // 列表行：对齐 .workspace-tree__row / .workspace-change（无边框、圆角、hover 底色）
+    "." + NS + "-card{box-sizing:border-box;display:flex;flex-direction:column;gap:2px;width:100%;",
+    "min-height:var(--tree-row-height,30px);padding:5px 8px;border:0;border-radius:var(--tree-row-radius,7px);",
+    "background:transparent;color:var(--fg-dim)}",
+    "." + NS + "-card:hover{background:var(--tree-row-hover-bg,var(--workspace-files-hover,var(--bg-soft)));color:var(--fg)}",
+    "." + NS + "-card--active{background:var(--tree-row-current-bg,var(--bg-elev-2));color:var(--tree-row-current-fg,var(--fg))}",
+    "." + NS + "-row1{display:flex;align-items:center;gap:6px;min-width:0}",
+    "." + NS + "-label{font-size:12.5px;font-weight:560;color:inherit;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1 1 auto}",
+    "." + NS + "-dot{width:6px;height:6px;border-radius:50%;background:var(--fg-faint);flex:0 0 auto}",
+    "." + NS + "-dot--on{background:var(--accent)}",
+    "." + NS + "-meta{color:var(--fg-faint);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+    "." + NS + "-tag{display:inline-block;padding:0 5px;border-radius:5px;background:var(--bg-elev-2);",
+    "color:var(--fg-dim);font-size:10.5px;font-weight:560;flex:0 0 auto}",
+    // 状态徽标：延续行内的胶囊样式，颜色取原生语义变量
+    "." + NS + "-status{display:inline-block;padding:0 6px;border-radius:5px;font-size:10.5px;font-weight:620;",
+    "white-space:nowrap;flex:0 0 auto;background:var(--bg-elev-2);color:var(--fg-dim)}",
+    "." + NS + "-status--running{background:color-mix(in srgb,var(--accent) 18%,transparent);color:var(--accent)}",
+    "." + NS + "-status--done{background:color-mix(in srgb,var(--ok,#1f9d57) 16%,transparent);color:var(--ok,#1f9d57)}",
+    "." + NS + "-status--failed{background:color-mix(in srgb,var(--danger,#d9534f) 18%,transparent);color:var(--danger,#d9534f)}",
+    "." + NS + "-status--cancelled{background:var(--bg-elev-2);color:var(--fg-faint)}",
+    "." + NS + "-status--idle{background:var(--bg-soft);color:var(--fg-faint)}",
+    "." + NS + "-jobcmd{font-family:ui-monospace,Consolas,monospace;font-size:11px;color:var(--fg-faint);",
+    "overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+    // 系统进程：单行列表（对齐 .workspace-tree__row 的行高与 hover），不再用表格
+    "." + NS + "-procrow{box-sizing:border-box;display:flex;align-items:center;gap:8px;width:100%;",
+    "height:var(--tree-row-height,30px);padding:0 8px;border-radius:var(--tree-row-radius,7px);color:var(--fg-dim)}",
+    "." + NS + "-procrow:hover{background:var(--tree-row-hover-bg,var(--workspace-files-hover,var(--bg-soft)));color:var(--fg)}",
+    "." + NS + "-procname{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px}",
+    "." + NS + "-procid{font-family:ui-monospace,Consolas,monospace;font-size:11px;color:var(--fg-faint);flex:0 0 auto}",
+    "." + NS + "-procmem{font-size:11px;color:var(--fg-faint);flex:0 0 auto;min-width:56px;text-align:right}",
     "." + NS + "-mono{font-family:ui-monospace,Consolas,monospace;font-size:11px}",
-    "." + NS + "-empty{color:var(--fg-faint,#85888f);padding:10px 2px;font-size:11.5px;line-height:1.6}",
-    "." + NS + "-err{color:#ff8a65;padding:8px 2px;font-size:11.5px;white-space:pre-wrap}",
-    "." + NS + "-note{color:var(--fg-faint,#85888f);font-size:10.5px;line-height:1.6;margin-top:10px;padding-top:8px;",
-    "border-top:1px solid var(--border-soft,rgba(255,255,255,.07))}",
+    // 空态：对齐 .workspace-empty
+    "." + NS + "-empty{padding:18px 8px;color:var(--fg-faint);font-size:13px;line-height:1.6}",
+    "." + NS + "-err{color:var(--danger,#d9534f);padding:12px 8px;font-size:12.5px;white-space:pre-wrap}",
+    "." + NS + "-note{padding:8px 8px 0;color:var(--fg-faint);font-size:10.5px;line-height:1.6}",
     "." + NS + "-skeleton{animation:" + NS + "-pulse 1.2s ease-in-out infinite}",
     "@keyframes " + NS + "-pulse{0%,100%{opacity:.45}50%{opacity:.95}}"
   ].join("");
@@ -2578,31 +2595,22 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
     }
     body.appendChild(secJobs);
 
-    // 3) 后台进程（本机系统进程，与本项目/DSH 相关）
+    // 3) 后台进程（本机系统进程，与本项目/DSH 相关）——原生行样式，不用表格
     var sec2 = el("div", NS + "-sect");
     var procs = data.processes || [];
     sec2.appendChild(el("div", NS + "-secthead", "后台进程（" + procs.length + "）"));
     if (!procs.length) {
       sec2.appendChild(el("div", NS + "-empty", "未发现与本项目/DSH 相关的进程。"));
     } else {
-      var t = el("table", NS + "-table");
-      var thead = el("thead");
-      var htr = el("tr");
-      ["PID", "进程", "内存", "类别"].forEach(function (h) { htr.appendChild(el("th", null, h)); });
-      thead.appendChild(htr);
-      t.appendChild(thead);
-      var tb = el("tbody");
       procs.forEach(function (p) {
-        var tr = el("tr");
-        tr.appendChild(el("td", NS + "-mono", String(p.pid)));
-        tr.appendChild(el("td", null, p.name || ""));
-        tr.appendChild(el("td", NS + "-mono", (p.memMb ? Math.round(p.memMb) + " MB" : "")));
-        tr.appendChild(el("td", null, p.category || ""));
-        if (p.cmd) tr.title = p.cmd;
-        tb.appendChild(tr);
+        var row = el("div", NS + "-procrow");
+        row.appendChild(el("span", NS + "-procname", p.name || ""));
+        row.appendChild(el("span", NS + "-procid", "PID " + p.pid));
+        row.appendChild(el("span", NS + "-procmem", p.memMb ? Math.round(p.memMb) + " MB" : ""));
+        row.appendChild(el("span", NS + "-tag", p.category || ""));
+        if (p.cmd) row.title = p.cmd;
+        sec2.appendChild(row);
       });
-      t.appendChild(tb);
-      sec2.appendChild(t);
     }
     body.appendChild(sec2);
 
