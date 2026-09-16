@@ -2258,6 +2258,12 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
     "." + NS + "-procname{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px}",
     "." + NS + "-procid{font-family:ui-monospace,Consolas,monospace;font-size:11px;color:var(--fg-faint);flex:0 0 auto}",
     "." + NS + "-procmem{font-size:11px;color:var(--fg-faint);flex:0 0 auto;min-width:56px;text-align:right}",
+    // 区块标题行 + 详情开关（开关是小号图标按钮，融入原生 iconbtn 风格）
+    "." + NS + "-sectrow{display:flex;align-items:center;justify-content:space-between;gap:4px;padding:6px 8px 4px}",
+    "." + NS + "-sectrow>" + "." + NS + "-secthead{padding:0}",
+    "." + NS + "-secttoggle{width:20px;height:20px;border-radius:5px}",
+    // 收起态：只显示汇总（不列具体进程）
+    "." + NS + "-procsummary{padding:2px 8px 6px;color:var(--fg-faint);font-size:11.5px;line-height:1.5}",
     "." + NS + "-mono{font-family:ui-monospace,Consolas,monospace;font-size:11px}",
     // 空态：对齐 .workspace-empty
     "." + NS + "-empty{padding:18px 8px;color:var(--fg-faint);font-size:13px;line-height:1.6}",
@@ -2303,6 +2309,13 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
     close: [
       ["path", { d: "M18 6 6 18" }],
       ["path", { d: "m6 6 12 12" }]
+    ],
+    // lucide chevron-right / chevron-down（详情展开/收起）
+    "chevron-right": [
+      ["path", { d: "m9 18 6-6-6-6" }]
+    ],
+    "chevron-down": [
+      ["path", { d: "m6 9 6 6 6-6" }]
     ]
   };
 
@@ -2393,8 +2406,33 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
     return m + "m" + (rs ? rs + "s" : "");
   }
 
+  // 后台进程汇总（收起态显示）：按类别计数 + 内存合计，不暴露具体进程
+  function procSummary(procs) {
+    var byCat = {}, mem = 0;
+    (procs || []).forEach(function (p) {
+      var c = p.category || "其他";
+      byCat[c] = (byCat[c] || 0) + 1;
+      if (p.memMb) mem += p.memMb;
+    });
+    var parts = Object.keys(byCat).map(function (k) { return k + " " + byCat[k]; });
+    var tail = mem > 0 ? "，合计约 " + Math.round(mem) + " MB" : "";
+    return parts.join(" · ") + tail + "（点右侧箭头展开具体进程）";
+  }
+
   // ===== 状态 =====
-  var state = { open: false, timer: null, loading: false, last: null, error: "", diag: {} };
+  // procDetail：「后台进程」区块的详情开关（展开显示完整命令行 / 父 PID）。默认收起，
+  // 用户选择记在 localStorage（注入脚本里访问 storage 一律 try/catch，隐私模式不报错）。
+  var PROC_DETAIL_KEY = "dsh-sp-proc-detail";
+  function loadProcDetail() {
+    try { return window.localStorage && window.localStorage.getItem(PROC_DETAIL_KEY) === "1"; }
+    catch (e) { return false; }
+  }
+  function saveProcDetail(v) {
+    try { if (window.localStorage) window.localStorage.setItem(PROC_DETAIL_KEY, v ? "1" : "0"); }
+    catch (e) { /* 存不了就只在本次会话生效 */ }
+  }
+
+  var state = { open: false, timer: null, loading: false, last: null, error: "", diag: {}, procDetail: loadProcDetail() };
 
   // 诊断上报（无 devtools 环境下的可观测性；桥侧写入 %TEMP%\resume-debug.log）
   var diagSent = {};
@@ -2442,6 +2480,7 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
       return (j.id || "") + ":" + (j.status || "") + ":" + (j.durationMs >= 0 ? Math.round(j.durationMs / 1000) : -1);
     }).join(",");
     return [state.loading ? "L" : "", state.last.sessionId || "", subs, jobs, procs,
+      state.procDetail ? "D1" : "D0",
       JSON.stringify(state.last.counts || {})].join("|");
   }
 
@@ -2595,22 +2634,43 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
     }
     body.appendChild(secJobs);
 
-    // 3) 后台进程（本机系统进程，与本项目/DSH 相关）——原生行样式，不用表格
+    // 3) 后台进程：标题 + 详情开关；**收起时只显示汇总，展开后才逐条列出具体进程**
     var sec2 = el("div", NS + "-sect");
     var procs = data.processes || [];
-    sec2.appendChild(el("div", NS + "-secthead", "后台进程（" + procs.length + "）"));
+    var head2 = el("div", NS + "-sectrow");
+    head2.appendChild(el("div", NS + "-secthead", "后台进程（" + procs.length + "）"));
+    if (procs.length) {
+      var toggle = iconButton(state.procDetail ? "chevron-down" : "chevron-right",
+        state.procDetail ? "收起（只看汇总）" : "展开（列出具体进程）");
+      toggle.className = NS + "-iconbtn " + NS + "-secttoggle";
+      toggle.setAttribute("aria-pressed", state.procDetail ? "true" : "false");
+      toggle.onclick = function (ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        state.procDetail = !state.procDetail;
+        saveProcDetail(state.procDetail);
+        diag("proc-detail", state.procDetail ? "on" : "off");
+        state.renderSig = null;   // 强制重绘（签名含 D0/D1）
+        renderPanel();
+      };
+      head2.appendChild(toggle);
+    }
+    sec2.appendChild(head2);
     if (!procs.length) {
       sec2.appendChild(el("div", NS + "-empty", "未发现与本项目/DSH 相关的进程。"));
-    } else {
+    } else if (state.procDetail) {
+      // 展开：逐条列出具体后台进程
       procs.forEach(function (p) {
         var row = el("div", NS + "-procrow");
         row.appendChild(el("span", NS + "-procname", p.name || ""));
         row.appendChild(el("span", NS + "-procid", "PID " + p.pid));
         row.appendChild(el("span", NS + "-procmem", p.memMb ? Math.round(p.memMb) + " MB" : ""));
         row.appendChild(el("span", NS + "-tag", p.category || ""));
-        if (p.cmd) row.title = p.cmd;
+        if (p.cmd) row.title = p.cmd;   // 悬停可看完整命令行
         sec2.appendChild(row);
       });
+    } else {
+      // 收起：只报汇总（分类计数 + 内存合计），不列具体进程
+      sec2.appendChild(el("div", NS + "-procsummary", procSummary(procs)));
     }
     body.appendChild(sec2);
 

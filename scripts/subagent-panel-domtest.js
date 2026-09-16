@@ -214,9 +214,26 @@ setTimeout(function () {
   check('宿主定位加固为 relative（原为 static）', bodyHost.style.position === 'relative', 'position=' + bodyHost.style.position);
   check('React 占位节点仍在', reactPlaceholder.parentNode === bodyHost && reactPlaceholder.textContent.indexOf('占位') >= 0);
   const cards = doc.querySelectorAll('.dsh-sp-card--sub');
-  const rows = doc.querySelectorAll('.dsh-sp-procrow');
+  // 后台进程：默认收起（只显示汇总），详情开关展开后才逐条列出具体进程
+  check('默认收起：不列出具体进程', doc.querySelectorAll('.dsh-sp-procrow').length === 0,
+    'got ' + doc.querySelectorAll('.dsh-sp-procrow').length);
+  const panelTextNow = doc.getElementById('dsh-sp-panel') ? doc.getElementById('dsh-sp-panel').textContent : '';
+  check('默认收起：显示汇总（分类计数+内存）', /后台进程（3）/.test(panelTextNow) && /合计约/.test(panelTextNow), panelTextNow.slice(-120));
+  const procToggle = doc.querySelector('.dsh-sp-secttoggle');
+  check('进程详情开关存在且为纯图标', !!(procToggle && procToggle.querySelector('svg')));
+  check('开关初始 aria-pressed=false', !!(procToggle && procToggle.getAttribute('aria-pressed') === 'false'));
+  if (procToggle && procToggle.onclick) procToggle.onclick();
+  check('展开后列出 3 行具体进程', doc.querySelectorAll('.dsh-sp-procrow').length === 3,
+    'got ' + doc.querySelectorAll('.dsh-sp-procrow').length);
+  check('展开后开关 aria-pressed=true',
+    !!(doc.querySelector('.dsh-sp-secttoggle') && doc.querySelector('.dsh-sp-secttoggle').getAttribute('aria-pressed') === 'true'));
+  check('展开后汇总隐藏', !/合计约/.test(doc.getElementById('dsh-sp-panel').textContent));
+  const procToggle2 = doc.querySelector('.dsh-sp-secttoggle');
+  if (procToggle2 && procToggle2.onclick) procToggle2.onclick();
+  check('再次点击回到收起（无进程行、有汇总）',
+    doc.querySelectorAll('.dsh-sp-procrow').length === 0 && /合计约/.test(doc.getElementById('dsh-sp-panel').textContent),
+    'rows=' + doc.querySelectorAll('.dsh-sp-procrow').length);
   check('子智能体卡片渲染 2 张', cards.length === 2, 'got ' + cards.length);
-  check('进程行渲染 3 行(原生行样式)', rows.length === 3, 'got ' + rows.length);
   const activeCard = doc.querySelectorAll('.dsh-sp-card--sub.dsh-sp-card--active');
   check('活跃子智能体高亮 1 张', activeCard.length === 1, 'got ' + activeCard.length);
   // 图标：tab 内应有 svg（与原生 tab 同风格）
@@ -239,11 +256,11 @@ setTimeout(function () {
   // 关闭面板：只应移除我们自己的 overlay，React 节点不受影响
   if (panel) {
     const iconBtns = panel.querySelectorAll('.dsh-sp-iconbtn');
-    check('工具栏按钮为纯图标(2 个)', iconBtns.length === 2, 'got ' + iconBtns.length);
+    check('工具栏按钮为纯图标(刷新/关闭/详情开关 = 3 个)', iconBtns.length === 3, 'got ' + iconBtns.length);
     check('图标按钮含 svg 且无文字', iconBtns.every(function (b) { return !!b.querySelector('svg') && b.textContent.trim() === ''; }));
     check('图标按钮有 title/aria-label 提示', iconBtns.every(function (b) { return !!b.title && !!b.getAttribute('aria-label'); }),
       iconBtns.map(function (b) { return b.title; }).join(','));
-    const closeBtn = iconBtns[iconBtns.length - 1];
+    const closeBtn = iconBtns.filter(function (b) { return b.title === '关闭'; })[0];
     if (closeBtn && closeBtn.onclick) closeBtn.onclick();
     check('关闭后 overlay 移除', !doc.getElementById('dsh-sp-panel'));
     check('关闭后 React 节点完好', bodyHost.childNodes.indexOf(reactPlaceholder) >= 0 && tabs.children.length === 3);
