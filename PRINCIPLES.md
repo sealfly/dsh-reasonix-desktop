@@ -84,7 +84,7 @@
    >
    > 注入脚本的验证：`node scripts/subagent-panel-domtest.js`——在最小假 DOM 里执行
    > **dist 中的真实内联块**，断言 tab 注入 / overlay 挂载 / 定位加固 / 卡片与进程行渲染 /
-   > React 节点未被动 / 幂等（18 项）。
+   > React 节点未被动 / 幂等（**当前 30 项**，随功能增长递增）。
    >
    > ⛔ **注入脚本硬约束（因 2026-09-14 冻结事故新增）**：
    > 1. **禁止 `MutationObserver` 观察整个文档**（`document.documentElement` + `subtree`）。
@@ -100,11 +100,35 @@
 4. **持久化用户数据**：`~/.reasonix/` 下的用户数据（`mcp-servers.json`、
    `subagent-profiles.json`、`skill-preferences.json`、`plugins/`）是运行时数据，
    升级不涉及，也禁止升级流程触碰。
+5. **源码级焊接（未来形态，作者要求时）**：当作者要求把本项目页面**焊成 Reasonix 原生
+   组件/tab**（例如按官方 `TabContainer` / `TabAddMenu` 的 tab 体系把「子代理」页实现为
+   原生 tab）时，该焊接改动**同样属于"不参与官方对照覆盖"的本项目适配**——
+   **官方升级覆盖源码/dist 后，焊接改动必须能够恢复，不允许被冲掉**（丢页面即断功能）。
+
+   焊接必须满足以下硬要求（否则不予采用）：
+
+   - **可重放**：改动以**锚点补丁脚本**（如 `scripts/apply-frontend-patches.js`）表达，
+     幂等、可重复执行；**禁止**只手工散改上游文件（官方覆盖后无法恢复，也无法审计差异）。
+   - **改动收敛**：所有自有代码放**独立目录**（如 `desktop/frontend/src/our/`），
+     上游文件里只保留**极小锚点**——例如 `TabType` 联合类型加一项、`ADDABLE_TABS` 加一行、
+     渲染 switch 加一个分支；锚点数量与位置必须在补丁脚本里显式列出（当前参考：
+     v1.38.8 形态为 3–4 行锚点）。
+   - **失败即停**：补丁脚本找不到锚点必须**报错退出**——构建期失败优于静默产出缺页面的错版
+     （与注入脚本"缺 node 直接失败"同一原则）。
+   - **构建链纳入本项目流程**：前端 `pnpm install` + `vite build` 属本项目构建步骤；
+     若官方 `pnpm build` 串联的校验（lint/waapi/css/z-index/theme-token/bundle-budget）
+     与我们的改动冲突，允许只跑 `vite build`，但需在文档记录理由。
+   - **升级时必须复核**：官方升级后重放补丁；锚点失配则**修锚点**（这是本项目的维护动作），
+     **绝不允许"因为上游重构所以放弃我们的页面"**。
+   - **与原则 2 的关系**：源码焊接属原则 2 的"作者明确要求"例外；未获作者要求时，仍优先走
+     注入方案（升级迁移成本更低）。
 
 升级流程检查清单（对照官方 diff 时逐项勾选）：
 - [ ] dist 中 logo/boot 品牌是否仍是本项目版
 - [ ] `index.html` 是否仍含插件市场注入脚本
 - [ ] `index.html` 是否仍含就地编辑器内联（`node scripts/apply-inline-editor.js` 幂等重放，脚本内会校验 `__DSH_INLINE_EDITOR__` 标记）
+- [ ] `index.html` 是否仍含「子代理」页内联（`node scripts/apply-subagent-panel.js` 幂等重放，校验 `__DSH_SUBAGENT_PANEL__` 标记）
+- [ ] 若已做**源码级焊接**：补丁脚本已重放且锚点校验通过（未通过则先修锚点，**不得静默丢失我们的页面**）
 - [ ] 桥方法：本项目持久化实现（MCP/子智能体/技能偏好/插件市场）未被官方实现替换
 - [ ] 本项目独有桥方法（`DshStd*`、`MarketPage`、`Terminal*` 等 23 个）未被删除
 - [ ] `~/.reasonix/` 用户数据完整
@@ -225,6 +249,20 @@
   改完第一次 push 就从 `exit=128（连接失败）` 变成 `exit=1（已进入协商阶段）`。
 - 另：本机 `~/.ssh` 无私钥，所以 SSH-over-443（`ssh.github.com:443` 可达）这条退路走不通；
   `.tools/bin/gh.exe` 已认证（scopes 含 `repo`）可作 API 兜底。
+- **⚠️ 实测补充（2026-09-15，开发机 chenz 桌面机）**：上述 `http.version=HTTP/1.1` 修复
+  **不是万能的**——在本机配置后 `git fetch origin` **仍然** 443 超时
+  （`Failed to connect to github.com:443 after 21067 ms`），说明该环境的障碍不只是 HTTP/2。
+  本机可用的替代路径（已验证）：
+  1. GitHub 推送继续走 **API 通道**（`upload.ps1`，`gh auth token` 认证）；
+  2. GitHub 侧因此产生**平行链**（SHA 与本地/CNB 不同，见 9.2），**不要再尝试强推统一**
+     （直推不通时无法统一，强推只会白等一轮超时）；
+  3. 内容等价性改用 **tree 哈希比对**——比 `git diff --name-only` 更严谨（逐字节等价）：
+     ```powershell
+     git rev-parse master^{tree}          # 本地 / CNB
+     # GitHub 侧：GET /repos/<owner>/<repo>/commits/master → commit.tree.sha
+     ```
+     两者相同即内容一致。2026-09-15 实测：本地 `261ccbb` / CNB `261ccbb` / GitHub `9f1bf282`
+     ——SHA 不同，但 **tree 均为 `3572819c852f…`，内容完全等价**。
 
 ### 9.2 并行链：内容相同、SHA 不同
 
