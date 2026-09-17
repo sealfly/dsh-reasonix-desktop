@@ -385,28 +385,58 @@ UI-FLOW OK (19/19)
 「保存更改」可用并点击 → **DSH 侧 baseURL 变为带 ?ui=1 的新值**（读回校验）→
 负例：端点不可达时卡片显示"没有自动获取到模型"（不静默）→ 清理无残留。
 
-### 6.4 顺带发现的性能问题（未修，记录待办）
+### 6.4 性能：`Settings()` 从 ~2.9s 优化到 ~0.5s（已修）
 
-`app.Settings()` 一次约 **2.9s**（前端每次保存后都会 reload 它，期间 `busy=true` →
-保存按钮临时禁用，用户会感觉"点了没反应"）。原因是重复 round-trip：`Settings()` 里
-`providerViews()` 对**每个** provider 调一次 `credentials.describe`，
-`webSearchState()` / `providerPresetViews()` 又各自调一次 `settings.describe`（实测 3 次）。
-可优化为"一次 describe + 批量 credentials.describe"，预期降到 <1s。已列入 §7 待办。
+**问题**：`app.Settings()` 一次约 **2.9s**，而前端每次保存/应用操作后都会 reload 它
+（reload 期间 `busy=true` → 「保存更改」等按钮临时禁用，用户感觉"点了没反应"）。
+
+**原因：一趟快照里同一份数据被反复取**
+
+| 重复点 | 次数 |
+|---|---|
+| `session.list`（DSH 对巨型会话要 0.5~1.3s） | 3 次（providerViews / officialProviderViews / webSearchState 各一次） |
+| `session.models` | 3 次（同上） |
+| `settings.describe` | 3 次（providerProfiles / providerPresetViews / webSearchState 各一次） |
+| `credentials.describe` | **N+1 次**（`providerViewFromGroup` 对每个 provider 各查一次） |
+
+**修法**（`app_settings_reads.go`）：新增一趟快照的读取缓存 `settingsReads`，
+`Settings()` / `DesktopStartupSettings()` 内只取一次 session 列表、一次 `session.models`、
+一次 `settings.describe`、一次批量 `credentials.describe`；`providerViews` /
+`officialProviderViews` / `providerViewFromGroup` / `providerPresetViews` / `webSearchState`
+都改为可复用缓存的 `*Reads(r)` 变体（非缓存调用点传 `nil`，行为不变）。
+
+另外 `activeSessionID("")` 改为**优先读左侧任务栏的会话列表缓存**（`Tabs`，10s TTL）：
+它本来就要那份 `session.list` 结果，且会话增删会 `invalidateTabsCache()`，语义不变 ——
+这次改动把最慢的那个 RPC 从设置快照路径上彻底去掉了。
+
+**实测**（同一台机器，DSH 已预热）：
+
+| 测量点 | 优化前 | 优化后 |
+|---|---|---|
+| 前端（UI 钩子，连测 3 次） | 2948ms / 2558ms | **9ms / 7ms / 7ms** |
+| Go 集成测试（`TestLiveSettingsLatency`，直接调用） | ~2.9s | **490ms** |
+
+> 两个数字的差别来自会话列表缓存是否已预热（前端路径上 `Tabs` 早被 UI 调过）；
+> 无论哪条路径都远低于原来的 2.9s。
+
+**回归保障**：`TestLiveSettingsLatency`（live，预算 1.5s）拦"明显退化"，并顺带断言
+`providers`/`providerPresets`/`providerKinds`/`webSearchModel`/`agent`/`network` 仍在，
+防止为了提速把字段优化没了；载荷正确性另由 UI 全链路测试（19/19）端到端复核。
+
+**关键设计约束**：**写路径不共用这个缓存** —— 写操作必须读新鲜数据（写完还要 read-back 校验），
+所以 `settingsReads` 只在一趟快照内存在、绝不跨请求复用（否则会出现"写完读回还是旧值"的假成功）。
 
 ---
 
 ## 7. 后续（P3）待办
 
-1. `Settings()` 补 `providerPresets`（对齐 `ProviderPresetView`），让「模型服务」页预设列表有内容。
-2. 实现 `FetchProviderModelCatalog` / `FetchProviderModelCatalogDraft` / `FetchAllProviderModelCatalogs`
-   / `TestProviderModel` / `AddProviderConnection{,WithURL,WithOptions}` / `SetConnectionKey` / `DeleteProvider`。
-3. 修 `FetchAllProviderModels` 返回形状为 `Record<string, string[]>`；`FetchProviderModels` 按入参 provider 过滤。
-4. 按 `scripts/settings-contract-check.js` 的剩余缺口补齐 `Settings()` 字段
-   （`visionModel` / `webSearchModel*` / `network` / `agent` / `providerKinds` / `autoApproveTools` /
-   `bypass` / `shadowedByPath` / `effectiveWebSearchModel`）——同一类"静默回落"风险。
-5. 给其余注入脚本补 `LogFromFrontend` 诊断（本次只有 subagent-panel 有），
-   让"锚点消失"这类升级回归能自动留痕，而不是靠肉眼发现。
-6. 可选：把「子代理」页在 TabContainer 时代（≥1.38.8）焊成官方 tab。
+> 下列为**当前仍未做**的事项；已完成项（providerPresets、8 个 provider catalog 方法、
+> `FetchAllProviderModels` 形状、14 个契约字段、`Settings()` 性能）见 §5 / §6.4。
 
-7. **Settings() 性能**：一次约 2.9s（前端每次保存后 reload 都调它，期间保存按钮禁用）。
-   优化方向：一次 `settings.describe` 复用 + 批量 `credentials.describe`（现在每个 provider 各调一次），预期 <1s。
+1. **给其余注入脚本补 `LogFromFrontend` 诊断**（目前只有 subagent-panel 有）：
+   让"锚点消失"这类升级回归能自动留痕，而不是靠肉眼或事后发现。
+2. **`dsh-file-preview.js` 是否启用**：源脚本在、清单里禁用；启用前需确认与原生预览不冲突。
+3. **可选：把「子代理」页在 TabContainer 时代（≥1.38.8）焊成官方 tab**（届时锚点最干净，
+   按 PRINCIPLES 原则 6 类别 5 的硬要求执行）。
+4. **注入脚本运行期诊断的 UI 化**：把 `resume-debug.log` 的成功/失败诊断做成设置页里的一行状态，
+   用户能自查"某个注入是否还活着"。

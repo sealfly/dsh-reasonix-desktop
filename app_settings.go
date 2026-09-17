@@ -130,13 +130,20 @@ func (a *App) SetSessionExperience(mode string) error {
 // 页显示空（前端 SettingsPanel 读 view.providers 渲染已有供应商）。
 // 外观类字段统一由 desktopPreferenceKeys 提供（见该函数注释：键名混用会导致主题跳变）。
 func (a *App) Settings() map[string]any {
+	// 一趟快照内复用 DSH 读取：session 列表 / session.models / settings.describe /
+	// credentials.describe 各只取一次。原先 providerViews、officialProviderViews、
+	// providerPresetViews、webSearchState 会各自重复调用这些慢 RPC（session.list 对巨型会话
+	// 要 0.5~1.3s；凭据查询还是按 provider 逐个来），实测让 Settings() 达到 ~2.9s，
+	// 而前端每次保存后都会 reload 它（期间 busy=true → 保存按钮临时禁用）。
+	// 详见 app_settings_reads.go。
+	reads := newSettingsReads()
 	out := map[string]any{
-		"providers":                 a.providerViews(),
-		"officialProviders":         a.officialProviderViews(),
+		"providers":                 a.providerViewsReads(reads),
+		"officialProviders":         a.officialProviderViewsReads(reads),
 		// providerPresets/providerKinds：「模型服务」页的可添加目录与自定义类型选项。
 		// 缺 providerPresets 时前端 asArray() 兜底成空数组——页面能开但没有可添加项，
 		// 所以这两个键是"设置里的供应商可添加"的前提（见 app_providers_presets.go）。
-		"providerPresets":           a.providerPresetViews(),
+		"providerPresets":           a.providerPresetViewsReads(reads),
 		"providerKinds":             providerKinds,
 		"defaultModel":              a.st.DefaultModel(),
 		"plannerModel":              a.st.PlannerModel(),
@@ -157,8 +164,8 @@ func (a *App) Settings() map[string]any {
 		"bot":                       mockBotSettings(),
 		"shadowedByPath":            "",
 	}
-	// 联网搜索模型从 DSH 的 web-search-deepseek 命名空间读真值。
-	out = mergeKeys(out, a.webSearchState())
+	// 联网搜索模型从 DSH 的 web-search-deepseek 命名空间读真值（复用同一趟读取）。
+	out = mergeKeys(out, a.webSearchStateReads(reads))
 	// autoApproveTools / bypass 由审批模式推导（两个独立开关，界面各反映真实状态）。
 	autoApprove, bypass := a.toolApprovalFlags()
 	out["autoApproveTools"] = autoApprove
@@ -168,31 +175,14 @@ func (a *App) Settings() map[string]any {
 
 // providerViews 从 DSH session.models 的 groups 生成 ProviderView 列表。
 // DSH 的 provider（deepseek-official/xtoken）即前端"供应商接入"页的已有供应商。
+// 非缓存入口；设置快照内用 providerViewsReads 复用读取（见 app_settings_reads.go）。
 func (a *App) providerViews() []any {
-	m := a.modelsView("")
-	if m == nil {
-		return []any{}
-	}
-	out := []any{}
-	for _, g := range m.Groups {
-		out = append(out, a.providerViewFromGroup(g))
-	}
-	return out
+	return a.providerViewsReads(nil)
 }
 
 // officialProviderViews 官方供应商（builtIn）——前端"官方接入"引导区。
 func (a *App) officialProviderViews() []any {
-	m := a.modelsView("")
-	if m == nil {
-		return []any{}
-	}
-	out := []any{}
-	for _, g := range m.Groups {
-		if g.ID == "deepseek-official" {
-			out = append(out, a.providerViewFromGroup(g))
-		}
-	}
-	return out
+	return a.officialProviderViewsReads(nil)
 }
 
 // providerViewFromGroup 把 DSH 模型分组转成 ProviderView（字段对齐前端 normalizeProviderView）。
@@ -202,70 +192,10 @@ func (a *App) officialProviderViews() []any {
 // `disabled={busy || fetching || !p.baseUrl || !providerIsConfigured(p)}`，
 // 而地址栏也直接显示 p.baseUrl。此前这里恒为空串 → **刷新按钮永久禁用、地址栏空白**，
 // 用户根本没法"拉取模型"。DSH 侧配置本来就有 baseURL/apiKeyEnv，回填即可。
+// providerViewFromGroup 把 DSH 模型分组转成 ProviderView（字段对齐前端 normalizeProviderView）。
+// 非缓存入口；设置快照内用 providerViewFromGroupReads 复用读取与批量凭据查询。
 func (a *App) providerViewFromGroup(g dshModelGroup) map[string]any {
-	kind := "custom"
-	builtIn := false
-	if g.ID == "deepseek-official" {
-		kind = "deepseek"
-		builtIn = true
-	}
-	models := []any{}
-	efforts := []any{}
-	defEffort := ""
-	for _, mod := range g.Models {
-		models = append(models, mod.ID)
-		if mod.Reasoning != nil && len(efforts) == 0 && len(mod.Reasoning.Efforts) > 0 {
-			for _, e := range mod.Reasoning.Efforts {
-				efforts = append(efforts, e.ID)
-			}
-			defEffort = mod.Reasoning.DefaultEffort
-		}
-	}
-
-	// 从 DSH settings 的 llm-pi-ai.providers.<route> 取真实端点与凭据引用。
-	baseURL := ""
-	apiKeyEnv := ""
-	keySet := false
-	if profiles, err := a.providerProfiles(); err == nil {
-		if profile, ok := profiles[providerRouteName(g.ID)]; ok {
-			baseURL = strAt(profile, "baseURL")
-			apiKeyEnv = strAt(profile, "apiKeyEnv")
-			kind = providerKindFromProtocol(strAt(profile, "api"))
-			if apiKeyEnv != "" {
-				keySet = a.providerCredentialStatus([]string{apiKeyEnv})[apiKeyEnv]
-			}
-		}
-	}
-	// 内置 deepseek-official 走 DSH 的 llm-deepseek 命名空间（不在 llm-pi-ai 里）：
-	// 它的凭据引用是 DEEPSEEK_API_KEY，端点由 DSH 内置，因此保持 baseUrl 为空（前端不会误点刷新）。
-	requiresKey := apiKeyEnv != ""
-	configured := keySet || !requiresKey
-	if builtIn {
-		requiresKey = false
-		configured = true
-	}
-
-	return map[string]any{
-		"name":              g.ID,
-		"builtIn":           builtIn,
-		"added":             true,
-		"kind":              kind,
-		"baseUrl":           baseURL,
-		"chatUrl":           "",
-		"requestUrl":        baseURL,
-		"models":            models,
-		"visionModels":      []any{},
-		"modelsUrl":         baseURL,
-		"apiKeyEnv":         apiKeyEnv,
-		"keySet":            keySet || builtIn,
-		"requiresKey":       requiresKey,
-		"configured":        configured,
-		"keySource":         "dsh",
-		"supportedEfforts":  efforts,
-		"defaultEffort":     defEffort,
-		"webSearch":         false,
-		"reasoningProtocol": "streamed",
-	}
+	return a.providerViewFromGroupReads(nil, g)
 }
 
 // DesktopStartupSettings 返回启动设置（前端启动 sync 时读，主题/布局/bot 等）。

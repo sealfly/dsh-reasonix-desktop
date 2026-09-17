@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 // ===== 纯逻辑单测（不需要 DSH）=====
@@ -322,6 +323,42 @@ func TestLiveProviderAutoResolvesModels(t *testing.T) {
 	remaining, _ := a.providerProfiles()
 	if _, ok := remaining[route+"-bad"]; ok {
 		t.Error("探测失败时不应留下供应商配置")
+	}
+}
+
+// TestLiveSettingsLatency 是设置快照的性能回归守卫。
+//
+// 为什么需要：前端每次保存/应用操作后都会 reload app.Settings()，期间 busy=true
+// → 「保存更改」等按钮临时禁用；此前一次约 2.9s（重复的 session.list/session.models/
+// settings.describe + 按 provider 逐个 credentials.describe），用户能明显感觉"点了没反应"。
+// 优化后（app_settings_reads.go 的读取复用）应显著低于阈值。阈值取得宽松，只拦"明显退化"。
+func TestLiveSettingsLatency(t *testing.T) {
+	if os.Getenv("DSH_LIVE_TEST") != "1" {
+		t.Skip("需要 DSH 在 127.0.0.1:3080 运行；设置 DSH_LIVE_TEST=1 开启")
+	}
+	a := newTestApp()
+	a.dsh = NewDshClient(3080)
+
+	// 预热（首次包含会话列表缓存预热等一次性开销）
+	_ = a.Settings()
+
+	const budget = 1500 * time.Millisecond
+	start := time.Now()
+	out := a.Settings()
+	took := time.Since(start)
+	if len(out) == 0 {
+		t.Fatal("Settings() 返回空")
+	}
+	// 顺带确认关键载荷仍在（优化不能悄悄丢字段）
+	for _, key := range []string{"providers", "providerPresets", "providerKinds", "webSearchModel", "agent", "network"} {
+		if _, ok := out[key]; !ok {
+			t.Errorf("Settings() 缺字段 %s", key)
+		}
+	}
+	if took > budget {
+		t.Errorf("Settings() 耗时 %v，超过预算 %v（读取复用被破坏？见 app_settings_reads.go）", took, budget)
+	} else {
+		t.Logf("Settings() 耗时 %v（预算 %v）", took, budget)
 	}
 }
 

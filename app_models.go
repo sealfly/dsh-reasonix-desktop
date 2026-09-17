@@ -47,14 +47,29 @@ type dshModelsView struct {
 	Current *dshModelCurrent `json:"current"`
 }
 
-// activeSessionID 取当前会话 ID（tabID 为空时用 session.list 第一个活跃会话）。
+// activeSessionID 取当前会话 ID（tabID 为空时用会话列表里的第一个活跃会话）。
 // 本项目中 tabID 即 DSH sessionId（见 app_session.go 的 tabMeta），故非空时直接返回。
+//
+// 性能：优先用左侧任务栏的会话列表缓存（Tabs，10s TTL）。
+// DSH session.list 对巨型会话要 0.5~1.3s（见 app_session.go 的缓存注释），
+// 而"取一个活跃会话 id"并不需要现场重算投影——缓存里就是同一份 session.list 结果，
+// 且会话增删会 invalidateTabsCache()，语义不变。
 func (a *App) activeSessionID(tabID string) string {
 	if tabID != "" {
 		return tabID
 	}
 	if a.dsh == nil {
 		return ""
+	}
+	tabsCacheMu.Lock()
+	cached := tabsCache
+	tabsCacheMu.Unlock()
+	for _, raw := range cached {
+		if m, ok := raw.(map[string]any); ok {
+			if id, _ := m["id"].(string); id != "" {
+				return id
+			}
+		}
 	}
 	raw, err := a.dsh.RPC("session.list", map[string]any{})
 	if err != nil {

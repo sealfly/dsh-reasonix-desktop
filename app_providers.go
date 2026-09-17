@@ -89,11 +89,18 @@ func (a *App) dshSettingsNamespaces() ([]providerNamespace, error) {
 }
 
 // providerProfiles 读取 llm-pi-ai.providers（route → profile）。
+// 注意：写路径需要新鲜数据（写完要 read-back 校验），所以这里不走缓存；
+// 设置快照内的复用见 app_settings_reads.go 的 providerProfilesReads。
 func (a *App) providerProfiles() (map[string]map[string]any, error) {
 	nss, err := a.dshSettingsNamespaces()
 	if err != nil {
 		return nil, err
 	}
+	return providerProfilesFromNamespaces(nss)
+}
+
+// providerProfilesFromNamespaces 从已取到的 settings 命名空间里解出 llm-pi-ai.providers（纯函数，可复用/可测）。
+func providerProfilesFromNamespaces(nss []providerNamespace) (map[string]map[string]any, error) {
 	for _, ns := range nss {
 		if ns.NS != providerSettingsNS {
 			continue

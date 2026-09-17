@@ -166,79 +166,9 @@ func lookupProviderPreset(id string) (providerPreset, bool) {
 var providerKinds = []string{"openai", "anthropic", "responses"}
 
 // providerPresetViews 生成设置页用的预设视图（ProviderPresetView[]）。
-//
-// added/keySet 是**实时**状态：route 是否已存在于 DSH settings，凭据是否已配置。
+// 非缓存入口；设置快照内用 providerPresetViewsReads 复用读取（见 app_settings_reads.go）。
 func (a *App) providerPresetViews() []any {
-	profiles, err := a.providerProfiles()
-	if err != nil {
-		// DSH 读不到时返回空表而不是伪造"未接入"，避免用户点了添加却写到别处。
-		return []any{}
-	}
-
-	envs := []string{}
-	for _, p := range providerPresetCatalog {
-		if p.KeyEnv != "" {
-			envs = append(envs, p.KeyEnv)
-		}
-	}
-	keyStatus := a.providerCredentialStatus(envs)
-
-	ordered := make([]providerPreset, len(providerPresetCatalog))
-	copy(ordered, providerPresetCatalog)
-	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].DisplayOrder < ordered[j].DisplayOrder })
-
-	out := []any{}
-	for _, p := range ordered {
-		route := providerRouteName(p.Route)
-		_, added := profiles[route]
-		// 也认"别人已经配过同一端点"的情况：route 名不同但 baseURL 相同 → 视为已接入同款。
-		if !added && p.BaseURL != "" {
-			for _, prof := range profiles {
-				if strings.EqualFold(strings.TrimRight(strAt(prof, "baseURL"), "/"), strings.TrimRight(p.BaseURL, "/")) {
-					added = true
-					break
-				}
-			}
-		}
-		view := map[string]any{
-			"id":            p.ID,
-			"label":         p.Label,
-			"description":   p.Description,
-			"keyEnv":        p.KeyEnv,
-			"providerNames": []any{route},
-			"models":        providerModelsFromDSHProfile(profiles[route]),
-			"added":         added,
-			"keySet":        p.KeyEnv == "" || keyStatus[p.KeyEnv],
-			"routeKind":     p.API,
-			"displayTier":   p.DisplayTier,
-			"displayOrder":  p.DisplayOrder,
-			"optional":      p.KeyEnv == "",
-			"recommended":   p.Recommended,
-			"requiresKey":   p.KeyEnv != "",
-			"catalog": map[string]any{
-				"brandId":    p.ID,
-				"brandLabel": p.Label,
-				"region":     providerPresetRegion(p.ID),
-				"product":    "api",
-				"format":     p.API,
-				"baseUrl":    p.BaseURL,
-				"protocols": map[string]any{
-					p.API: map[string]any{
-						"baseUrl":   p.BaseURL,
-						"source":    "dsh-reasonix-preset",
-						"checkedOn": "",
-					},
-				},
-			},
-		}
-		if added {
-			view["status"] = "installed"
-		} else {
-			view["status"] = "available"
-		}
-		out = append(out, view)
-	}
-	return out
+	return a.providerPresetViewsReads(nil)
 }
 
 // providerPresetRegion 给预设标一个区域（仅用于分组展示）。

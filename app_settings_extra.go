@@ -71,38 +71,9 @@ func (a *App) dshNamespaceSet(ns, field string, value any) error {
 //
 // webSearchModel 的真实来源是 DSH 的 web-search-deepseek.model：
 // 用户在设置页选了搜索模型，实际是写进 DSH 的搜索插件配置里的。
+// 非缓存入口；设置快照内用 webSearchStateReads 复用命名空间与模型读取。
 func (a *App) webSearchState() map[string]any {
-	value, _ := a.dshNamespaceValue(dshWebSearchNS)
-	configured := ""
-	if value != nil {
-		if v, ok := value["model"].(string); ok {
-			configured = strings.TrimSpace(v)
-		}
-	}
-	candidates := []string{}
-	for _, ref := range a.modelsRefs("") {
-		if s, ok := ref.(string); ok && s != "" {
-			candidates = append(candidates, s)
-		}
-	}
-	effective := configured
-	if effective == "" {
-		effective = a.st.DefaultModel()
-	}
-	status := "unset"
-	reason := "尚未指定联网搜索模型，DSH 搜索插件将使用默认模型"
-	if configured != "" {
-		status = "ready"
-		reason = ""
-	}
-	return map[string]any{
-		"webSearchModel":           configured,
-		"webSearchModels":          candidates,
-		"webSearchModelStatus":     status,
-		"webSearchModelReason":     reason,
-		"effectiveWebSearchModel":  effective,
-		"webSearchModelOverridden": configured != "",
-	}
+	return a.webSearchStateReads(nil)
 }
 
 // SetWebSearchModel 设置联网搜索模型（写 DSH 的 web-search-deepseek.model）。
