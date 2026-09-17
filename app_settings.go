@@ -196,6 +196,12 @@ func (a *App) officialProviderViews() []any {
 }
 
 // providerViewFromGroup 把 DSH 模型分组转成 ProviderView（字段对齐前端 normalizeProviderView）。
+//
+// ⚠ baseUrl / apiKeyEnv 必须从 DSH 的 llm-pi-ai profile 回填（2026-09-17 实测发现）：
+// 前端「模型服务」页的「刷新模型」按钮条件是
+// `disabled={busy || fetching || !p.baseUrl || !providerIsConfigured(p)}`，
+// 而地址栏也直接显示 p.baseUrl。此前这里恒为空串 → **刷新按钮永久禁用、地址栏空白**，
+// 用户根本没法"拉取模型"。DSH 侧配置本来就有 baseURL/apiKeyEnv，回填即可。
 func (a *App) providerViewFromGroup(g dshModelGroup) map[string]any {
 	kind := "custom"
 	builtIn := false
@@ -215,21 +221,45 @@ func (a *App) providerViewFromGroup(g dshModelGroup) map[string]any {
 			defEffort = mod.Reasoning.DefaultEffort
 		}
 	}
+
+	// 从 DSH settings 的 llm-pi-ai.providers.<route> 取真实端点与凭据引用。
+	baseURL := ""
+	apiKeyEnv := ""
+	keySet := false
+	if profiles, err := a.providerProfiles(); err == nil {
+		if profile, ok := profiles[providerRouteName(g.ID)]; ok {
+			baseURL = strAt(profile, "baseURL")
+			apiKeyEnv = strAt(profile, "apiKeyEnv")
+			kind = providerKindFromProtocol(strAt(profile, "api"))
+			if apiKeyEnv != "" {
+				keySet = a.providerCredentialStatus([]string{apiKeyEnv})[apiKeyEnv]
+			}
+		}
+	}
+	// 内置 deepseek-official 走 DSH 的 llm-deepseek 命名空间（不在 llm-pi-ai 里）：
+	// 它的凭据引用是 DEEPSEEK_API_KEY，端点由 DSH 内置，因此保持 baseUrl 为空（前端不会误点刷新）。
+	requiresKey := apiKeyEnv != ""
+	configured := keySet || !requiresKey
+	if builtIn {
+		requiresKey = false
+		configured = true
+	}
+
 	return map[string]any{
 		"name":              g.ID,
 		"builtIn":           builtIn,
 		"added":             true,
 		"kind":              kind,
-		"baseUrl":           "",
+		"baseUrl":           baseURL,
 		"chatUrl":           "",
-		"requestUrl":        "",
+		"requestUrl":        baseURL,
 		"models":            models,
 		"visionModels":      []any{},
-		"modelsUrl":         "",
-		"apiKeyEnv":         "",
-		"keySet":            true, // DSH 已配置可用
-		"requiresKey":       false,
-		"configured":        true,
+		"modelsUrl":         baseURL,
+		"apiKeyEnv":         apiKeyEnv,
+		"keySet":            keySet || builtIn,
+		"requiresKey":       requiresKey,
+		"configured":        configured,
 		"keySource":         "dsh",
 		"supportedEfforts":  efforts,
 		"defaultEffort":     defEffort,

@@ -156,6 +156,45 @@ func (a *App) writeProviderProfile(route string, profile map[string]any) error {
 	return nil
 }
 
+// writeProviderProfileResolvingModels 写入供应商，并在 DSH 因"没有模型"拒绝时用端点探测补齐后重试。
+//
+// 为什么需要（2026-09-17 实测发现）：DSH 的 llm-pi-ai 校验器对**不在其内置目录里的路由**要求
+// 必须在配置里显式列出 models，否则写入被拒：
+//
+//	settings-rejected: provider "x" resolves no models; the installed catalog does not
+//	describe this route, so its models must be listed in configuration
+//
+// 而"添加连接"这个交互里用户只填 key 与地址、不填模型，所以预设（models 留空）直接写会失败。
+// 这里先尝试写入；被拒且原因是缺模型时，用给定 key 去端点探测模型列表后重试；
+// 探测也拿不到就**明确报错**（不写半个配置、不塞占位模型）。
+func (a *App) writeProviderProfileResolvingModels(route string, profile map[string]any, key string) error {
+	err := a.writeProviderProfile(route, profile)
+	if err == nil {
+		return nil
+	}
+	if !strings.Contains(err.Error(), "resolves no models") {
+		return err
+	}
+	models, derr := discoverProviderModels(profile, key)
+	if derr != nil || len(models) == 0 {
+		detail := "端点也没有返回模型"
+		if derr != nil {
+			detail = derr.Error()
+		}
+		return fmt.Errorf("该供应商需要显式列出模型（DSH 对未知路由的要求），但自动探测失败：%s。请在供应商配置里填写模型后重试", detail)
+	}
+	next := map[string]any{}
+	for k, v := range profile {
+		next[k] = v
+	}
+	next["models"] = providerModelsToDSH(models)
+	if err := a.writeProviderProfile(route, next); err != nil {
+		return err
+	}
+	resumeLog("provider: %s 的模型由端点探测补齐（%d 个）", route, len(models))
+	return nil
+}
+
 // deleteProviderProfile 删除一个供应商 profile。
 func (a *App) deleteProviderProfile(route string) error {
 	if err := a.dshSettingsMutate([]providerOp{{
@@ -336,7 +375,12 @@ func profileFromProviderView(p map[string]any, overrideBaseURL, overrideFormat s
 
 	baseURL := strings.TrimSpace(overrideBaseURL)
 	if baseURL == "" {
-		for _, key := range []string{"baseUrl", "baseURL", "requestUrl", "modelsUrl", "chatUrl"} {
+		// ⚠ 顺序很重要（实测 2026-09-17）：**当前设置 UI 写的是 `requestUrl`**（在前端注释里
+		// 明确写着 "exact provider request URL written by the current settings UI"），
+		// `baseUrl` 是兼容旧配置的 legacy 字段。此前优先读 baseUrl → 用户在「模型服务」页
+		// 改了地址再保存时，桥收到的是新的 requestUrl、却写回旧的 baseUrl，**改动被静默丢弃**。
+		// 证据：SaveProvider 实参 baseUrl=…/v1、requestUrl=…/v1?ui=1，写入后 DSH 仍是旧值。
+		for _, key := range []string{"requestUrl", "baseURL", "baseUrl", "chatUrl", "modelsUrl"} {
 			if v, _ := p[key].(string); strings.TrimSpace(v) != "" {
 				baseURL = strings.TrimSpace(v)
 				break
@@ -451,7 +495,7 @@ func (a *App) SaveProvider(p map[string]any) error {
 		return fmt.Errorf("供应商 %q 既没有 baseURL 也没有 apiKeyEnv", name)
 	}
 	profile["displayName"] = firstNonEmpty(strAt(p, "displayName"), name)
-	return a.writeProviderProfile(providerRouteName(name), profile)
+	return a.writeProviderProfileResolvingModels(providerRouteName(name), profile, "")
 }
 
 // SaveProviderWithKey 保存供应商并写入 key（前端自定义连接带 key 时调它）。
@@ -536,7 +580,7 @@ func (a *App) AddProviderConnectionWithOptions(presetID, sourceName, key, baseUR
 	profile["apiKeyEnv"] = env
 
 	warning := ""
-	if err := a.writeProviderProfile(route, profile); err != nil {
+	if err := a.writeProviderProfileResolvingModels(route, profile, strings.TrimSpace(key)); err != nil {
 		return err.Error()
 	}
 	if strings.TrimSpace(key) != "" {

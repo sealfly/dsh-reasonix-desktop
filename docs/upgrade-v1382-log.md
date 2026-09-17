@@ -330,7 +330,72 @@ Novita / 本机 Ollama）。设计取舍：
 
 ---
 
-## 6. 后续（P3）待办
+## 6. 真界面自动化验证（UI 测试钩子）与它抓到的缺陷
+
+### 6.1 为什么需要钩子
+
+Wails v2 在创建 WebView2 环境时会**覆盖** `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`
+（go-webview2 `preventEnvAndRegistryOverrides` 里的 `os.Setenv(..., additionalBrowserArgs)`），
+所以 `--remote-debugging-port` 被上游封死、CDP 连不上（实测：环境变量设了，WebView2 进程
+命令行里没有该 flag）。而"供应商能不能加、模型能不能拉"这类问题必须在真界面上点一遍，
+于是给应用加了环境变量开关的 UI 测试钩子（`ui_test_hook.go`）：
+
+| 端点（仅 127.0.0.1） | 作用 |
+|---|---|
+| `GET /health` | 就绪检查 |
+| `POST /eval {"js"}` | 在页面里求值（**支持 await Promise**）并回传结果 |
+| `POST /click {"selector"}` | 便捷点击 |
+
+回传机制：Wails 的 `WindowExecJS` 没有返回值，所以注入的 JS 把结果经桥方法 `UiTestReport`
+送回 Go，`/eval` 按 nonce 匹配。默认关闭，仅 `DSH_UI_TEST_PORT` 设置时启动。
+
+配套工具：`scripts/ui-test-eval.js`（探针）、`scripts/fake-openai-provider.js`（本机假供应商端点，
+返回固定 fake-alpha/fake-beta/fake-vl-vision）、`scripts/ui-test-provider-flow.js`（全链路测试）。
+
+### 6.2 它抓到的 4 个真实缺陷（都已修）
+
+1. **未知路由必须显式列出模型**：DSH 校验器拒绝 `models: []` 的供应商
+   （`settings-rejected: … resolves no models; the installed catalog does not describe this route`），
+   而"添加连接"时用户只填 key + 地址 → **预设添加会直接失败**。
+   修：写入被拒且原因是缺模型时，用给定 key 去端点探测模型后重试；探测失败则明确报错
+   （不写半个配置、不塞占位模型）。回归测试 `TestLiveProviderAutoResolvesModels`。
+2. **`ProviderView.baseUrl` 恒为空** → 前端「刷新模型」按钮条件是
+   `disabled={busy || fetching || !p.baseUrl || !providerIsConfigured(p)}`，
+   于是**按钮永久禁用、地址栏空白**，用户根本没法拉模型。
+   修：从 DSH profile 回填 `baseUrl`/`apiKeyEnv`/`keySet`/`configured`（并在测试里断言按钮可用）。
+3. **保存时改的是 `requestUrl`，我们却优先读 `baseUrl`** → 用户在「模型服务」页改了地址再保存，
+   **改动被静默丢弃**。证据：桥调用探针记录到
+   `SaveProvider(baseUrl=…/v1, requestUrl=…/v1?ui=1)`，写入后 DSH 仍是旧值。
+   修：映射优先级改为 `requestUrl` → `baseURL` → `baseUrl` → `chatUrl` → `modelsUrl`。
+   回归测试 `TestProfilePrefersRequestURLFromCurrentUI`。
+4. **测试侧也会骗人**（记下来避免重犯）：① `document.body.innerText` 断言会撞到会话区文本
+   （我那句话的文本被当成界面提示）；② 程序化 `.click()` 对 React 受控 checkbox 不生效；
+   ③ 设置面板只在挂载时拉一次设置，**复用已开面板会拿到陈旧供应商列表**（出现过"DSH 里没有的
+   供应商显示在列表里"）；④ 清理若走很重的 `app.Settings()` 会在钩子 20s 超时里跑不完，
+   导致残留累积 → 改为直接查 DSH。
+
+### 6.3 最终结果
+
+```
+UI-FLOW OK (19/19)
+```
+
+覆盖：经应用自身桥方法添加供应商（并自动补齐模型）→ 打开设置-模型服务 →
+精确选中该供应商 → 「刷新模型」可用并拉到假端点的 3 个模型 → 改动表单出现「未保存更改」→
+「保存更改」可用并点击 → **DSH 侧 baseURL 变为带 ?ui=1 的新值**（读回校验）→
+负例：端点不可达时卡片显示"没有自动获取到模型"（不静默）→ 清理无残留。
+
+### 6.4 顺带发现的性能问题（未修，记录待办）
+
+`app.Settings()` 一次约 **2.9s**（前端每次保存后都会 reload 它，期间 `busy=true` →
+保存按钮临时禁用，用户会感觉"点了没反应"）。原因是重复 round-trip：`Settings()` 里
+`providerViews()` 对**每个** provider 调一次 `credentials.describe`，
+`webSearchState()` / `providerPresetViews()` 又各自调一次 `settings.describe`（实测 3 次）。
+可优化为"一次 describe + 批量 credentials.describe"，预期降到 <1s。已列入 §7 待办。
+
+---
+
+## 7. 后续（P3）待办
 
 1. `Settings()` 补 `providerPresets`（对齐 `ProviderPresetView`），让「模型服务」页预设列表有内容。
 2. 实现 `FetchProviderModelCatalog` / `FetchProviderModelCatalogDraft` / `FetchAllProviderModelCatalogs`
@@ -342,3 +407,6 @@ Novita / 本机 Ollama）。设计取舍：
 5. 给其余注入脚本补 `LogFromFrontend` 诊断（本次只有 subagent-panel 有），
    让"锚点消失"这类升级回归能自动留痕，而不是靠肉眼发现。
 6. 可选：把「子代理」页在 TabContainer 时代（≥1.38.8）焊成官方 tab。
+
+7. **Settings() 性能**：一次约 2.9s（前端每次保存后 reload 都调它，期间保存按钮禁用）。
+   优化方向：一次 `settings.describe` 复用 + 批量 `credentials.describe`（现在每个 provider 各调一次），预期 <1s。

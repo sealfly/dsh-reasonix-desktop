@@ -108,6 +108,20 @@
    > **不带远程调试端口（CDP 不可用）**，所以"注入是否找到锚点"只能靠这条通道验证；
    > 排查升级回归时先看这个日志。
    >
+   > **真界面自动化验证（2026-09-17 新增，因 CDP 被封）**：Wails 在创建 WebView2 环境时会
+   > **覆盖** `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`（go-webview2 的
+   > `preventEnvAndRegistryOverrides` 里 `os.Setenv(..., additionalBrowserArgs)`），
+   > 所以 `--remote-debugging-port` 这条路走不通。替代方案是本项目的 **UI 测试钩子**：
+   > 启动时设 `DSH_UI_TEST_PORT=<port>`（可选 `DSH_UI_TEST_TOKEN`）即在本机 127.0.0.1 开
+   > `GET /health`、`POST /eval {"js"}`、`POST /click {"selector"}`，用 Wails 的
+   > `WindowExecJS` 在真页面里求值并把结果经桥方法 `UiTestReport` 回传（支持 await Promise）。
+   > 工具：`scripts/ui-test-eval.js`（探针）、`scripts/fake-openai-provider.js`（本机假供应商端点）、
+   > `scripts/ui-test-provider-flow.js`（「模型服务」全链路：添加→刷新模型→改动→保存→复核 DSH）。
+   > 规则：**功能宣称"能用"之前，先用这条链路在真界面上跑一遍**，并断言落库结果（读 DSH），
+   > 而不是只看界面显示。写 UI 断言时注意三条实测教训：①查询必须限定在目标子树
+   > （`document.body.innerText` 会撞到会话区的文本）；②React 受控输入要用原生 setter + `input` 事件；
+   > ③面板只在挂载时拉一次设置，**复用它可能拿到陈旧列表**（测试前重启应用或强制重挂载）。
+   >
    > ⛔ **注入脚本硬约束（因 2026-09-14 冻结事故新增）**：
    > 1. **禁止 `MutationObserver` 观察整个文档**（`document.documentElement` + `subtree`）。
    >    它与"改动自己的 DOM"组合会形成自激死循环（改 DOM → 回调 → 再改 DOM），把渲染主线程

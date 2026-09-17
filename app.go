@@ -24,6 +24,8 @@ type App struct {
 	dshAlts []*DshClient
 	// submitQueuePath 提交兜底队列文件（默认 ~/.reasonix/submit-queue.json；测试可注入）。
 	submitQueuePath string
+	// uiTest 是调试用的 UI 测试钩子（仅 DSH_UI_TEST_PORT 设置时非 nil；见 ui_test_hook.go）。
+	uiTest *uiTestHook
 }
 
 // NewApp 创建 App（main.go 里调用）。
@@ -52,6 +54,8 @@ func (a *App) startup(ctx context.Context) {
 	// 预热「子代理」面板缓存（session.list + subagent.list + 本机进程枚举）：面板打开即出数据，
 	// 不用"打开后再等一两秒"（进程枚举走 PowerShell 约 1s，是打开延迟的大头）
 	go a.warmSubagentPanelCaches()
+	// UI 测试钩子（默认关闭；仅 DSH_UI_TEST_PORT 设置时监听本机一个端口，用于自动化界面验证）
+	a.startUITestHook()
 }
 
 // startShowEventListener 监听命名事件 "Local\DSH-ReasonixUI-Show"：

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -83,6 +85,31 @@ func TestProfileFromProviderView(t *testing.T) {
 	}
 	if got := strAt(prof2, "api"); got != protoAnthropicMessages {
 		t.Errorf("override api = %q", got)
+	}
+}
+
+func TestProfilePrefersRequestURLFromCurrentUI(t *testing.T) {
+	// 回归：当前设置 UI 保存的是 requestUrl（baseUrl 是 legacy）。
+	// 曾优先读 baseUrl → 用户在「模型服务」页改地址后保存被静默丢弃（实测 UI 测试抓到）。
+	p := map[string]any{
+		"name":       "probe",
+		"baseUrl":    "https://old.example/v1",
+		"requestUrl": "https://new.example/v1?ui=1",
+		"chatUrl":    "https://new.example/v1?ui=1",
+	}
+	prof := profileFromProviderView(p, "", "")
+	if got := strAt(prof, "baseURL"); got != "https://new.example/v1?ui=1" {
+		t.Errorf("baseURL = %q, want 以 requestUrl 为准 https://new.example/v1?ui=1", got)
+	}
+	// 只有 legacy baseUrl 时仍要能用（兼容旧配置）
+	legacy := profileFromProviderView(map[string]any{"name": "p", "baseUrl": "https://legacy.example/v1"}, "", "")
+	if got := strAt(legacy, "baseURL"); got != "https://legacy.example/v1" {
+		t.Errorf("legacy baseUrl = %q", got)
+	}
+	// 显式 override 优先级最高（添加/编辑时的地址覆盖）
+	over := profileFromProviderView(p, "https://override.example/v1", "")
+	if got := strAt(over, "baseURL"); got != "https://override.example/v1" {
+		t.Errorf("override = %q", got)
 	}
 }
 
@@ -239,6 +266,62 @@ func TestLiveProviderRoundTrip(t *testing.T) {
 	profiles, _ = a.providerProfiles()
 	if _, ok := profiles[route]; ok {
 		t.Error("删除后仍存在")
+	}
+}
+
+// TestLiveProviderAutoResolvesModels 锁住一个实测发现的 DSH 约束的修复：
+// 不在 DSH 内置目录里的路由**必须**在配置里列出 models，否则写入被拒
+// （settings-rejected: "... resolves no models; the installed catalog does not describe this route"）。
+// 添加连接时用户只填 key + 地址，所以写入被拒后必须用端点探测补齐模型再重试。
+func TestLiveProviderAutoResolvesModels(t *testing.T) {
+	if os.Getenv("DSH_LIVE_TEST") != "1" {
+		t.Skip("需要 DSH 在 127.0.0.1:3080 运行；设置 DSH_LIVE_TEST=1 开启")
+	}
+	// 本机假端点：模型列表是确定的，测试不依赖外网。
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/models") {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"auto-alpha"},{"id":"auto-beta"}]}`))
+	}))
+	defer server.Close()
+
+	a := &App{dsh: NewDshClient(3080), st: NewSettings()}
+	const route = "dsh-live-automodels"
+	_ = a.deleteProviderProfile(route)
+	defer func() { _ = a.deleteProviderProfile(route) }()
+
+	// models 故意留空：模拟预设添加（用户不填模型）
+	profile := map[string]any{
+		"displayName": "DSH live automodels (临时)",
+		"api":         protoOpenAICompletions,
+		"baseURL":     server.URL + "/v1",
+	}
+	if err := a.writeProviderProfileResolvingModels(route, profile, ""); err != nil {
+		t.Fatalf("写入失败（应通过端点探测自动补模型）: %v", err)
+	}
+	profiles, err := a.providerProfiles()
+	if err != nil {
+		t.Fatalf("读回失败: %v", err)
+	}
+	got := providerModelsFromDSH(profiles[route]["models"])
+	if strings.Join(got, ",") != "auto-alpha,auto-beta" {
+		t.Errorf("自动补齐的模型 = %v, want [auto-alpha auto-beta]", got)
+	}
+
+	// 负例：端点不可达时必须明确失败，且**不得**留下半成品配置
+	badProfile := map[string]any{
+		"displayName": "DSH live automodels bad (临时)",
+		"api":         protoOpenAICompletions,
+		"baseURL":     "http://127.0.0.1:9/v1",
+	}
+	if err := a.writeProviderProfileResolvingModels(route+"-bad", badProfile, ""); err == nil {
+		t.Error("端点不可达时应当报错")
+	}
+	remaining, _ := a.providerProfiles()
+	if _, ok := remaining[route+"-bad"]; ok {
+		t.Error("探测失败时不应留下供应商配置")
 	}
 }
 
