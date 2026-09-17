@@ -45,14 +45,8 @@ func (a *App) ConnectKey(key string) string {
 	return ""
 }
 
-// SaveProviderWithKey 保存 provider 配置并写入 key（前端组合动作）。
-func (a *App) SaveProviderWithKey(config map[string]any, key string) error {
-	env, _ := config["apiKeyEnv"].(string)
-	if env == "" {
-		env = deepseekAPIKeyRef
-	}
-	return a.credentialsSet(env, key)
-}
+// 供应商 profile 的保存/读取与模型目录见 app_providers.go / app_providers_presets.go：
+// 那里通过 DSH 的 settings（llm-pi-ai 命名空间）读写供应商配置，本文件只负责凭据本身。
 
 // credentialsSet 调 DSH credentials.set。
 func (a *App) credentialsSet(ref, value string) error {
@@ -115,14 +109,5 @@ func (a *App) ProviderKeyStatus(env string) map[string]any {
 	return out
 }
 
-// FetchProviderModels 返回某 provider 可用的模型列表（前端保存 key 后拉取验证）。
-// config 是前端 provider 配置：{name, kind, apiKeyEnv, baseUrl, ...}。
-// 这里从 DSH 的 session.models 读取（按当前配置的 provider 过滤）。
-func (a *App) FetchProviderModels(config map[string]any) []any {
-	return a.modelsRefs("")
-}
-
-// FetchAllProviderModels 返回全部 provider 的模型列表（结构同 modelsRefs）。
-func (a *App) FetchAllProviderModels(_a1 any) []any {
-	return a.modelsRefs("")
-}
+// FetchProviderModels / FetchAllProviderModels 见 app_providers_presets.go：
+// 它们现在按供应商从 settings 的配置模型 + 端点实时列表生成（不再返回全局 modelsRefs）。

@@ -39,11 +39,26 @@ type desktopSettings struct {
 	// 必须持久化：设置快照每次重读都会 hydrateSessionExperience(settings.sessionExperience)，
 	// 缺失/不一致会让推理显示模式被重置（与主题跳变同一类问题）。
 	SessionExperience string  `json:"sessionExperience"`
+	// 设置-智能体页的参数（Reasonix 桌面端自有；DSH 侧的智能体循环由 agent-presets/
+	// agent-loop 命名空间决定，本桥暂未做双向映射，故这里只如实记录用户设置）。
+	Temperature       float64 `json:"temperature"`
+	MaxSteps          int     `json:"maxSteps"`
+	PlannerMaxSteps   int     `json:"plannerMaxSteps"`
+	SystemPrompt      string  `json:"systemPrompt"`
+	ReasoningLanguage string  `json:"reasoningLanguage"`
+	// 设置-网络页的代理偏好（实际生效取决于进程环境与 DSH；读到的是环境里的真实代理）。
+	ProxyMode string `json:"proxyMode"`
+	ProxyURL  string `json:"proxyUrl"`
+	NoProxy   string `json:"noProxy"`
 	CheckUpdates     bool     `json:"checkUpdates"`
 	DesktopMetrics   bool     `json:"desktopMetrics"`
 	DesktopTelemetry bool     `json:"desktopTelemetry"`
 	DefaultModel     string   `json:"defaultModel"`
 	PlannerModel     string   `json:"plannerModel"`
+	// VisionModel / WebSearchModel：设置-模型页的两个专用模型引用（v1.38.2 契约字段
+	// visionModel / webSearchModel）。空串=未指定，前端显示"跟随默认"。
+	VisionModel      string   `json:"visionModel"`
+	WebSearchModel   string   `json:"webSearchModel"`
 	SubagentModel    string   `json:"subagentModel"`
 	SubagentEffort   string   `json:"subagentEffort"`
 	MaxSubagentDepth int      `json:"maxSubagentDepth"`
@@ -345,6 +360,51 @@ func (s *Settings) SetDefaultModel(v string) { if v != "" { s.data.DefaultModel 
 
 func (s *Settings) PlannerModel() string { return s.data.PlannerModel }
 func (s *Settings) SetPlannerModel(v string) { if v != "" { s.data.PlannerModel = v; s.save() } }
+
+// VisionModel 视觉模型引用（设置-模型页；空=跟随默认）。
+func (s *Settings) VisionModel() string { return s.data.VisionModel }
+func (s *Settings) SetVisionModel(v string) { s.data.VisionModel = v; s.save() }
+
+// WebSearchModel 联网搜索模型引用（本项目桌面偏好；真正的 DSH 搜索模型在
+// web-search-deepseek 命名空间，见 app_settings_extra.go 的 SetWebSearchModel）。
+func (s *Settings) WebSearchModel() string { return s.data.WebSearchModel }
+func (s *Settings) SetWebSearchModel(v string) { s.data.WebSearchModel = v; s.save() }
+
+// --- 设置-智能体页 ---
+
+// Temperature / MaxSteps / PlannerMaxSteps / SystemPrompt 是 Reasonix 桌面端参数。
+func (s *Settings) Temperature() float64 { return s.data.Temperature }
+func (s *Settings) MaxSteps() int        { return s.data.MaxSteps }
+func (s *Settings) PlannerMaxSteps() int { return s.data.PlannerMaxSteps }
+func (s *Settings) SystemPrompt() string { return s.data.SystemPrompt }
+
+// SetAgentParams 一次性保存智能体参数（前端 SetAgentParams 桥方法调用）。
+func (s *Settings) SetAgentParams(temperature float64, maxSteps, plannerMaxSteps int, systemPrompt string) {
+	s.data.Temperature = temperature
+	s.data.MaxSteps = maxSteps
+	s.data.PlannerMaxSteps = plannerMaxSteps
+	s.data.SystemPrompt = systemPrompt
+	s.save()
+}
+
+// ReasoningLanguage 推理语言（auto/zh/en...）。
+func (s *Settings) ReasoningLanguage() string { return s.data.ReasoningLanguage }
+func (s *Settings) SetReasoningLanguage(v string) { s.data.ReasoningLanguage = v; s.save() }
+
+// --- 设置-网络页 ---
+
+// ProxyMode / ProxyURL / NoProxy 是网络页的代理偏好。
+func (s *Settings) ProxyMode() string { return s.data.ProxyMode }
+func (s *Settings) ProxyURL() string  { return s.data.ProxyURL }
+func (s *Settings) NoProxy() string   { return s.data.NoProxy }
+
+// SetProxy 保存代理偏好。
+func (s *Settings) SetProxy(mode, url, noProxy string) {
+	s.data.ProxyMode = mode
+	s.data.ProxyURL = url
+	s.data.NoProxy = noProxy
+	s.save()
+}
 
 func (s *Settings) SubagentModel() string { return s.data.SubagentModel }
 func (s *Settings) SetSubagentModel(v string) { if v != "" { s.data.SubagentModel = v; s.save() } }

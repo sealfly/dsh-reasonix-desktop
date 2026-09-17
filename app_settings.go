@@ -133,8 +133,14 @@ func (a *App) Settings() map[string]any {
 	out := map[string]any{
 		"providers":                 a.providerViews(),
 		"officialProviders":         a.officialProviderViews(),
+		// providerPresets/providerKinds：「模型服务」页的可添加目录与自定义类型选项。
+		// 缺 providerPresets 时前端 asArray() 兜底成空数组——页面能开但没有可添加项，
+		// 所以这两个键是"设置里的供应商可添加"的前提（见 app_providers_presets.go）。
+		"providerPresets":           a.providerPresetViews(),
+		"providerKinds":             providerKinds,
 		"defaultModel":              a.st.DefaultModel(),
 		"plannerModel":              a.st.PlannerModel(),
+		"visionModel":               a.st.VisionModel(),
 		"subagentModel":             a.st.SubagentModel(),
 		"subagentEffort":            a.st.SubagentEffort(),
 		"maxSubagentDepth":          a.st.MaxSubagentDepth(),
@@ -146,8 +152,17 @@ func (a *App) Settings() map[string]any {
 		"desktopCurrency":           a.st.Currency(),
 		"permissions":               a.st.PermissionsView(),
 		"sandbox":                   a.st.SandboxView(),
+		"network":                   a.networkView(),
+		"agent":                     a.agentView(),
 		"bot":                       mockBotSettings(),
+		"shadowedByPath":            "",
 	}
+	// 联网搜索模型从 DSH 的 web-search-deepseek 命名空间读真值。
+	out = mergeKeys(out, a.webSearchState())
+	// autoApproveTools / bypass 由审批模式推导（两个独立开关，界面各反映真实状态）。
+	autoApprove, bypass := a.toolApprovalFlags()
+	out["autoApproveTools"] = autoApprove
+	out["bypass"] = bypass
 	return mergeKeys(out, a.desktopPreferenceKeys())
 }
 

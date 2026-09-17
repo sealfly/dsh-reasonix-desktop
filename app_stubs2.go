@@ -8,8 +8,6 @@ func (a *App) AcceptMemorySuggestionForTab(_a1 any, _a2 any) error { return nil 
 func (a *App) AcceptSkillSuggestion() error { return nil }
 func (a *App) AcceptSkillSuggestionForTab(_a1 any, _a2 any) error { return nil }
 func (a *App) ActivateThemePack(_a1 any) error { return nil }
-func (a *App) AddOfficialProviderAccess(_a1 any, _a2 any) error { return nil }
-func (a *App) AddProviderPresetAccess(_a1 any, _a2 any) error { return nil }
 func (a *App) AddRemoteForward() error { return nil }
 func (a *App) AddRemoteHost() error { return nil }
 func (a *App) AddSkillPath(_a1 any) error { return nil }
@@ -187,12 +185,10 @@ func (a *App) RememberForTab(_tabID string, _scope string, _note string) error {
 func (a *App) RemoteLastWorkspace() map[string]any { return nil }
 func (a *App) RemoteServerLogs() map[string]any { return nil }
 func (a *App) RemoteServerStatus() map[string]any { return nil }
-func (a *App) RemoveProviderAccesses(_a1 any) error { return nil }
 func (a *App) RemoveRemoteForward() error { return nil }
 func (a *App) RemoveRemoteHost() error { return nil }
 func (a *App) RequeueTaskByKey(_req map[string]any) error { return nil }
 func (a *App) RequeueTaskForTab() error { return nil }
-func (a *App) ResetProviderPresetAccess(_a1 any) error { return nil }
 func (a *App) ResetThemePack() error { return nil }
 func (a *App) ResolvePlanDecisionTab(_a1 any, _a2 any, _a3 any) error { return nil }
 func (a *App) ResolveRecoveryTab(_a1 any, _a2 any, _a3 any, _a4 any) error { return nil }
@@ -206,8 +202,6 @@ func (a *App) RevealBackgroundRuntime() error { return nil }
 func (a *App) RunShellForTab(_a1 any, _a2 any) error { return nil }
 func (a *App) SaveHooksSettingsForRoot(_a1 any, _a2 any, _a3 any) error { return nil }
 func (a *App) SaveLocalPathAs() error { return nil }
-func (a *App) SaveProvider(_a1 any) error { return nil }
-func (a *App) SaveProviderModelCatalogs(_a1 any) error { return nil }
 func (a *App) SaveThemePack(_a1 any) error { return nil }
 func (a *App) ScanPromptHistory() []any { return []any{} }
 func (a *App) ScanRemoteLegacyWorkbenchData() error { return nil }
@@ -217,9 +211,6 @@ func (a *App) SetBotSecret(_a1 any, _a2 any) error { return nil }
 func (a *App) SetBotSettings(_a1 any) error { return nil }
 func (a *App) SetInboxPaused(_a1 any, _a2 any) error { return nil }
 func (a *App) SetMCPServerEnabled(_a1 any, _a2 any) error { return nil }
-func (a *App) SetNetwork(_a1 any) error { return nil }
-func (a *App) SetProviderWebSearch(_a1 any, _a2 any) error { return nil }
-func (a *App) SetReasoningLanguage(_a1 any) error { return nil }
 func (a *App) SetSkillPathEnabled(_a1 any, _a2 any) error { return nil }
 func (a *App) StartBotConnectionInstall(_a1 any, _a2 any) error { return nil }
 func (a *App) StartTopicActivation(req map[string]any) map[string]any {
@@ -241,6 +232,5 @@ func (a *App) TrySubagentProfile(_a1 any, _a2 any) error { return nil }
 func (a *App) UndoRewindForTab() error { return nil }
 func (a *App) UpdateInboxItem() error { return nil }
 func (a *App) UpdateRemoteHost() error { return nil }
-func (a *App) UpgradeDeepSeekProviderAccess(_a1 any) error { return nil }
 func (a *App) UsageStats() error { return nil }
 func (a *App) WriteRemoteFile() error { return nil }

@@ -244,7 +244,93 @@ Go 返回键，列出"前端读到缺失值因而静默回落"的字段。本次
 
 ---
 
-## 5. 后续（P3）待办
+## 5. 「模型服务」页供应商管理（已实现）
+
+### 5.1 数据源：DSH 的 `llm-pi-ai` settings 命名空间
+
+DSH 的第三方供应商配置本来就在 `~/.dsh/settings.yaml`：
+
+```yaml
+llm-pi-ai:
+  providers:
+    xtoken:
+      apiKeyEnv: XTOKEN_API_KEY      # 凭据引用 → .credentials.yaml
+      api: openai-completions        # 见 5.3 协议枚举
+      baseURL: https://xtoken.paylf.com/v1
+      models: [{ id: z-image-turbo }, ...]
+```
+
+本桥**通过 DSH RPC 读写**（不直接改 YAML，避免绕开 DSH 的校验器与 revision）：
+
+| RPC | 用途 |
+|---|---|
+| `settings.describe {}` | 读全部命名空间，取 `llm-pi-ai.providers` |
+| `settings.mutate {ns, ops:[{op,path,value}]}` | 写：`op=set/unset`，`path` 为**分段数组** |
+
+### 5.2 踩坑：路径必须分段，且写入必须读回校验
+
+实测发现：`path: ["providers.<route>"]`（点号单元素）会返回 **ok=true 但实际不生效**；
+改用 `path: ["providers","<route>"]` 才落盘。因此 `writeProviderProfile()` / `deleteProviderProfile()`
+**每一次写入后都 read-back 校验**，失败即返回错误——只信 `settings.mutate` 的返回值会静默丢配置。
+
+### 5.3 协议枚举由 DSH 校验器强制
+
+`api` 只允许三者（`dsh-llm-pi-ai` 的 `supportedProtocols()`）：
+`openai-completions` / `openai-responses` / `anthropic-messages`。
+非法值会被拒绝并给出可读报文：
+
+```
+settings-rejected: $.providers.dsh-probe-tmp.api
+  expected "openai-completions" | "openai-responses" | "anthropic-messages" but got "bogus-protocol"
+```
+
+另外**只有前两者支持从端点列举模型**（`LISTABLE_PROTOCOLS`）——`anthropic-messages`
+无法自动拉模型，只能看已配置的 `models`（`TestProviderModel` 据此分两条判据）。
+
+### 5.4 预设目录（`app_providers_presets.go`）
+
+新增 16 个可一键接入的预设（DeepSeek API / OpenAI / OpenAI Responses / Anthropic /
+Kimi 中·国际 / GLM / Z.AI / 通义 中·国际 / MiniMax / StepFun / SiliconFlow / OpenRouter /
+Novita / 本机 Ollama）。设计取舍：
+
+- 只收录**协议 + 端点 + key 环境变量**三元组明确的网关，不猜端点；
+- `models` 留空：模型列表由 `FetchProviderModelCatalog` 从端点实时拉（或用户填），
+  不把会过期的模型清单硬编码；
+- `added` / `keySet` 是**实时**状态（route 是否在 settings 里、凭据是否已配置）；
+- 未知预设 id **报错返回**而不是静默造一个假配置。
+
+### 5.5 实现的方法
+
+| 契约方法 | 实现要点 |
+|---|---|
+| `SaveProvider(p)` | ProviderView → DSH profile（kind→协议、baseUrl→baseURL、models[]→[{id}]），写 `providers.<route>` |
+| `SaveProviderWithKey(p, key)` | 同上 + `credentials.set(apiKeyEnv, key)`；返回空串=成功、非空=警告 |
+| `AddProviderConnection{,WithURL,WithOptions}` | 预设/复制/官方三种调用形态；route 唯一化；返回警告串 |
+| `AddProviderPresetAccess` / `AddOfficialProviderAccess` | 复用上面（原先都是 `return nil` 的空 stub） |
+| `DeleteProvider` / `RemoveProviderAccess{,es}` | unset profile（保留凭据，避免误删共用 key） |
+| `RenameProviderConnections` | 改 `displayName`，保留 route 与凭据引用 |
+| `SetConnectionKey(name, value)` | 按 route/displayName 找到 apiKeyEnv 后写/清凭据 |
+| `FetchProviderModelCatalog{,Draft}` | 配置模型 ∪ 端点实时列表（拉取失败不影响返回） |
+| `FetchAllProviderModelCatalogs` / `FetchAllProviderModels` | 后者形状修正为 `Record<string, string[]>` |
+| `TestProviderModel(p, model, key)` | 端点可列举→必须在列表里；否则必须在配置里；不发起真实推理（会花钱且慢） |
+| `SaveProviderModelCatalogs` | 批量保存模型选择，返回逐条警告 |
+| `SetWebSearchModel` | 真写 DSH 的 `web-search-deepseek.model`（并读回校验） |
+| `SetVisionModel` / `SetAgentParams` / `SetNetwork` / `SetCompactRatio` / `SetReasoningLanguage` / `SetAutoApproveTools` / `SetBypass` | 本项目桌面偏好（真实持久化） |
+
+`Settings()` 同时补齐 **41/41 契约字段**（`scripts/settings-contract-check.js` 可回归验证），
+其中联网搜索相关 6 个字段值来自 DSH 的 `web-search-deepseek`，`providerPresets`/`providerKinds`
+来自 5.4。`autoApproveTools` 与 `bypass` 拆成两个独立开关（原先都写 yolo，界面无法分别反映状态）。
+
+### 5.6 测试
+
+- 单测：route 规范化、协议映射、profile 映射（含去掉 baseURL 尾部聊天路径）、models 双向转换、
+  预设目录自检（id 唯一 / 协议合法 / route 规范）、`providerKinds` 对齐前端 mock 契约。
+- **live 集成测试**（`DSH_LIVE_TEST=1`，默认跳过）：对真实 DSH 做 写入 → 读回 → 校验器拒绝非法协议 → 删除
+  的完整往返，以及预设视图字段完整性。这条测试才覆盖得住"分段路径"这类只有真后端才暴露的坑。
+
+---
+
+## 6. 后续（P3）待办
 
 1. `Settings()` 补 `providerPresets`（对齐 `ProviderPresetView`），让「模型服务」页预设列表有内容。
 2. 实现 `FetchProviderModelCatalog` / `FetchProviderModelCatalogDraft` / `FetchAllProviderModelCatalogs`

@@ -46,7 +46,7 @@ function interfaceFields(src, name) {
   return fields;
 }
 
-/** 抽取 Go 文件里指定函数体中的 map 键字面量。 */
+/** 抽取 Go 文件里指定函数体中的键名（map 字面量 + 下标赋值 + mergeKeys 合并进来的辅助函数）。 */
 function goKeys(src, funcSignature) {
   const idx = src.indexOf(funcSignature);
   if (idx < 0) return null;
@@ -62,12 +62,41 @@ function goKeys(src, funcSignature) {
   }
   const body = src.slice(start, i - 1);
   const keys = new Set();
-  for (const m of body.matchAll(/"([A-Za-z][A-Za-z0-9_]*)"\s*:/g)) keys.add(m[1]);
+  collectKeys(body, keys);
+  // mergeKeys(out, a.<helper>()) 合并进来的键要算进去，否则会误报缺失
+  for (const m of body.matchAll(/mergeKeys\(\s*\w+\s*,\s*(?:a\.)?(\w+)\(/g)) {
+    const helper = m[1];
+    if (helper === "mergeKeys") continue;
+    const hIdx = src.indexOf(`func (a *App) ${helper}(`);
+    if (hIdx < 0) continue;
+    let h = src.indexOf("{", hIdx);
+    let hDepth = 1;
+    const hStart = h + 1;
+    h += 1;
+    while (h < src.length && hDepth > 0) {
+      if (src[h] === "{") hDepth += 1;
+      else if (src[h] === "}") hDepth -= 1;
+      h += 1;
+    }
+    collectKeys(src.slice(hStart, h - 1), keys);
+  }
   return keys;
 }
 
+/** 从一个 Go 代码片段收集键名：`"key":` 字面量与 `["key"] =` 下标赋值都算。 */
+function collectKeys(body, keys) {
+  for (const m of body.matchAll(/"([A-Za-z][A-Za-z0-9_]*)"\s*:/g)) keys.add(m[1]);
+  for (const m of body.matchAll(/\[\s*"([A-Za-z][A-Za-z0-9_]*)"\s*\]\s*=/g)) keys.add(m[1]);
+}
+
 const types = fs.readFileSync(typesPath, "utf8");
-const go = fs.readFileSync(path.join(root, "app_settings.go"), "utf8");
+// 设置桥方法分散在多个 app_*.go（app_settings.go / app_settings_extra.go / app_providers*.go），
+// 合并后再解析，否则 mergeKeys 合并进来的辅助函数会找不到而误报缺失。
+const go = fs
+  .readdirSync(root)
+  .filter((f) => f.startsWith("app") && f.endsWith(".go") && !f.endsWith("_test.go"))
+  .map((f) => fs.readFileSync(path.join(root, f), "utf8"))
+  .join("\n");
 
 const settingsKeys = goKeys(go, "func (a *App) Settings() map[string]any");
 const startupKeys = goKeys(go, "func (a *App) DesktopStartupSettings() map[string]any");

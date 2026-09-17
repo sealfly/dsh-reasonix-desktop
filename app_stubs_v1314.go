@@ -17,17 +17,19 @@ func (a *App) Balance() map[string]any { return map[string]any{} }
 // SetToolApprovalMode 设置工具审批模式（转发到 ForTab 版本，同样空实现）。
 func (a *App) SetToolApprovalMode(mode string) error { return a.SetToolApprovalModeForTab("", mode) }
 
-// SetAutoApproveTools 自动批准工具（yolo 模式开关）。
+// SetAutoApproveTools 自动批准工具。
+// v1.38.2 契约里 autoApproveTools 与 bypass 是两个独立字段，所以这里只开"自动批准"
+// （mode=auto），完全授权交给 SetBypass（mode=yolo）——之前两者都写 yolo 会让
+// 界面上两个开关无法分别反映状态。
 func (a *App) SetAutoApproveTools(on bool) error {
 	mode := "ask"
 	if on {
-		mode = "yolo"
+		mode = "auto"
 	}
 	return a.SetToolApprovalModeForTab("", mode)
 }
 
 // SetVisionModel 设置视觉模型（DSH 模型由后端管理，空操作）。
-func (a *App) SetVisionModel(_model string) error { return nil }
 
 
 // Steer 转向指示（无对应运行时，空操作）。
