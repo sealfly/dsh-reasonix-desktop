@@ -244,29 +244,35 @@ window.reasonixDesktop = {
 
 ### 9.3 特征矩阵（实测）
 
-| 版本 | 设置「模型服务」页签<br>`settings.tab.providers` | 「模型偏好」<br>`settings.models.preferences` | 模型服务(models 内)<br>`settings.models.services` | 右栏可增删 tab<br>`TabContainer/TabAddMenu` | 右栏 tab 由谁渲染<br>`workbench-dock__tabs` |
-|---|---|---|---|---|---|
-| v1.29.0 | **有** | 无 | 无 | 无 | App.tsx |
-| **v1.31.4（我们当前）** | **有** | **无** | **无** | **无** | **App.tsx** |
-| v1.32.0 | 有 | 无 | 无 | 无 | App.tsx |
-| v1.34.0 | 有 | 无 | 无 | 无 | App.tsx |
-| v1.36.0 | 有 | 无 | 无 | 无 | App.tsx |
-| v1.37.0 | 有 | 无 | 无 | 无 | App.tsx |
-| v1.38.0 | 有 | 无 | 无 | 无 | App.tsx |
-| v1.38.1 | 有 | **无** | **无** | 无 | — |
-| **v1.38.2** | 有 | **有** ✅ | **有** ✅ | 无 | — |
-| v1.38.3 | 有 | 有 | 有 | 无 | — |
-| **v1.38.8** | 有 | 有 | 有 | **有** ✅ | **TabBar.tsx** |
+| 版本 | 设置「模型服务」页签<br>`settings.tab.providers`(i18n) | **`providers→models` 重定向**<br>`initialTab === "providers" ? "models"` | 「模型偏好」<br>`settings.models.preferences` | 模型服务(models 内)<br>`settings.models.services` | 右栏可增删 tab<br>`TabContainer/TabAddMenu` | 右栏 tab 由谁渲染<br>`workbench-dock__tabs` |
+|---|---|---|---|---|---|---|
+| v1.29.0 | **有** | （未测） | 无 | 无 | 无 | App.tsx |
+| **v1.31.4（我们当前）** | **有** | **有 2 处（合并）** ⛔ | **无** | **无** | **无** | **App.tsx** |
+| v1.32.0 | 有 | — | 无 | 无 | 无 | App.tsx |
+| v1.34.0 | 有 | — | 无 | 无 | 无 | App.tsx |
+| v1.36.0 | 有 | — | 无 | 无 | 无 | App.tsx |
+| v1.37.0 | 有 | — | 无 | 无 | 无 | App.tsx |
+| v1.38.0 | 有 | — | 无 | 无 | 无 | App.tsx |
+| v1.38.1 | 有 | **有 2 处（仍合并）** ⛔ | **无** | **无** | 无 | — |
+| **v1.38.2** | 有 | **0 处（已独立）** ✅ | **有** ✅ | **有** ✅ | 无 | — |
+| v1.38.3 | 有 | 0 处 ✅ | 有 | 有 | 无 | — |
+| **v1.38.8** | 有 | 0 处 ✅ | 有 | 有 | **有** ✅ | **TabBar.tsx** |
 
-### 9.4 结论（含对原始描述的修正）
+### 9.4 结论（含 2026-09-16 的自我修正）
 
-1. **「设置-模型服务」页签并不是 v1.31.4 才有的**——实测 **v1.29.0 就已存在**
-   （`settings.tab.providers = 模型服务`），**我们当前的 v1.31.4 里同样存在**。
-   也就是说这一项我们**并没有落后**；若作者看到的是"供应商配置被拆成独立页签"，那发生在 **v1.29.0 之前**（本次未继续向前回溯）。
-2. **真正在 v1.38.2 引入的是「模型偏好」这一层命名与拆分类聚**：
-   `settings.models.preferences = 模型偏好`（以及 `settings.models.services = 模型服务`）——
-   二分收敛到单一版本：**v1.38.1 无 → v1.38.2 有**。
-   即"原「设置-模型」变为「设置-模型偏好」"这句描述，版本号应为 **v1.38.2**。
+1. **【修正】「设置-模型服务」独立页签与「模型偏好」是同一件事，都在 `desktop-v1.38.2` 引入。**
+   - 在 **v1.31.4（我们）与 v1.38.1** 的 `SettingsPanel.tsx` 里都存在 **2 处重定向**：
+     `initialTab === "providers" ? "models" : …` —— 即**打开"模型服务"会被强制跳回"模型"页**，
+     UI 上**根本不存在独立的「模型服务」页签**（供应商配置就落在「模型」页里，正如作者观察到的现象）；
+   - 从 **v1.38.2** 起该重定向**被移除（0 处）**，同时新增
+     `settings.models.preferences = 模型偏好`（2 处引用）与 `settings.models.services = 模型服务`（1 处引用）
+     → 「模型」页正式拆成 **模型偏好 + 模型服务**。
+   - ⚠️ **方法论教训（本次踩过）**：`settings.tab.providers` 这个 **i18n key 从 v1.29.0 起就存在**，
+     但**字符串存在 ≠ UI 呈现**。本报告初版仅凭该字符串断言"我们没落后"，是**错误**的；
+     必须同时检查**渲染/重定向逻辑**（本次的 `initialTab === "providers" ? "models"`）才能定性。
+     ——因此逐版本对比的判据应包含：i18n key **＋** 组件里的路由/重定向/条件渲染分支。
+2. 「模型偏好」这一层命名的引入版本同样是 **v1.38.2**（见上表两列：v1.38.1 无 → v1.38.2 有），
+   与第 1 条实为同一处改动。
 3. **右栏"标签式"（可增删 tab 容器）在 v1.38.8 引入**：
    `components/TabContainer/`（TabContainer / TabBar / TabContent / **TabAddMenu** / DockTabPicker / TabOverviewMenu）
    直到 **v1.38.3 仍无 TabAddMenu**；且 `workbench-dock__tabs` 的渲染者在这一版从 **App.tsx 内联** 迁到 **TabBar.tsx**
