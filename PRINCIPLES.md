@@ -1,4 +1,4 @@
-﻿# 项目原则（PRINCIPLES）
+# 项目原则（PRINCIPLES）
 
 ## 原则 1（最高优先）：本项目只是 DSH 的前端 UI，不限制 DSH 的任何能力
 
@@ -119,6 +119,20 @@
 3. **桥方法适配**：`app_*.go` 中所有"DSH 语义"实现（持久化桥：MCP、子智能体、技能偏好、
    插件市场等）——官方实现基于 Reasonix 自身后端（skill 文件、配置服务），与 DSH 桥不同，
    升级时**不得用官方实现覆盖本项目实现**，只吸收官方新增的方法面。
+
+   > **载荷字段面与方法面同等重要（2026-09-17「主题跳变」事故）**：宿主方法缺失时会因
+   > `app` Proxy 返回 `undefined` 而**静默不崩**，但**返回载荷里缺字段同样静默**——
+   > 前端一律 `normalize*(undefined)` 回落默认值。真实案例：前端有**两套键名**的主题契约
+   > （themeExperience 用 `themeMode`/`baseStyle`；设置快照用 `desktopTheme`/`desktopThemeStyle`/
+   > `conversationWidth`/`sessionExperience`），`Settings()` 曾只给第一套，于是每次设置面板
+   > 重读都 `normalizeThemePreference(undefined)` → `DEFAULT_THEME("auto")` → **用户选的深色
+   > 被冲掉（按任意按钮就"跳"）**；而 `DesktopStartupSettings()` 给对了键名，所以表现为
+   > "启动正确、之后跳变"，看起来像升级新引入的 bug（缺口其实长期存在，
+   > v1.38.2 新增的 `app-runtime/` 偏好适配器让重放时机变多才暴露）。
+   > 规则：**同一份语义只允许一个来源函数**（本项目为 `desktopPreferenceKeys()`），
+   > `Settings()` 与 `DesktopStartupSettings()` 必须共用它，并用
+   > `node scripts/settings-contract-check.js <上游 lib/types.ts>` 对照契约字段；
+   > 改外观/会话类字段必须同时补回归测试（见 `app_settings_theme_test.go`）。
 4. **持久化用户数据**：`~/.reasonix/` 下的用户数据（`mcp-servers.json`、
    `subagent-profiles.json`、`skill-preferences.json`、`plugins/`）是运行时数据，
    升级不涉及，也禁止升级流程触碰。
@@ -151,6 +165,8 @@
 - [ ] dist 中 logo/boot 品牌是否仍是本项目版（`node scripts/apply-branding.js` 幂等重放，5 项断言）
 - [ ] 全部注入是否就位：`node scripts/apply-all-injections.js`（语法门禁 0 失败 + 每个 id 哨兵恰好 1 个）
 - [ ] 运行期确认注入生效：`%TEMP%\resume-debug.log` 里有对应的 `frontend: [<脚本>] …` 成功诊断
+- [ ] **载荷字段面对照**：`node scripts/settings-contract-check.js <上游 frontend/src/lib/types.ts>`
+      （缺字段会被前端静默归一化为默认值 —— 主题跳变即此类）
 - [ ] 桥方法：本项目持久化实现（MCP/子智能体/技能偏好/插件市场）未被官方实现替换
 - [ ] 本项目独有桥方法（`DshStd*`、`MarketPage`、`Terminal*` 等 23 个）未被删除
 - [ ] 若已做**源码级焊接**：补丁脚本已重放且锚点校验通过（未通过则先修锚点，**不得静默丢失我们的页面**）

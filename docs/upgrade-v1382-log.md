@@ -1,4 +1,4 @@
-﻿# 前端升级执行记录：v1.31.4 → v1.38.2
+# 前端升级执行记录：v1.31.4 → v1.38.2
 
 > 执行日期：2026-09-17 ｜ 目标版本：`desktop-v1.38.2`（上游检出 `esengine-DeepSeek-Reasonix-f5745ba`）
 > 前置评估：`docs/upgrade-assessment-v1388.md`（v1.38.8 存档评估 + 本次决策修订）
@@ -196,12 +196,63 @@ agent:event emit kind="tool_dispatch" / kind="tool_result"
 
 ---
 
-## 4. 后续（P3）待办
+## 4. 升级后回归修复：深色模式按别的按钮会「跳」
+
+**现象**：深色模式下按任意其他按钮，主题/风格/会话宽度被重置。
+
+**根因（源码级）**：前端有**两套不同键名**的主题契约，我们的载荷混用了：
+
+| 契约 | 键名 | 读它的代码 | 我们的来源 |
+|---|---|---|---|
+| themeExperience | `themeMode` / `baseStyle` | `lib/themeExperience.ts` | `GetThemeExperience()` ✅ 正确 |
+| 设置快照 | `desktopTheme` / `desktopThemeStyle` / `conversationWidth` / `desktopLanguage` / `sessionExperience` | `SettingsPanel.tsx` L200-210、`app-runtime/desktopPreferencesAdapter.ts` L19-26 | `Settings()` ❌ 曾只给第一套键名 |
+
+链路：
+
+```
+SettingsPanel.tsx L173  normalizeSettingsView(await app.Settings())
+                L202  normalizeThemePreference(s.desktopTheme)   ← 我们没给 → 缺失值
+lib/theme.ts    L38   DEFAULT_THEME = "auto"                    ← 回落成这样
+                L204  setThemeState("auto"); setThemeStyleState("graphite")
+                L209  setConversationWidth(默认)
+依赖数组        L210  [s?.conversationWidth, s?.desktopTheme, s?.desktopThemeStyle, ...]
+```
+
+即：**每次设置面板重读（点任意按钮都会触发 `reload`）就重放一次外观**，把用户选的值冲掉。
+关键对照事实：`DesktopStartupSettings()` 一直给的是契约键名（14/14 完整）→
+**启动时主题正确、之后才跳**，这正是它看起来像"升级引入的新 bug"的原因。
+
+**为什么升级后才明显**：v1.38.2 新增了 `app-runtime/` 桌面偏好适配器
+（`useDesktopPreferences` → `synchronizeDesktopPreferences` → `publish` →
+`applyPreferencesAppearance`），设置快照的重读/重放时机远多于 v1.31.4 的 App.tsx 路径；
+键名缺口本身是长期存在的。
+
+**修复**：`app_settings.go` 的 `desktopPreferenceKeys()` 按 v1.38.2 `lib/types.ts` 给出契约键名，
+`Settings()` 与 `DesktopStartupSettings()` **共用同一套值**（两处一致是防跳变的不变量），
+旧键名保留兼容；补 `SetSessionExperience` + `settings.go` 的 `SessionExperience` 持久化。
+回归守卫：`app_settings_theme_test.go` 锁住"两载荷键名齐全且取值一致 + 用户设置可往返"。
+
+**可复用工具**：`scripts/settings-contract-check.js <types.ts>` 静态对照前端设置契约与
+Go 返回键，列出"前端读到缺失值因而静默回落"的字段。本次结果：
+`DesktopStartupSettings` 14/14；`Settings()` 曾缺 14 项，其中主题类 4 项已修，
+其余属 P3（`providerPresets` / `webSearchModel*` / `network` / `agent` / `providerKinds` /
+`autoApproveTools` / `bypass` / `visionModel` / `shadowedByPath` / `effectiveWebSearchModel`）。
+
+> **教训（已入 PRINCIPLES 升级清单）**：宿主方法缺失会因 Proxy 返回 `undefined` 而"静默不崩"，
+> 但**返回载荷里缺字段**同样静默——前端一律 `normalize*(undefined)` 回落默认值。
+> 升级后除了对照方法面，还必须对照**载荷字段面**。
+
+---
+
+## 5. 后续（P3）待办
 
 1. `Settings()` 补 `providerPresets`（对齐 `ProviderPresetView`），让「模型服务」页预设列表有内容。
 2. 实现 `FetchProviderModelCatalog` / `FetchProviderModelCatalogDraft` / `FetchAllProviderModelCatalogs`
    / `TestProviderModel` / `AddProviderConnection{,WithURL,WithOptions}` / `SetConnectionKey` / `DeleteProvider`。
 3. 修 `FetchAllProviderModels` 返回形状为 `Record<string, string[]>`；`FetchProviderModels` 按入参 provider 过滤。
-4. 给其余注入脚本补 `LogFromFrontend` 诊断（本次只有 subagent-panel 有），
+4. 按 `scripts/settings-contract-check.js` 的剩余缺口补齐 `Settings()` 字段
+   （`visionModel` / `webSearchModel*` / `network` / `agent` / `providerKinds` / `autoApproveTools` /
+   `bypass` / `shadowedByPath` / `effectiveWebSearchModel`）——同一类"静默回落"风险。
+5. 给其余注入脚本补 `LogFromFrontend` 诊断（本次只有 subagent-panel 有），
    让"锚点消失"这类升级回归能自动留痕，而不是靠肉眼发现。
-5. 可选：把「子代理」页在 TabContainer 时代（≥1.38.8）焊成官方 tab。
+6. 可选：把「子代理」页在 TabContainer 时代（≥1.38.8）焊成官方 tab。
