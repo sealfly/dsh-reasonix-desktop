@@ -1,0 +1,27 @@
+{
+  "_comment": "前端注入清单：scripts/apply-all-injections.js 按此顺序把源脚本内联进 frontend/dist/index.html。顺序 = 依赖顺序，改动需同步 PRINCIPLES 原则 6。",
+  "injections": [
+    { "id": "plugin-market",  "file": "dsh-plugin-market.js",  "enabled": true,
+      "note": "取代 dsh-plugin-market-inject.js：旧文件把一段 export 残片当作普通脚本，整块 SyntaxError 从未执行" },
+    { "id": "update-banner",  "file": "dsh-update-banner.js",  "enabled": true },
+    { "id": "conn-banner",    "file": "dsh-conn-banner.js",    "enabled": true },
+    { "id": "agent-presets",  "file": "dsh-agent-presets.js",  "enabled": true },
+    { "id": "version-manage", "file": "dsh-version-manage.js", "enabled": true },
+    { "id": "memory-plugins", "file": "dsh-memory-plugins.js", "enabled": true },
+    { "id": "inline-editor",  "file": "dsh-inline-editor.js",  "enabled": true },
+    { "id": "subagent-panel", "file": "dsh-subagent-panel.js", "enabled": true },
+    { "id": "file-preview",   "file": "dsh-file-preview.js",   "enabled": false,
+      "note": "源脚本在，但当前 dist 未内联；启用前需先确认与 file-preview 原生能力不冲突" }
+  ],
+  "legacyMarkers": [
+    "// dsh-subagent-panel.js",
+    "// dsh-inline-editor.js",
+    "// dsh-memory-plugins.js",
+    "// dsh-version-manage.js",
+    "// dsh-update-banner.js",
+    "// dsh-conn-banner.js",
+    "// dsh-agent-presets.js",
+    "__DSH_PLUGIN_MARKET",
+    "__DSH_ACT_WRAP"
+  ]
+}

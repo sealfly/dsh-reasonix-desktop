@@ -1,17 +1,3 @@
-// ⛔ 已废弃（2026-09-17）：本文件首行是一段 export 残片（ce as T,...};），作为经典脚本
-// 是 SyntaxError，整块从未执行 —— 插件市场功能自上线起就是死的。
-// 替代品：scripts/dsh-plugin-market.js（由 dist-block-extract.js promote 反向提取，可解析），
-// 由 scripts/apply-all-injections.js 按 scripts/injections.json 内联。本文件仅作历史留存，
-// 不要重新加入清单（apply-all-injections.js 的语法门禁会直接拒绝它）。
-ce as T,clearLegacyThemePreference as U,h as V,getResolvedTheme as W,normalizeThemeStyleForTheme as X,normalizeThemePreference as Y,readLegacyThemePreference as Z,openExternal as _,installBreadcrumbConsoleHook as _t,onProjectTreeChanged as a,mergedFetchedProviderModels as at,modeHasAutoApproveTools as b,onRemoteServer as c,providerIsConfigured as ct,onSessionRecovered as d,providerModelContextWindowIsSmall as dt,normalizeStatusBarItems as et,onTabMeta as f,providerRequiresKey as ft,onUpdaterProgress as g,dumpBreadcrumbs as gt,onTopicActivation as h,addBreadcrumb as ht,onFilesDropped as i,mergeProviderModelContextWindows as it,clearThemePack as j,cancelThemePreview as k,onRemoteStatus as l,providerModelCandidates as lt,onTerminalOutput as m,invalidateSharedQuery as mt,installWailsNonFileDragErrorSuppression as n,createLatestRequestGate as nt,onReady as o,providerApiKeyEnvForSave as ot,onTerminalExit as p,onProjectTreeChangedV2 as pt,initTheme as q,onEvent as r,inferredVisionModels as rt,onRemoteForwards as s,providerDefaultModel as st,J as t,apiKeyEnvFromProviderName as tt,onRuntimeRebuilt as u,providerModelContextWindowDrafts as ut,decisionSurfaceMockFromInput as v,snapshotBreadcrumbs as vt,normalizeToolApprovalMode as w,modeHasPlan as x,modeFromAxes as y,themePackKind as z};
-// __DSH_ACT_WRAP: 兜底模拟 topic activation 事件。主路径: Go StartTopicActivationImpl 已用
-// wruntime.EventsEmit 推 "topic:activation"(starting->ready), 前端 onTopicActivation 经
-// window.runtime.EventsOn 订阅。此处额外推 z(mock 订阅者), 兼容 mock 模式, realApp 下 z 无订阅者无副作用。
-try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__win.go||!__win.go.main||!__win.go.main.App)return;var __app=__win.go.main.App;var __orig=__app.StartTopicActivation;if(typeof __orig!=='function')return;__app.StartTopicActivation=function(__req){var __res=__orig.apply(this,arguments);if(__res&&typeof __res.then==='function'){return __res.then(function(__r){try{if(__r&&__r.requestId){var __rid=__r.requestId,__tid=__r.tabId;__emitMockTopicActivation({requestId:__rid,tabId:__tid,phase:'starting'});(typeof Promise!=='undefined'?Promise.resolve():__win.Promise.resolve()).then(function(){try{__emitMockTopicActivation({requestId:__rid,tabId:__tid,phase:'ready'})}catch(__e){}});__win.setTimeout(function(){try{__emitMockTopicActivation({requestId:__rid,tabId:__tid,phase:'ready'})}catch(__e){}},0)}}catch(__e){}return __r})}return __res}})()}catch(__e){}
-
-
-
-
 ;/* __DSH_PLUGIN_MARKET v3 — MarketTab 风格（借鉴 dsh-plugin-market, MIT）:
    传统页码翻页(1/2/3… 上一页/下一页) + 详情(README 功能简介 + 预览图)。
    数据: MarketPage(query, category, page) 分页缓存（翻回已加载页零调用）,

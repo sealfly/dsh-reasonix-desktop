@@ -23,10 +23,13 @@ if (-not (Test-Path $WailsBin)) {
   exit 1
 }
 
-# 0) Frontend injections: frontend/dist is a build artifact (an upstream upgrade overwrites
-#    it), so every DSH adaptation that patches index.html must be re-applied here, and the
-#    apply scripts are idempotent (PRINCIPLES P6). Missing node is fatal on purpose: without
-#    these injections the injected UI features silently disappear from the build.
+# 0) Frontend brand + injections: frontend/dist is a build artifact (an upstream upgrade
+#    overwrites it), so BOTH the DSH brand patch and every DSH UI adaptation that patches
+#    index.html must be re-applied here, and they are idempotent (PRINCIPLES P6).
+#    apply-all-injections.js is manifest-driven (scripts/injections.json) and gates each
+#    source on a syntax check, so a broken payload fails the build instead of silently
+#    never executing. Missing node is fatal on purpose: without these steps the injected
+#    UI features and the DSH-Reasonix branding silently disappear from the build.
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
   foreach ($cand in @((Join-Path $env:LOCALAPPDATA "Programs\nodejs\node.exe"),
                       (Join-Path $env:ProgramFiles "nodejs\node.exe"),
@@ -38,10 +41,10 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
   Write-Error "node not found (frontend injections require node; install Node.js or add it to PATH)"
   exit 1
 }
-Write-Host "== Frontend injections =="
-foreach ($ij in @("apply-inline-editor.js", "apply-subagent-panel.js")) {
+Write-Host "== Frontend brand + injections =="
+foreach ($ij in @("apply-branding.js", "apply-all-injections.js")) {
   & node (Join-Path $root "scripts\$ij")
-  if ($LASTEXITCODE -ne 0) { throw "frontend injection failed: $ij (exit $LASTEXITCODE)" }
+  if ($LASTEXITCODE -ne 0) { throw "frontend patch failed: $ij (exit $LASTEXITCODE)" }
 }
 
 # 1) Build

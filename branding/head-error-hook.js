@@ -1,0 +1,1 @@
+window.addEventListener('error',function(e){try{document.title='ERR:'+(e.message||e.error||'?')}catch(_){}});window.addEventListener('unhandledrejection',function(e){try{document.title='REJ:'+((e.reason&&e.reason.message)||e.reason||'?')}catch(_){}});

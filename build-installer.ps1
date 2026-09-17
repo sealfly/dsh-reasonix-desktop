@@ -54,9 +54,11 @@ if ($Bundle) {
   $installerOut = Join-Path $root "build\bin\dsh-reasonix-wails-amd64-installer-lazy.exe"
 }
 
-# 0) Frontend injections: dist is a build artifact (upstream upgrades overwrite it), so every
-#    DSH adaptation patching index.html must be re-applied here; apply scripts are idempotent
-#    (PRINCIPLES P6). Missing node is fatal: without injection the UI features are lost.
+# 0) Frontend brand + injections: dist is a build artifact (upstream upgrades overwrite it), so
+#    both the DSH brand patch and every DSH adaptation patching index.html must be re-applied
+#    here; the appliers are idempotent (PRINCIPLES P6) and apply-all-injections.js fails the
+#    build on a syntax-gate error instead of shipping a never-executing payload.
+#    Missing node is fatal: without these steps the UI features and branding are lost.
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
   foreach ($cand in @((Join-Path $env:LOCALAPPDATA "Programs\nodejs\node.exe"),
                       (Join-Path $env:ProgramFiles "nodejs\node.exe"),
@@ -65,13 +67,13 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
   }
 }
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-  Write-Error "node not found (frontend injections require node; install Node.js or add it to PATH)"
+  Write-Error "node not found (frontend brand/injections require node; install Node.js or add it to PATH)"
   exit 1
 }
-Write-Host "== Frontend injections =="
-foreach ($ij in @("apply-inline-editor.js", "apply-subagent-panel.js")) {
+Write-Host "== Frontend brand + injections =="
+foreach ($ij in @("apply-branding.js", "apply-all-injections.js")) {
   & node (Join-Path $root "scripts\$ij")
-  if ($LASTEXITCODE -ne 0) { throw "frontend injection failed: $ij (exit $LASTEXITCODE)" }
+  if ($LASTEXITCODE -ne 0) { throw "frontend patch failed: $ij (exit $LASTEXITCODE)" }
 }
 
 # 1) wails build -nsis: main exe + wails_tools.nsh + initial installer

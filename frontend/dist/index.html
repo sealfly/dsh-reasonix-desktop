@@ -10,7 +10,8 @@
          unstyled content. Keep these rules in sync with StartupSplash. -->
     <style>
       html,body,#root{width:100%;height:100%;margin:0}body{overflow:hidden;background:#111214;color:#f4f4f3;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.boot-shell{position:fixed;inset:0;display:grid;place-items:center;background:#111214}.boot-shell__card{display:flex;flex-direction:column;align-items:center;gap:10px}.boot-shell__mark{display:grid;width:64px;height:64px;place-items:center}.boot-shell__mark img{display:block;width:56px;height:56px}.boot-shell__name{font-size:22px;font-weight:650;letter-spacing:0}.boot-shell__dots{display:flex;height:12px;align-items:center;gap:5px}.boot-shell__dots span{width:5px;height:5px;border-radius:50%;background:#e58a3a;animation:boot-pulse 1s ease-in-out infinite}.boot-shell__dots span:nth-child(2){animation-delay:.14s}.boot-shell__dots span:nth-child(3){animation-delay:.28s}@keyframes boot-pulse{0%,100%{opacity:.3;transform:translateY(0)}50%{opacity:1;transform:translateY(-2px)}}
-    /* local brand: new DSH-Reasonix logo (colour bitmap) - cancel the mono-logo invert filter and fit the new aspect ratio */
+        /* dsh-brand:start */
+/* local brand: new DSH-Reasonix logo (colour bitmap) - cancel the mono-logo invert filter and fit the new aspect ratio */
 .sidebar__brand-logo,.welcome__brand-logo{filter:none!important}
 .sidebar__brand-logo{width:150px;height:34px;margin-left:0}
 .sidebar__brand-logo--workbench{width:132px;height:26px;margin-left:0}
@@ -19,29 +20,49 @@
 :root[data-theme=dark] .onboarding__logo,:root:not([data-theme]) .onboarding__logo{content:url("./assets/logo-mark-dark.svg")}
     /* local brand: orange splash mark glow (was blue #0153e557) */
 .startup-splash__mark{filter:drop-shadow(0 14px 22px #ff5a2c59)!important}
+    /* dsh-brand:end */
     </style>
-    <script type="module" src="./assets/index-BD5zN_eg.js"></script>
-    <link rel="modulepreload" href="./assets/rolldown-runtime-CXU3Ph47.js">
-    <link rel="modulepreload" href="./assets/vendor-react-BxsOQ1VN.js">
-    <link rel="modulepreload" href="./assets/createLucideIcon-CqY5lRUc.js">
-    <link rel="modulepreload" href="./assets/check-BFx6Xn0K.js">
-    <link rel="modulepreload" href="./assets/copy-saWepz8S.js">
-    <link rel="modulepreload" href="./assets/git-branch-C7XPEyY0.js">
-    <link rel="modulepreload" href="./assets/x-Cp972tmX.js">
+    <script type="module" src="./assets/index-oFeqbpn3.js"></script>
+    <link rel="modulepreload" href="./assets/rolldown-runtime-B0ziMyKk.js">
+    <link rel="modulepreload" href="./assets/vendor-react-BPtf2N0Y.js">
+    <link rel="modulepreload" href="./assets/createLucideIcon-DsCRaO0f.js">
+    <link rel="modulepreload" href="./assets/info-CFuSIQXt.js">
     <link rel="modulepreload" href="./assets/array-BKHaHXxq.js">
     <link rel="modulepreload" href="./assets/preload-helper-BAhTmhLg.js">
-    <link rel="modulepreload" href="./assets/i18n-BFpIrKUj.js">
-    <link rel="modulepreload" href="./assets/bridge-Bxic_oZR.js">
-    <link rel="modulepreload" href="./assets/costRateBand-BBsAxpmQ.js">
+    <link rel="modulepreload" href="./assets/i18n-D0vq3pWO.js">
+    <link rel="modulepreload" href="./assets/bridge-JPQ14B9w.js">
+    <link rel="modulepreload" href="./assets/toast-B-r5S22c.js">
+    <link rel="modulepreload" href="./assets/costRateBand-CY5_EQCk.js">
+    <link rel="modulepreload" href="./assets/completionSummary-Dh_FbI15.js">
     <link rel="modulepreload" href="./assets/defineProperty-DMTxG6H7.js">
+    <link rel="modulepreload" href="./assets/searchSources-C1X1B9wS.js">
+    <link rel="modulepreload" href="./assets/diff-_2G0u5Ag.js">
     <link rel="modulepreload" href="./assets/lang-ClCI_BXE.js">
-    <link rel="modulepreload" href="./assets/Tooltip-CjNi_Yhr.js">
-    <link rel="modulepreload" href="./assets/transcriptSelectionStore-CxFe2U6Y.js">
-    <link rel="modulepreload" href="./assets/keyboardShortcuts-u42xMgOc.js">
+    <link rel="modulepreload" href="./assets/controllerNotices-D8XYq4Ew.js">
+    <link rel="modulepreload" href="./assets/frontendDiagnosticBridge-DVHxutLC.js">
+    <link rel="modulepreload" href="./assets/todoVisibility-CIlzk_XV.js">
+    <link rel="modulepreload" href="./assets/useNavigationIntentFence-CTiRM90L.js">
+    <link rel="modulepreload" href="./assets/transcriptScrollGeometry-CumwO0_J.js">
+    <link rel="modulepreload" href="./assets/motion-BHIBpcY2.js">
+    <link rel="modulepreload" href="./assets/sessionExperience-DArfIg2r.js">
+    <link rel="modulepreload" href="./assets/react-Cl1NIFYx.js">
+    <link rel="modulepreload" href="./assets/setState-DkhXNwlH.js">
+    <link rel="modulepreload" href="./assets/appNavigation-CE9yj8GE.js">
+    <link rel="modulepreload" href="./assets/DiffView-ChcluG73.js">
     <link rel="modulepreload" href="./assets/clipboard-To9oImBM.js">
-    <link rel="modulepreload" href="./assets/react-CwP2h1hP.js">
-  <script>window.addEventListener('error',function(e){try{document.title='ERR:'+(e.message||e.error||'?')}catch(_){}});window.addEventListener('unhandledrejection',function(e){try{document.title='REJ:'+((e.reason&&e.reason.message)||e.reason||'?')}catch(_){}});</script>
-</head>
+    <link rel="modulepreload" href="./assets/keyboardShortcuts-CVJ5gjad.js">
+    <link rel="modulepreload" href="./assets/arrow-down-P0KGSs07.js">
+    <link rel="modulepreload" href="./assets/check-O9HpWIzw.js">
+    <link rel="modulepreload" href="./assets/copy-DWOblNQQ.js">
+    <link rel="modulepreload" href="./assets/file-text-UpqpD4-s.js">
+    <link rel="modulepreload" href="./assets/folder-0HaImYFB.js">
+    <link rel="modulepreload" href="./assets/git-branch-rI7-DuiK.js">
+    <link rel="modulepreload" href="./assets/x-BtNyIA4p.js">
+    <link rel="modulepreload" href="./assets/Tooltip-rSVzVeCy.js">
+    <link rel="modulepreload" href="./assets/refToken-BTD1uOXt.js">
+    <link rel="modulepreload" href="./assets/transcriptSelectionStore-CxFe2U6Y.js">
+    <script>window.addEventListener('error',function(e){try{document.title='ERR:'+(e.message||e.error||'?')}catch(_){}});window.addEventListener('unhandledrejection',function(e){try{document.title='REJ:'+((e.reason&&e.reason.message)||e.reason||'?')}catch(_){}});</script>
+  </head>
   <body>
     <div id="root">
       <div class="boot-shell" role="status" aria-label="DSH-Reasonix is starting">
@@ -52,16 +73,14 @@
         </div>
       </div>
     </div>
-  <script>
-ce as T,clearLegacyThemePreference as U,h as V,getResolvedTheme as W,normalizeThemeStyleForTheme as X,normalizeThemePreference as Y,readLegacyThemePreference as Z,openExternal as _,installBreadcrumbConsoleHook as _t,onProjectTreeChanged as a,mergedFetchedProviderModels as at,modeHasAutoApproveTools as b,onRemoteServer as c,providerIsConfigured as ct,onSessionRecovered as d,providerModelContextWindowIsSmall as dt,normalizeStatusBarItems as et,onTabMeta as f,providerRequiresKey as ft,onUpdaterProgress as g,dumpBreadcrumbs as gt,onTopicActivation as h,addBreadcrumb as ht,onFilesDropped as i,mergeProviderModelContextWindows as it,clearThemePack as j,cancelThemePreview as k,onRemoteStatus as l,providerModelCandidates as lt,onTerminalOutput as m,invalidateSharedQuery as mt,installWailsNonFileDragErrorSuppression as n,createLatestRequestGate as nt,onReady as o,providerApiKeyEnvForSave as ot,onTerminalExit as p,onProjectTreeChangedV2 as pt,initTheme as q,onEvent as r,inferredVisionModels as rt,onRemoteForwards as s,providerDefaultModel as st,J as t,apiKeyEnvFromProviderName as tt,onRuntimeRebuilt as u,providerModelContextWindowDrafts as ut,decisionSurfaceMockFromInput as v,snapshotBreadcrumbs as vt,normalizeToolApprovalMode as w,modeHasPlan as x,modeFromAxes as y,themePackKind as z};
-// __DSH_ACT_WRAP: 兜底模拟 topic activation 事件。主路径: Go StartTopicActivationImpl 已用
-// wruntime.EventsEmit 推 "topic:activation"(starting->ready), 前端 onTopicActivation 经
-// window.runtime.EventsOn 订阅。此处额外推 z(mock 订阅者), 兼容 mock 模式, realApp 下 z 无订阅者无副作用。
-try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__win.go||!__win.go.main||!__win.go.main.App)return;var __app=__win.go.main.App;var __orig=__app.StartTopicActivation;if(typeof __orig!=='function')return;__app.StartTopicActivation=function(__req){var __res=__orig.apply(this,arguments);if(__res&&typeof __res.then==='function'){return __res.then(function(__r){try{if(__r&&__r.requestId){var __rid=__r.requestId,__tid=__r.tabId;__emitMockTopicActivation({requestId:__rid,tabId:__tid,phase:'starting'});(typeof Promise!=='undefined'?Promise.resolve():__win.Promise.resolve()).then(function(){try{__emitMockTopicActivation({requestId:__rid,tabId:__tid,phase:'ready'})}catch(__e){}});__win.setTimeout(function(){try{__emitMockTopicActivation({requestId:__rid,tabId:__tid,phase:'ready'})}catch(__e){}},0)}}catch(__e){}return __r})}return __res}})()}catch(__e){}
-
-
-
-
+    <!-- Wails v2.13 dev spinner anchor: the dev runtime mounts its loading
+         overlay here; without the element the overlay anchors on null and its
+         Svelte internals crash ("Cannot read properties of null (reading
+         'nodes')"), which the app's error screen then escalates. -->
+    <div id="wails-spinner" aria-hidden="true"></div>
+  <!-- dsh-inject:begin -->
+<script>
+/* dsh-inject:plugin-market */
 ;/* __DSH_PLUGIN_MARKET v3 — MarketTab 风格（借鉴 dsh-plugin-market, MIT）:
    传统页码翻页(1/2/3… 上一页/下一页) + 详情(README 功能简介 + 预览图)。
    数据: MarketPage(query, category, page) 分页缓存（翻回已加载页零调用）,
@@ -349,6 +368,7 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
 
 </script>
 <script>
+/* dsh-inject:update-banner */
 ;(function () {
   /* __DSH_UPDATE_BANNER v1 — DSH 新版提醒横幅（仿 Reasonix 更新提醒）。
      启动后调 A.DshUpdateCheck()，available=true 时显示可关闭横幅，
@@ -449,8 +469,8 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
 })();
 
 </script>
-
 <script>
+/* dsh-inject:conn-banner */
 // dsh-conn-banner.js — DSH 连接状态横幅 + 自选 DSH 后端设置
 // 注入到 Reasonix v1.31.4 前端：启动后查询 A.DshConnStatus()，
 // 未连接时显示横幅（启动 DSH / 连接设置），设置弹层支持 host:port 自选 + 测试。
@@ -645,8 +665,8 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
 })();
 
 </script>
-
 <script>
+/* dsh-inject:agent-presets */
 /* __DSH_AGENT_PRESETS v2 (DSH 四模式/Agent 预设选择器注入, 含选中箭头指示) */
 // dsh-agent-presets.js — DSH 四模式（Agent 预设）选择器注入。
 // 在 Composer「执行方式」菜单里追加 Agent 模式分组，点击切换 DSH 会话预设。
@@ -817,6 +837,7 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
 
 </script>
 <script>
+/* dsh-inject:version-manage */
 /* __DSH_VERSION_MANAGE v2 (DSH 核心版本管理 - 挂到 设置-更新页, 本地注入) */
 // dsh-version-manage.js — 在设置面板「更新」页（updates-control 区块后）追加
 // 「DSH 核心版本」管理区：当前版本 / 最新版本 / npm 版本列表选择 /
@@ -1055,6 +1076,7 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
 
 </script>
 <script>
+/* dsh-inject:memory-plugins */
 /* __DSH_MEMORY_PLUGINS v1 (记忆插件管理 - 设置-记忆页, 本地注入) */
 // dsh-memory-plugins.js — 在设置面板「记忆」页注入记忆插件管理区：
 // 推荐插件（@openviking/dsh-memory-plugin / hindsight / memos-local）安装·启用·禁用·卸载、
@@ -1545,11 +1567,8 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
 })();
 
 </script>
-
-
-
-
 <script>
+/* dsh-inject:inline-editor */
 // dsh-inline-editor.js — 就地代码编辑：在原生文件预览处直接编辑 + 保存。
 // 用户点开文件看到预览的地方就能改（不另开面板）。
 // 机制：探测原生预览容器(.workspace-preview__body)，注入「✏️ 编辑」按钮；
@@ -2162,12 +2181,8 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
 })();
 
 </script>
-
-
-
-
-
 <script>
+/* dsh-inject:subagent-panel */
 // dsh-subagent-panel.js — 右侧栏「子代理」页：显示当前会话的子智能体 + 相关后台进程。
 //
 // 机制（与 dsh-inline-editor.js 同款，PRINCIPLES P2 的"作者明确要求改前端"例外路径）：
@@ -2851,5 +2866,6 @@ try{(function(){var __win=typeof window!=='undefined'?window:null;if(!__win||!__
 })();
 
 </script>
+<!-- dsh-inject:end -->
 </body>
 </html>

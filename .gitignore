@@ -15,3 +15,7 @@ frontend/wailsjs/
 *.log
 # 便携工具（gh.exe 等）
 .tools/
+
+# 品牌改造资产（apply-branding.js 的输入，必须入库：否则换机器/重装后构建会丢 DSH 品牌）
+!branding/
+!branding/*.png

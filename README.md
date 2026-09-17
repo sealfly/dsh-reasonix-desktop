@@ -1,6 +1,6 @@
 # DSH-ReasonixUI（Wails 版）
 
-Reasonix v1.29.0 前端的 Wails 外壳，桥接到 DSH 后端（127.0.0.1:3080）。
+Reasonix **v1.38.2** 前端的 Wails 外壳，桥接到 DSH 后端（127.0.0.1:3080）。
 
 ## 为什么从 Electron 迁到 Wails
 
@@ -23,8 +23,12 @@ Reasonix 前端是为 **Wails** 写的（依赖 `window.go.main.App` + `window.r
 ├── settings.go       JSON 设置持久化
 ├── terminal.go       本地终端（os/exec spawn）
 ├── prices.json       费用定价表（可编辑，元/百万 tokens）
-└── frontend/dist/    Reasonix v1.29.0 前端（从 Electron 项目复制，零改动）
+└── frontend/dist/    Reasonix v1.38.2 前端构建产物（本项目品牌改造 + 8 处注入由 scripts/apply-*.js 重放）
 ```
+
+> 前端版本与升级流程：见 `docs/upgrade-v1382-log.md`（当前 v1.38.2）与
+> `docs/upgrade-assessment-v1388.md`（v1.38.8 存档评估）。
+> 升级一条命令：`node scripts/sync-upstream-dist.js <上游 dist>`（自动重放品牌 + 全部注入）。
 
 ## 构建 & 运行
 

@@ -1,4 +1,4 @@
-# 项目原则（PRINCIPLES）
+﻿# 项目原则（PRINCIPLES）
 
 ## 原则 1（最高优先）：本项目只是 DSH 的前端 UI，不限制 DSH 的任何能力
 
@@ -79,12 +79,34 @@
    `node scripts/apply-inline-editor.js`、`node scripts/apply-subagent-panel.js` 重新注入。
 
    > **2026-09-14 起已自动化**：`build-deploy.ps1` 与 `build-installer.ps1` 在 wails build **之前**
-   > 统一执行两个 apply 脚本（幂等可重复）——上游 dist 覆盖后**重新构建即自动恢复**注入，
+   > 统一执行 apply 脚本（幂等可重复）——上游 dist 覆盖后**重新构建即自动恢复**注入，
    > 不需手工处理。注入步骤缺 node 会直接失败（宁可构建失败，也不静默产出缺功能的包）。
+   >
+   > **2026-09-17 起升级为「清单驱动 + 语法门禁 + 品牌一并重放」**（v1.31.4→v1.38.2 升级时重建）：
+   > - `scripts/injections.json` 是**唯一注入清单**（顺序 = 依赖顺序）；
+   >   `node scripts/apply-all-injections.js` 按清单把**全部**注入内联进 dist，
+   >   用区域哨兵 `<!-- dsh-inject:begin/end -->` 整段替换，因此**幂等**（三次运行字节一致）。
+   > - **语法门禁**：每个源脚本内联前先 `new Function(src)` 解析，不通过就**整体失败退出**。
+   >   这条规则来自一次真实缺陷——旧 `dsh-plugin-market-inject.js` 首行是一段 `export {…}` 残片
+   >   （`ce as T,…};`），作为经典脚本是 `SyntaxError`，**整块从未执行**：插件市场功能
+   >   自上线起就是死的，且没有任何报错痕迹。语法门禁让这类错误在构建期就炸出来。
+   > - **品牌改造同样必须可重放**：`scripts/apply-branding.js` 读 `branding/`
+   >   （由 `scripts/extract-branding.js` 从既有 dist 反向固化）幂等写回启动壳名称/位图/
+   >   品牌 CSS/被 CSS 引用的 logo SVG/标题错误钩子。
+   > - **升级动作收敛为一条命令**：`node scripts/sync-upstream-dist.js <上游 dist>`——
+   >   形态前置校验（boot-shell / 外部 module bundle / wails-spinner 锚点）→ 复制 → 重放品牌+注入。
+   > - **升级前先盘点**：`node scripts/dist-inventory.js` 看"哪些注入只活在 dist 里（无源脚本、
+   >   无 applier）"，`node scripts/dist-block-extract.js promote` 可把丢失的源反向提取回来
+   >   （带同一道语法门禁），`node scripts/injection-anchors.js <上游 src>` 判断注入能否平移。
    >
    > 注入脚本的验证：`node scripts/subagent-panel-domtest.js`——在最小假 DOM 里执行
    > **dist 中的真实内联块**，断言 tab 注入 / overlay 挂载 / 定位加固 / 卡片与进程行渲染 /
-   > React 节点未被动 / 幂等（**当前 30 项**，随功能增长递增）。
+   > React 节点未被动 / 幂等（**当前 37 项**，随功能增长递增）。
+   >
+   > **运行期留痕**：注入脚本把关键诊断经桥 `LogFromFrontend(msg)` 写进 `%TEMP%\resume-debug.log`
+   > （`frontend: [subagent-panel] tab-bar-found …` / `no-tab-bar`）。生产构建的 WebView2
+   > **不带远程调试端口（CDP 不可用）**，所以"注入是否找到锚点"只能靠这条通道验证；
+   > 排查升级回归时先看这个日志。
    >
    > ⛔ **注入脚本硬约束（因 2026-09-14 冻结事故新增）**：
    > 1. **禁止 `MutationObserver` 观察整个文档**（`document.documentElement` + `subtree`）。
@@ -124,14 +146,16 @@
      注入方案（升级迁移成本更低）。
 
 升级流程检查清单（对照官方 diff 时逐项勾选）：
-- [ ] dist 中 logo/boot 品牌是否仍是本项目版
-- [ ] `index.html` 是否仍含插件市场注入脚本
-- [ ] `index.html` 是否仍含就地编辑器内联（`node scripts/apply-inline-editor.js` 幂等重放，脚本内会校验 `__DSH_INLINE_EDITOR__` 标记）
-- [ ] `index.html` 是否仍含「子代理」页内联（`node scripts/apply-subagent-panel.js` 幂等重放，校验 `__DSH_SUBAGENT_PANEL__` 标记）
-- [ ] 若已做**源码级焊接**：补丁脚本已重放且锚点校验通过（未通过则先修锚点，**不得静默丢失我们的页面**）
+- [ ] 升级前先盘点：`node scripts/dist-inventory.js`（有无"只活在 dist 里"的注入）
+- [ ] 升级前先判锚点：`node scripts/injection-anchors.js <上游 frontend/src>`（未命中项逐个人工确认）
+- [ ] dist 中 logo/boot 品牌是否仍是本项目版（`node scripts/apply-branding.js` 幂等重放，5 项断言）
+- [ ] 全部注入是否就位：`node scripts/apply-all-injections.js`（语法门禁 0 失败 + 每个 id 哨兵恰好 1 个）
+- [ ] 运行期确认注入生效：`%TEMP%\resume-debug.log` 里有对应的 `frontend: [<脚本>] …` 成功诊断
 - [ ] 桥方法：本项目持久化实现（MCP/子智能体/技能偏好/插件市场）未被官方实现替换
 - [ ] 本项目独有桥方法（`DshStd*`、`MarketPage`、`Terminal*` 等 23 个）未被删除
+- [ ] 若已做**源码级焊接**：补丁脚本已重放且锚点校验通过（未通过则先修锚点，**不得静默丢失我们的页面**）
 - [ ] `~/.reasonix/` 用户数据完整
+- [ ] `.ps1` 构建脚本仍带 UTF-8 BOM（`node scripts/ensure-bom.js --check build-deploy.ps1 build-installer.ps1`）
 
 ## 原则 7：测试会话/工作区清理准则（磁盘零残留）
 

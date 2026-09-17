@@ -1,0 +1,9 @@
+/* local brand: new DSH-Reasonix logo (colour bitmap) - cancel the mono-logo invert filter and fit the new aspect ratio */
+.sidebar__brand-logo,.welcome__brand-logo{filter:none!important}
+.sidebar__brand-logo{width:150px;height:34px;margin-left:0}
+.sidebar__brand-logo--workbench{width:132px;height:26px;margin-left:0}
+    /* local brand (dark theme): orange variant of the new logo */
+:root[data-theme=dark] .sidebar__brand-logo,:root:not([data-theme]) .sidebar__brand-logo,:root[data-theme=dark] .welcome__brand-logo,:root:not([data-theme]) .welcome__brand-logo{content:url("./assets/logo-wordmark-dark.svg")}
+:root[data-theme=dark] .onboarding__logo,:root:not([data-theme]) .onboarding__logo{content:url("./assets/logo-mark-dark.svg")}
+    /* local brand: orange splash mark glow (was blue #0153e557) */
+.startup-splash__mark{filter:drop-shadow(0 14px 22px #ff5a2c59)!important}
