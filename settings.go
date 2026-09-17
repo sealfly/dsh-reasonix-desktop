@@ -35,6 +35,10 @@ type desktopSettings struct {
 	SandboxShell     string   `json:"sandboxShell"`
 	TerminalTheme    string   `json:"terminalTheme"`
 	ConversationWidth string  `json:"conversationWidth"`
+	// SessionExperience 会话体验：standard/deep（v1.38.2 引入的设置项，deep=展开推理）。
+	// 必须持久化：设置快照每次重读都会 hydrateSessionExperience(settings.sessionExperience)，
+	// 缺失/不一致会让推理显示模式被重置（与主题跳变同一类问题）。
+	SessionExperience string  `json:"sessionExperience"`
 	CheckUpdates     bool     `json:"checkUpdates"`
 	DesktopMetrics   bool     `json:"desktopMetrics"`
 	DesktopTelemetry bool     `json:"desktopTelemetry"`
@@ -310,6 +314,22 @@ func (s *Settings) SetTerminalTheme(v string) { s.data.TerminalTheme = v; s.save
 
 func (s *Settings) ConversationWidth() string { return s.data.ConversationWidth }
 func (s *Settings) SetConversationWidth(v string) { s.data.ConversationWidth = v; s.save() }
+
+// SessionExperience 会话体验（standard/deep）。空值按前端默认 standard。
+func (s *Settings) SessionExperience() string {
+	if s.data.SessionExperience == "" {
+		return "standard"
+	}
+	return s.data.SessionExperience
+}
+
+// SetSessionExperience 持久化会话体验（前端 SetSessionExperience 桥方法调用）。
+func (s *Settings) SetSessionExperience(v string) {
+	if v == "standard" || v == "deep" {
+		s.data.SessionExperience = v
+		s.save()
+	}
+}
 
 func (s *Settings) CheckUpdates() bool { return s.data.CheckUpdates }
 func (s *Settings) SetCheckUpdates(v bool) { s.data.CheckUpdates = v; s.save() }

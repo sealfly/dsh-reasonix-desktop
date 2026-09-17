@@ -59,11 +59,78 @@ func (a *App) GetActiveThemePack() map[string]any {
 
 // ===== 设置视图 =====
 
+// desktopPreferenceKeys 返回前端「设置快照」契约所用的桌面偏好字段。
+//
+// ⚠ 为什么必须有这个函数（2026-09-17 修主题跳变）：
+// 前端有**两套不同键名**的主题契约，混用会静默重置用户设置：
+//  1. themeExperience 契约（GetThemeExperience 的返回）：themeMode / baseStyle
+//     —— lib/themeExperience.ts 读它。
+//  2. 设置快照契约（Settings / DesktopStartupSettings 的返回）：desktopTheme /
+//     desktopThemeStyle / conversationWidth / desktopLanguage / sessionExperience
+//     —— SettingsPanel.tsx L202-210 与 app-runtime/desktopPreferencesAdapter.ts L19-26 读它。
+//
+// 历史 bug：Settings() 只返回了第 1 套键名（themeMode/baseStyle），于是前端
+// normalizeThemePreference(undefined) → DEFAULT_THEME("auto") + 默认风格 "graphite"，
+// 并且 SettingsPanel 的外观 effect 依赖 s?.desktopTheme、每次设置重读都重放一次外观
+// ——表现为「深色模式下按别的按钮，主题/风格/会话宽度被重置回默认（跳变）」。
+// Settings() 与 DesktopStartupSettings() 必须给出**同一套值**，否则启动正确、后续跳变。
+//
+// 键名以 v1.38.2 的 lib/types.ts（SettingsView / DesktopStartupSettingsView）为准；
+// 末尾保留的旧键名为兼容历史读取点，不要删除。
+func (a *App) desktopPreferenceKeys() map[string]any {
+	style := a.st.ThemeStyle()
+	if style == "" {
+		style = "graphite"
+	}
+	return map[string]any{
+		// —— v1.38.2 设置快照契约键名（正确来源）——
+		"desktopTheme":                 a.st.Theme(),
+		"desktopThemeStyle":            style,
+		"desktopLanguage":              a.st.Language(),
+		"desktopLayoutStyle":           a.st.LayoutStyle(),
+		"desktopTerminalTheme":         a.st.TerminalTheme(),
+		"conversationWidth":            a.st.ConversationWidth(),
+		"sessionExperience":            a.st.SessionExperience(),
+		"displayMode":                  "full",
+		"reasoningDisplayMode":         a.st.ReasoningMode(),
+		"reasoningDisplayModeExplicit": a.st.ReasoningMode() != "",
+		"statusBarStyle":               a.st.StatusBarStyle(),
+		"statusBarItems":               a.st.StatusBarItems(),
+		"checkUpdates":                 a.st.CheckUpdates(),
+		"updateChannel":                "stable",
+		"telemetry":                    a.st.DesktopTelemetry(),
+		"metrics":                      a.st.DesktopMetrics(),
+		"closeBehavior":                a.st.CloseBehavior(),
+		"configPath":                   "",
+		// —— 旧键名（兼容 v1.29–1.31 读取点，勿删）——
+		"themeMode":                a.st.Theme(),
+		"baseStyle":                style,
+		"desktopConversationWidth": a.st.ConversationWidth(),
+		"desktopTelemetry":         a.st.DesktopTelemetry(),
+		"desktopMetrics":           a.st.DesktopMetrics(),
+	}
+}
+
+// mergeKeys 把 src 的键值并入 dst 并返回 dst（src 覆盖同名键）。
+func mergeKeys(dst, src map[string]any) map[string]any {
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
+}
+
+// SetSessionExperience 设置会话体验（v1.38.2 新增桥方法，standard/deep）。
+func (a *App) SetSessionExperience(mode string) error {
+	a.st.SetSessionExperience(mode)
+	return nil
+}
+
 // Settings 返回设置面板的数据（前端 SettingsPanel 重读）。
 // providers 从 DSH session.models 的 groups 生成——否则设置-模型-接入-供应商
 // 页显示空（前端 SettingsPanel 读 view.providers 渲染已有供应商）。
+// 外观类字段统一由 desktopPreferenceKeys 提供（见该函数注释：键名混用会导致主题跳变）。
 func (a *App) Settings() map[string]any {
-	return map[string]any{
+	out := map[string]any{
 		"providers":                 a.providerViews(),
 		"officialProviders":         a.officialProviderViews(),
 		"defaultModel":              a.st.DefaultModel(),
@@ -76,21 +143,12 @@ func (a *App) Settings() map[string]any {
 		"autoPlan":                  "none",
 		"defaultToolApprovalMode":   a.st.DefaultToolApprovalMode(),
 		"compactRatio":              a.st.CompactRatio(),
-		"desktopTerminalTheme":      a.st.TerminalTheme(),
-		"desktopConversationWidth":  a.st.ConversationWidth(),
-		"desktopCheckUpdates":       a.st.CheckUpdates(),
-		"desktopMetrics":            a.st.DesktopMetrics(),
-		"desktopTelemetry":          a.st.DesktopTelemetry(),
-		"desktopLayoutStyle":        a.st.LayoutStyle(),
 		"desktopCurrency":           a.st.Currency(),
-		"reasoningDisplayMode":      a.st.ReasoningMode(),
-		"reasoningDisplayModeExplicit": a.st.ReasoningMode() != "",
-		"statusBarStyle":            a.st.StatusBarStyle(),
-		"statusBarItems":            a.st.StatusBarItems(),
 		"permissions":               a.st.PermissionsView(),
 		"sandbox":                   a.st.SandboxView(),
 		"bot":                       mockBotSettings(),
 	}
+	return mergeKeys(out, a.desktopPreferenceKeys())
 }
 
 // providerViews 从 DSH session.models 的 groups 生成 ProviderView 列表。
@@ -166,27 +224,17 @@ func (a *App) providerViewFromGroup(g dshModelGroup) map[string]any {
 }
 
 // DesktopStartupSettings 返回启动设置（前端启动 sync 时读，主题/布局/bot 等）。
+// 外观类字段与 Settings() 共用 desktopPreferenceKeys：两处键名必须一致，
+// 否则会出现「启动时主题正确、之后每次设置重读被重置」的跳变（详见该函数注释）。
 func (a *App) DesktopStartupSettings() map[string]any {
-	return map[string]any{
-		"bot":                        mockBotSettings(),
-		"desktopLanguage":            a.st.Language(),
-		"desktopLayoutStyle":         a.st.LayoutStyle(),
-		"desktopTheme":               a.st.Theme(),
-		"desktopThemeStyle":          a.st.ThemeStyle(),
-		"desktopTerminalTheme":       "dark",
-		"displayMode":                "full",
-		"reasoningDisplayMode":       a.st.ReasoningMode(),
-		"reasoningDisplayModeExplicit": a.st.ReasoningMode() != "",
-		"desktopCurrency":            a.st.Currency(),
-		"statusBarStyle":             a.st.StatusBarStyle(),
-		"statusBarItems":             a.st.StatusBarItems(),
-		"checkUpdates":               false,
-		"updateChannel":              "stable",
-		"conversationWidth":          "standard",
-		"configWarnings":             []any{},
-		"configWarningsRevision":     0,
-		"configPath":                 "",
+	out := map[string]any{
+		"bot":                   mockBotSettings(),
+		"displayMode":           "full",
+		"configWarnings":        []any{},
+		"configWarningsRevision": 0,
+		"configPath":            "",
 	}
+	return mergeKeys(out, a.desktopPreferenceKeys())
 }
 
 // ===== 诊断（防前端崩溃）=====
