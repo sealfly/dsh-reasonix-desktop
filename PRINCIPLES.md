@@ -174,6 +174,9 @@
      注入方案（升级迁移成本更低）。
 
 升级流程检查清单（对照官方 diff 时逐项勾选）：
+- [ ] **先跑漂移对照**：`node scripts/ui-drift-report.js --upstream-root <官方源码目录> --history`
+      （看各特征从哪版开始变）与 `--baseline-version <我们挂载的版本> --version <新版本> --doc docs/upstream-ui-drift.md`
+      （出本次升级评估：锚点是否还在、契约层是否出现、哪些 UI 变了）。**有 ★破坏/★需评估 时先读报告再动手。**
 - [ ] 升级前先盘点：`node scripts/dist-inventory.js`（有无"只活在 dist 里"的注入）
 - [ ] 升级前先判锚点：`node scripts/injection-anchors.js <上游 frontend/src>`（未命中项逐个人工确认）
 - [ ] dist 中 logo/boot 品牌是否仍是本项目版（`node scripts/apply-branding.js` 幂等重放，5 项断言）

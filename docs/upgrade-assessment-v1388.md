@@ -22,6 +22,28 @@
 
 ---
 
+> **2026-09-18（订正边界）：契约时代的起点是 v1.38.4，不是 v1.38.8。**
+> 用 `scripts/ui-drift-report.js --history` 对本地 16 个官方版本（1.31.4 → 1.38.10）逐版对照后确认：
+>
+> | 特征 | 出现/变化的版本 |
+> |---|---|
+> | `lib/desktopHost.ts`（`window.reasonixDesktop` 契约层） | **1.38.4 起**（1.31.4–1.38.3 无） |
+> | `generated/desktopContract.generated.ts`（命令契约） | **1.38.4 起** |
+> | `scripts/check-desktop-host-boundary.mjs`（禁 `window.go`/`wailsjs`） | **1.38.4 起** |
+> | `components/TabContainer/`（可增删 tab 体系） | **1.38.4 起** |
+> | `lib/bridge.ts` 是否运行时解析 `window.go.main.App` | 1.31.4–1.38.3 **是** → **1.38.4 起否** |
+> | `index.html` 的 `wails-spinner` 锚点（Wails 开发遮罩） | 1.32.0–1.38.3 有 → **1.38.4 起无** |
+> | 右栏 tabs 渲染者 | ≤1.38.1 `App.tsx` → 1.38.2–1.38.3 `app-shell/WorkspaceDockRegion.tsx` → **1.38.4+ `TabContainer/TabBar`** |
+>
+> 也就是说：**v1.38.3 是最后一个"Wails 时代"版本；从 v1.38.4 起进入宿主契约时代。**
+> 我们选 1.38.2 落在契约时代之前，这条决策边界因此比原先认为的更紧（原先以为契约层是 1.38.8 才有）。
+> 另注：`wails-spinner` 在 1.38.4+ 消失是个**真实陷阱**——我们的 Wails 壳依赖该元素
+> （1.38.2 的 index.html 注释写明：缺了它 dev overlay 会因 anchor 为 null 崩），
+> 所以将来若要升到 ≥1.38.4，必须自行补回该锚点。漂移报告的"★破坏"项已自动标出这一条。
+> 完整版本史与本次对照见 `docs/upstream-ui-drift.md`（`scripts/ui-drift-report.js` 生成）。
+
+---
+
 ## 0. 结论先行（TL;DR）
 
 | 判断 | 结论 |
