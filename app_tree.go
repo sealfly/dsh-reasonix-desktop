@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
 // dshSessionList 是 session.list 的返回。
@@ -15,7 +17,35 @@ type dshSessionList struct {
 	Items []dshSession `json:"items"`
 }
 
-// fetchSessions 读取 session.list，并按官方语义过滤归档会话。
+// sessionsCache 是 session.list 原始结果的短期缓存。
+//
+// 为什么需要（2026-09-17 实测）：fetchSessions 被 8 处调用（项目树、历史、上下文用量、
+// MetaForTab…），而 DSH 的 session.list 对巨型会话要 0.5~1.3s。
+// 用户实际能感觉到的例子：Composer 里切换审批模式（询问/自动/yolo）时，
+// 前端接着会调 MetaForTab + ContextUsageForTab，两者都走 findSession→fetchSessions，
+// 于是点一次按钮要等 1~3.6s（实测 MetaForTab 553~1569ms、ContextUsageForTab 495~2069ms，
+// 而按钮自身的桥方法只要 2~4ms）。
+//
+// 与 tabsCache 同款策略：TTL + 会话写操作失效。TTL 取 3s —— 空闲点击秒回；
+// 回合进行中最多 3s 陈旧（界面本来就在按事件流持续刷新，可接受），同时把 DSH 的
+// 重复计算压到每 3s 一次。
+var (
+	sessionsCacheMu sync.Mutex
+	sessionsCache   []dshSession
+	sessionsCacheAt time.Time
+)
+
+const sessionsCacheTTL = 3 * time.Second
+
+// invalidateSessionsCache 清空会话原始列表缓存。
+func invalidateSessionsCache() {
+	sessionsCacheMu.Lock()
+	sessionsCache = nil
+	sessionsCacheAt = time.Time{}
+	sessionsCacheMu.Unlock()
+}
+
+// fetchSessions 读取 session.list，并按官方语义过滤归档会话（带短期缓存）。
 //
 // ★ 归档过滤必须在这里做：DSH 的 archive 只是把 sessionId 记进 workspace.list 的
 // archivedSessionIds，session.list 与 DSH 内存态仍然返回该会话。任何"列会话"的路径
@@ -26,6 +56,14 @@ func (a *App) fetchSessions() []dshSession {
 	if a.dsh == nil {
 		return nil
 	}
+	sessionsCacheMu.Lock()
+	if sessionsCache != nil && time.Since(sessionsCacheAt) < sessionsCacheTTL {
+		cached := sessionsCache
+		sessionsCacheMu.Unlock()
+		return cached
+	}
+	sessionsCacheMu.Unlock()
+
 	raw, err := a.dsh.RPC("session.list", map[string]any{})
 	if err != nil {
 		return nil
@@ -34,7 +72,12 @@ func (a *App) fetchSessions() []dshSession {
 	if err := DecodeRPC(raw, &list); err != nil {
 		return nil
 	}
-	return filterArchivedSessions(list.Items, a.fetchArchivedSessionIDs())
+	items := filterArchivedSessions(list.Items, a.fetchArchivedSessionIDs())
+	sessionsCacheMu.Lock()
+	sessionsCache = items
+	sessionsCacheAt = time.Now()
+	sessionsCacheMu.Unlock()
+	return items
 }
 
 // filterArchivedSessions 按归档集合过滤会话（纯函数，便于单测）。

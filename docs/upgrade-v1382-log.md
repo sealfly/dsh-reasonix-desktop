@@ -426,6 +426,43 @@ UI-FLOW OK (19/19)
 **关键设计约束**：**写路径不共用这个缓存** —— 写操作必须读新鲜数据（写完还要 read-back 校验），
 所以 `settingsReads` 只在一趟快照内存在、绝不跨请求复用（否则会出现"写完读回还是旧值"的假成功）。
 
+### 6.5 「审批模式」按钮反应慢（询问/自动/yolo）—— 已修
+
+**现象**：Composer 里切换审批模式（询问/自动/yolo）后要等 1~3.6s 才生效。
+
+**定位方法（用 UI 测试钩子逐个量桥调用）**：
+
+| 点一次按钮实际触发的调用 | 耗时 |
+|---|---|
+| `SetToolApprovalModeForTab`（按钮自身） | **2~4ms** —— 按钮不慢 |
+| `MetaForTab`（点完必调） | **553~1569ms** |
+| `ContextUsageForTab`（点完必调） | **495~2069ms** |
+| `EffortForTab` | 4~7ms |
+
+链路来自 1.38.2 的 `useController.setToolApprovalModeForTab`：
+`app.SetToolApprovalModeForTab(...)` → `refreshMetaForTab(tabId)` →
+`MetaForTab` + 并行 `ContextUsageForTab`/`EffortForTab`。
+
+**根因**：`MetaForTab` 与 `ContextUsageForTab` 都走 `findSession(tabID)` → **`fetchSessions()`**
+→ 裸调 `session.list`（DSH 对巨型会话 0.5~1.3s），于是点一次按钮付了 **2 次** 这个代价。
+`fetchSessions()` 被 8 处调用（项目树、历史、上下文用量、meta…），是普遍性浪费。
+
+**修法**（沿用项目既有的 `tabsCache` 模式）：
+- `app_tree.go` 新增 `sessionsCache`（`session.list` 原始结果，**TTL 3s**）；
+- 失效统一挂在 `invalidateTabsCache()` 上 → create/rename/archive/git 等既有调用点自动覆盖；
+- 另外给 `session.prompt`（发消息）补上失效：刚提交时会话 projections 马上变，
+  下一次读取应拿新值。失效测试：`TestSessionsCacheInvalidation` / `TestSessionsCacheTTL`。
+
+**实测（同探针、同会话）**：
+
+| 方法 | 优化前 | 优化后 |
+|---|---|---|
+| `MetaForTab` | 553~1569ms | **225ms（首次填充）→ 3ms / 2ms** |
+| `ContextUsageForTab` | 495~2069ms | **3ms / 3ms / 2ms** |
+| 点一次按钮合计 | 1~3.6s | **约 5ms** |
+
+**TTL 取 3s 的取舍**：空闲点击秒回；回合进行中最多 3s 陈旧（界面本就按事件流持续刷新），
+同时把 DSH 的重复投影计算压到每 3s 最多一次。回归：Go 全量测试 + UI-FLOW 19/19 + DOM-TEST 37/37 全绿。
 ---
 
 ## 7. 后续（P3）待办

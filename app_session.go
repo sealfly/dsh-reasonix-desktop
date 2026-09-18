@@ -86,6 +86,9 @@ func invalidateTabsCache() {
 	tabsCache = nil
 	tabsCacheAt = time.Time{}
 	tabsCacheMu.Unlock()
+	// 会话原始列表缓存（fetchSessions）同源同理：它被 8 处调用，且是 DSH 最慢的 RPC 之一。
+	// 放在这里统一失效，create/rename/archive/git 等既有调用点就自动覆盖到了。
+	invalidateSessionsCache()
 }
 
 // Tabs 返回当前所有会话的 TabMeta 列表（前端启动/刷新时读，带 TTL 缓存）。
@@ -230,6 +233,11 @@ func (a *App) Prompt(tabID, input string) error {
 		"sessionId": tabID,
 		"input":     input,
 	})
+	if err == nil {
+		// 刚提交：会话的 projections（token 用量/上下文压力）马上会变，
+		// 让下一次读取拿新值而不是缓存里的旧快照。
+		invalidateTabsCache()
+	}
 	return err
 }
 
