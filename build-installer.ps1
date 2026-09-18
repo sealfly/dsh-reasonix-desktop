@@ -71,7 +71,7 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
   exit 1
 }
 Write-Host "== Frontend brand + injections =="
-foreach ($ij in @("apply-branding.js", "apply-all-injections.js")) {
+foreach ($ij in @("apply-branding.js", "apply-monaco-vendor.js", "apply-all-injections.js")) {
   & node (Join-Path $root "scripts\$ij")
   if ($LASTEXITCODE -ne 0) { throw "frontend patch failed: $ij (exit $LASTEXITCODE)" }
 }

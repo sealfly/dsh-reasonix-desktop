@@ -43,8 +43,12 @@
     "." + NS + "-bar .nm{color:#cbd5e1;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:60%}",
     "." + NS + "-bar .sp{flex:1}",
     "." + NS + "-bar .ht{color:#6b7280}",
-    "." + NS + "-ta{flex:1;width:100%;box-sizing:border-box;resize:none;border:0;outline:none;background:#15161a;color:#dbe2ea;padding:14px 16px;font:13px/1.6 Consolas,monospace;white-space:pre;overflow:auto;tab-size:2;display:block}",
-    // Monaco host：同 textarea 的 flex:1 占位，Monaco 在其中自绘
+    // textarea 回退编辑器：**绝对定位铺满宿主**。
+    // 为什么不能只靠 flex:1：宿主 .dsh-ie-mh 是 display:block（Monaco 路径需要它保持块级），
+    // 于是 textarea 的 flex:1 不生效，会退回 rows 默认高度（实测约 70px）——
+    // 用户看到的现象就是"点编辑后编辑窗口只剩上面一部分"（2026-09-18 回归，见 PRINCIPLES 原则 6）。
+    "." + NS + "-ta{position:absolute;inset:0;width:100%;height:100%;box-sizing:border-box;resize:none;border:0;outline:none;background:#15161a;color:#dbe2ea;padding:14px 16px;font:13px/1.6 Consolas,monospace;white-space:pre;overflow:auto;tab-size:2;display:block}",
+    // Monaco host：flex:1 占位（Monaco 用 automaticLayout 自绘铺满）
     "." + NS + "-mh{flex:1;min-height:0;position:relative;background:#1e1e1e}",
   ].join("\n");
   if (!document.getElementById(NS + "-css")) {
