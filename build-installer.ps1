@@ -76,6 +76,16 @@ foreach ($ij in @("apply-branding.js", "apply-monaco-vendor.js", "apply-all-inje
   if ($LASTEXITCODE -ne 0) { throw "frontend patch failed: $ij (exit $LASTEXITCODE)" }
 }
 
+# 0.5) dist asset integrity: everything index.html references — plus the chunk closure those
+#      entries pull in — must exist on disk AND be tracked by git. 2026-09-18 incident: an
+#      upstream frontend upgrade committed only index.html and left 291 assets (including the
+#      main entry) out of git (frontend/dist is gitignored), so every clean checkout hung on
+#      "loading" forever. This gate turns that failure into a build-time error with the exact
+#      file list instead of a runtime white screen.
+Write-Host "== Verify dist assets =="
+& node (Join-Path $root "scripts\verify-dist-assets.js")
+if ($LASTEXITCODE -ne 0) { throw "dist asset verification failed (missing or untracked assets; see output above)" }
+
 # 1) wails build -nsis: main exe + wails_tools.nsh + initial installer
 Write-Host "== Build (wails -nsis) =="
 Push-Location $root
