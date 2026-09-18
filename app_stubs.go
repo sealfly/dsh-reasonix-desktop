@@ -42,15 +42,6 @@ func (a *App) ListThemePacks() []any { return []any{} }
 // ThemePacks 同 ListThemePacks。
 func (a *App) ThemePacks() []any { return []any{} }
 
-// RemoteHosts 远程主机列表（未实现，空）。
-func (a *App) RemoteHosts() []any { return []any{} }
-
-// RemoteConnectionStatuses 远程连接状态。
-func (a *App) RemoteConnectionStatuses() []any { return []any{} }
-
-// RemoteForwards 远程转发列表。
-func (a *App) RemoteForwards() []any { return []any{} }
-
 // ExtensionActions 扩展动作。
 func (a *App) ExtensionActions() []any { return []any{} }
 

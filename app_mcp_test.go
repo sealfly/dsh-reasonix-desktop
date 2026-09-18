@@ -1,110 +1,16 @@
 package main
 
-// app_mcp_test.go — MCP 本地持久化桥测试（add/list/update/remove 往返 + 语义约束）。
+import "testing"
 
-import (
-	"os"
-	"path/filepath"
-	"testing"
-)
-
-// useTempMCPDir 把 MCP 管理器指向临时目录，测试后还原。
-func useTempMCPDir(t *testing.T) string {
-	t.Helper()
-	_ = getMCPManager() // 确保单例 once 已执行，之后覆盖指针即可生效
-	old := appMCPMgr
-	dir := t.TempDir()
-	appMCPMgr = &mcpManager{path: filepath.Join(dir, "mcp-servers.json")}
-	t.Cleanup(func() { appMCPMgr = old })
-	return dir
-}
-
-func TestAddMCPServerPersists(t *testing.T) {
-	useTempMCPDir(t)
-	a := &App{}
-	in := map[string]any{
-		"name": "filesystem", "transport": "stdio", "command": "npx",
-		"args": []any{"-y", "@modelcontextprotocol/server-filesystem", "/tmp"},
-	}
-	if n := a.AddMCPServer(in); n != 0 {
-		t.Fatalf("AddMCPServer 应返回 0（DSH 不加载 MCP），got %d", n)
-	}
-	list := a.MCPServers()
-	if len(list) != 1 {
-		t.Fatalf("期望 1 个服务器，got %d", len(list))
-	}
-	m := list[0].(map[string]any)
-	if m["name"] != "filesystem" || m["transport"] != "stdio" {
-		t.Fatalf("字段不符: %v", m)
-	}
-	if m["toolCount"] != 0 || m["tools"] != 0 {
-		t.Fatalf("DSH 未加载 MCP，工具数应为 0: %v", m)
-	}
-	if m["status"] != "configured" || m["configured"] != true {
-		t.Fatalf("应为 configured 状态: %v", m)
-	}
-}
-
-func TestAddMCPServerOverwriteSameName(t *testing.T) {
-	useTempMCPDir(t)
-	a := &App{}
-	a.AddMCPServer(map[string]any{"name": "srv", "command": "one"})
-	a.AddMCPServer(map[string]any{"name": "srv", "command": "two", "url": "http://x"})
-	list := a.MCPServers()
-	if len(list) != 1 {
-		t.Fatalf("同名添加应覆盖，got %d 个", len(list))
-	}
-	m := list[0].(map[string]any)
-	if m["command"] != "two" {
-		t.Fatalf("应覆盖为 two: %v", m["command"])
-	}
-}
-
-func TestAddMCPServerEmptyNameIgnored(t *testing.T) {
-	useTempMCPDir(t)
-	a := &App{}
-	a.AddMCPServer(map[string]any{"command": "npx"})
-	if len(a.MCPServers()) != 0 {
-		t.Fatal("无 name 不应保存")
-	}
-}
-
-func TestUpdateMCPServer(t *testing.T) {
-	useTempMCPDir(t)
-	a := &App{}
-	a.AddMCPServer(map[string]any{"name": "srv", "command": "one"})
-	if err := a.UpdateMCPServer("srv", map[string]any{"transport": "sse", "url": "http://e"}); err != nil {
-		t.Fatalf("update 失败: %v", err)
-	}
-	list := a.MCPServers()
-	m := list[0].(map[string]any)
-	if m["transport"] != "sse" || m["url"] != "http://e" {
-		t.Fatalf("update 未生效: %v", m)
-	}
-	if err := a.UpdateMCPServer("srv", map[string]any{"name": "renamed"}); err == nil {
-		t.Fatal("改名应报错（官方语义：remove + add）")
-	}
-	if err := a.UpdateMCPServer("missing", map[string]any{}); err == nil {
-		t.Fatal("不存在的服务器更新应报错")
-	}
-}
-
-func TestRemoveMCPServer(t *testing.T) {
-	useTempMCPDir(t)
-	a := &App{}
-	a.AddMCPServer(map[string]any{"name": "a"})
-	a.AddMCPServer(map[string]any{"name": "b"})
-	if err := a.RemoveMCPServer("a"); err != nil {
-		t.Fatalf("remove 失败: %v", err)
-	}
-	list := a.MCPServers()
-	if len(list) != 1 || list[0].(map[string]any)["name"] != "b" {
-		t.Fatalf("应只剩 b: %v", list)
-	}
-	if err := a.RemoveMCPServer("a"); err == nil {
-		t.Fatal("重复删除应报错")
-	}
-}
+// app_mcp_test.go — MCP 的纯函数测试。
+//
+// ⚠ 这里**只**保留不依赖 DSH profile 的纯函数测试。
+// 原先的一组桥行为测试（TestAddMCPServerPersists / TestMCPServersFileRoundTrip 等）断言的是
+// **旧的"写 ~/.reasonix/mcp-servers.json"契约**——该契约已废弃（DSH 永远不读那个文件），
+// 且它们没有隔离 DSH_HOME，会往**真实的** DSH profile 配置里写测试条目
+// （2026-09-18 实测踩过：真实 profile 被写进 gh/filesystem/srv/b 四条，已用写入器的备份恢复）。
+// 新契约的测试见 app_mcp_remote_test.go（全部用 t.Setenv("DSH_HOME", ...) 隔离），
+// 另由 app_testmain_test.go 的全局守卫兜底：测试进程默认不碰真实 ~/.dsh。
 
 func TestNormalizeMCPTransport(t *testing.T) {
 	cases := map[string]string{
@@ -119,22 +25,42 @@ func TestNormalizeMCPTransport(t *testing.T) {
 	}
 }
 
-func TestMCPServersFileRoundTrip(t *testing.T) {
-	dir := useTempMCPDir(t)
-	a := &App{}
-	a.AddMCPServer(map[string]any{
-		"name": "gh", "transport": "streamable-http", "url": "https://api.githubcopilot.com/mcp",
-		"headers": map[string]any{"Authorization": "Bearer x"},
-	})
-	// 模拟重启：新建 App（同一持久化文件）
-	a2 := &App{}
-	list := a2.MCPServers()
-	if len(list) != 1 {
-		t.Fatalf("重启后应读到 1 个服务器，got %d（%s）", len(list), dir)
+// TestMCPYAMLQuote 锁住 YAML 标量引号规则（写 profile 配置的关键正确性）。
+func TestMCPYAMLQuote(t *testing.T) {
+	cases := map[string]string{
+		// 能不加引号就不加（保持配置可读）
+		"tok-123":                    "tok-123",
+		"npx":                        "npx",
+		"streamable-http":            "streamable-http",
+		"https://h.example:3000/mcp": "https://h.example:3000/mcp",
+		"a/b_c.d":                    "a/b_c.d",
+		// 必须加引号的情形
+		"":                 "''",
+		"@scope/pkg":       "'@scope/pkg'",   // @ 是 YAML 保留指示符
+		"-y":               "'-y'",           // - 开头会被当成列表项
+		"has: space":       "'has: space'",   // 冒号+空格
+		"tail #comment":    "'tail #comment'",// 空格+井号
+		" padded ":         "' padded '",     // 首尾空格
+		"it's":             "'it''s'",        // 单引号翻倍
+		"[1,2]":            "'[1,2]'",        // 流式集合
 	}
-	m := list[0].(map[string]any)
-	if m["name"] != "gh" || m["headerKeys"] == nil {
-		t.Fatalf("往返丢失字段: %v", m)
+	for in, want := range cases {
+		if got := mcpYAMLQuoteForTest(in); got != want {
+			t.Errorf("yamlQuote(%q) = %q, want %q", in, got, want)
+		}
 	}
-	_ = os.Getenv("MCP_TEST")
+}
+
+// TestMCPParseInlineList 行内数组解析（args 的 README 常见写法）。
+func TestMCPParseInlineList(t *testing.T) {
+	got := parseInlineList("['-y', '@modelcontextprotocol/server-github']")
+	if len(got) != 2 || got[0] != "-y" || got[1] != "@modelcontextprotocol/server-github" {
+		t.Errorf("parseInlineList = %v", got)
+	}
+	if v := parseInlineList("[]"); len(v) != 0 {
+		t.Errorf("空数组应返回 nil/空: %v", v)
+	}
+	if v := parseInlineList("not-a-list"); v != nil {
+		t.Errorf("非数组应返回 nil: %v", v)
+	}
 }
