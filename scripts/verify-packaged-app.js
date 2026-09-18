@@ -35,6 +35,10 @@ const checks = [
   { name: "桥方法：会话体验", needle: "SetSessionExperience" },
   { name: "桥方法：UI 测试钩子回传", needle: "UiTestReport" },
   { name: "DSH 供应商命名空间", needle: "llm-pi-ai" },
+  // 自有资产（上游不提供，必须随包）—— 2026-09-18 因它丢失导致"编辑窗口只剩上面一部分"
+  { name: "Monaco 资源（loader）", needle: "monaco/vs/loader.js" },
+  { name: "Monaco 资源（editor.main）", needle: "editor.main.css" },
+  { name: "就地编辑器（textarea 铺满规则）", needle: "-ta{position:absolute" },
 ];
 
 let pass = 0;

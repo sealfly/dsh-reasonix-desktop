@@ -150,11 +150,29 @@
 4. **持久化用户数据**：`~/.reasonix/` 下的用户数据（`mcp-servers.json`、
    `subagent-profiles.json`、`skill-preferences.json`、`plugins/`）是运行时数据，
    升级不涉及，也禁止升级流程触碰。
-5. **源码级焊接（未来形态，作者要求时）**：当作者要求把本项目页面**焊成 Reasonix 原生
+5. **自有前端资产（vendor 目录类）**：上游**不提供**、由本项目自己放进 `frontend/dist` 的资源
+   ——例如就地编辑器用的 **Monaco**（`third_party/monaco/vs/**`，143 文件 15.7MB；
+   实测上游 1.31.4 与 1.38.2 的 `package.json` 都不依赖 monaco）。
+   这类资产换 dist 时会被整体冲掉，因此**必须**：
+   - 仓库内留存（本项目的 `third_party/`，**不能叫 `vendor/`** —— Go 会把模块根下的 vendor
+     当依赖目录，直接 `inconsistent vendoring` 构建失败，实测踩过）；
+   - 由幂等 applier 复制进 dist（`node scripts/apply-monaco-vendor.js`，逐文件比对 + 断言
+     `loader.js`/`editor/editor.main.js`/`editor/editor.main.css` 在位，失败即停）；
+   - 接入 `build-deploy.ps1` 与 `build-installer.ps1` 的 applier 列表；
+   - 纳入发布校验 `scripts/verify-packaged-app.js` 的标记表（缺失即构建/发布期报错）。
+   事故记录（2026-09-18）：Monaco 资产在 v1.38.2 换 dist 时被冲掉且当时**不在**任何 applier 里，
+   于是编辑器退回 textarea——而回退 textarea 又被放进 `display:block` 的宿主里、`flex:1` 失效，
+   只剩 ~70px 高，用户看到"点编辑后编辑窗口只剩上面一部分"。
+
+   > **同类风险排查法**：升级前后做一次**目录级**对比（只比目录、排除带 hash 的文件名）：
+   > 旧 dist 有、新 dist 没有的目录 = 被冲掉的自有资产。本次结果只有 `assets/monaco` 一处
+   > （品牌 SVG 因已纳入 `branding/` applier 而未丢）。
+   > 可视化验证同理：真界面上量几何（覆盖层/编辑器宿主/内部编辑器的宽高），
+   > 别只看"功能还在不在"——布局塌陷时功能是"在"的，只是看不见。
+6. **源码级焊接（未来形态，作者要求时）**：当作者要求把本项目页面**焊成 Reasonix 原生
    组件/tab**（例如按官方 `TabContainer` / `TabAddMenu` 的 tab 体系把「子代理」页实现为
    原生 tab）时，该焊接改动**同样属于"不参与官方对照覆盖"的本项目适配**——
    **官方升级覆盖源码/dist 后，焊接改动必须能够恢复，不允许被冲掉**（丢页面即断功能）。
-
    焊接必须满足以下硬要求（否则不予采用）：
 
    - **可重放**：改动以**锚点补丁脚本**（如 `scripts/apply-frontend-patches.js`）表达，
@@ -181,6 +199,8 @@
 - [ ] 升级前先判锚点：`node scripts/injection-anchors.js <上游 frontend/src>`（未命中项逐个人工确认）
 - [ ] dist 中 logo/boot 品牌是否仍是本项目版（`node scripts/apply-branding.js` 幂等重放，5 项断言）
 - [ ] 全部注入是否就位：`node scripts/apply-all-injections.js`（语法门禁 0 失败 + 每个 id 哨兵恰好 1 个）
+- [ ] 自有资产是否就位：`node scripts/apply-monaco-vendor.js`（Monaco 等 vendor 资源；缺 loader 即失败）
+- [ ] 目录级对比旧/新 dist：旧有新无的自有目录（排除 hash 文件名）= 被冲掉的资产
 - [ ] 运行期确认注入生效：`%TEMP%\resume-debug.log` 里有对应的 `frontend: [<脚本>] …` 成功诊断
 - [ ] **载荷字段面对照**：`node scripts/settings-contract-check.js <上游 frontend/src/lib/types.ts>`
       （缺字段会被前端静默归一化为默认值 —— 主题跳变即此类）
