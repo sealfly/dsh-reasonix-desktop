@@ -29,6 +29,9 @@ const flagValue = (name) => {
 const repoRoot = path.resolve(__dirname, '..');
 const distDir = path.resolve(repoRoot, flagValue('--dist') || path.join('frontend', 'dist'));
 const skipGit = argv.includes('--no-git');
+// 逃生门：恢复期（例如上游升级提交残缺、正用旧产物临时顶替）允许放行，
+// 但必须显式声明并会打印醒目警告——默认永远是严格失败。
+const warnOnly = argv.includes('--warn-only') || process.env.DSH_DIST_VERIFY === 'warn';
 
 // 只认标签属性（避免把 JS 里的模板串碎片当成引用——早期排查脚本踩过这个坑）
 const TAG_REF = /<(?:script|link|img|source|audio|video|track|embed)\b[^>]*?\b(?:src|href)\s*=\s*["']([^"']+)["']/gi;
@@ -145,6 +148,11 @@ if (untracked.length) {
   console.error('    处理：git add -f ' + (distPrefix || 'frontend/dist') + '   （-f 必须带：dist 被 .gitignore 忽略）');
 }
 if (bad) {
+  if (warnOnly) {
+    console.warn('[verify-dist-assets] ⚠ 已按 warn-only 放行（--warn-only 或 DSH_DIST_VERIFY=warn）。');
+    console.warn('  ⚠ 本次构建的产物在别的机器/clone 上可能无法复现，仅限恢复期临时使用。');
+    process.exit(0);
+  }
   console.error('[verify-dist-assets] 校验失败。');
   process.exit(1);
 }
