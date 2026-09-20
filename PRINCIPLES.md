@@ -206,6 +206,14 @@
 - [ ] **载荷字段面对照**：`node scripts/settings-contract-check.js <上游 frontend/src/lib/types.ts>`
       （缺字段会被前端静默归一化为默认值 —— 主题跳变即此类）
 - [ ] 桥方法：本项目持久化实现（MCP/子智能体/技能偏好/插件市场）未被官方实现替换
+- [ ] **桥方法参数个数与前端一致**：`node scripts/bridge-arity-check.js`（真实 UI 调用点错位必须为 0）。
+      Wails 绑定按**参数个数**校验，形参 0 而前端传 2 个就抛
+      `error parsing arguments: received 2 arguments to method 'main.App.X', expected 0`，
+      而这类错只在界面角落显示一行小字 —— 2026-09-20 就是这样让右栏「远程」页签的文件树恒"加载失败"，
+      顺着查出并修掉 **57 处**同类错位（含 1 处参数**顺序**颠倒）。新增了零参桩批量对齐脚本
+      `node scripts/align-stub-arity.js`；检查器里的"已审阅例外表"必须写清原因，不得用来消音。
+      ⚠️ 改签名时注意：**`any` 形参收到 JS 的 `null`/`undefined` 会让 Wails 既不 resolve 也不 reject**
+      （Promise 永久挂起且无报错）—— 该传 null 的位置要用具体类型（如 `map[string]any`）。
 - [ ] 本项目独有桥方法（`DshStd*`、`MarketPage`、`Terminal*` 等 23 个）未被删除
 - [ ] 若已做**源码级焊接**：补丁脚本已重放且锚点校验通过（未通过则先修锚点，**不得静默丢失我们的页面**）
 - [ ] `~/.reasonix/` 用户数据完整

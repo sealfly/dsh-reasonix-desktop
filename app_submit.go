@@ -386,18 +386,32 @@ func (a *App) SubmitToTabWithID(tabID string, display string, input map[string]a
 }
 
 // SubmitInvocationsToTabWithID 工具调用提交（把结构化调用转成文本提交）。
-func (a *App) SubmitInvocationsToTabWithID(tabID string, display string, invocations []any, input map[string]any) map[string]any {
+//
+// ⚠️ 参数顺序曾与前端相反：1.38.2 前端按
+//
+//	SubmitInvocationsToTabWithID(tabID, display, input, invocations, submissionId)
+//
+// 调用（见 transcriptScrollGeometry chunk），而旧签名是 (tabID, display, invocations, input) ——
+// 不仅少一个实参，第 3、4 个还是**反的**：前端传进来的 input 对象会被当作 []any 解码，直接报错。
+// 这里按前端顺序对齐；invocations 目前仅供日志（提交仍走 display/input 的文本通道），
+// submissionID 是前端的确认标识，本地提交不需要回传但必须接收。
+func (a *App) SubmitInvocationsToTabWithID(tabID string, display string, input map[string]any, invocations []any, submissionID string) map[string]any {
 	text := extractPromptText(display, input)
 	sid := a.activeSessionID(tabID)
 	if sid == "" {
 		sid = tabID
 	}
 	res := a.submitPrompt(sid, text)
+	resumeLog("submit: SubmitInvocationsToTabWithID tab=%s 调用数=%d submissionId=%s ok=%v",
+		tabID, len(invocations), submissionID, res.OK)
 	return map[string]any{"ok": res.OK, "channel": res.Channel, "error": res.Error}
 }
 
 // SubmitDisplayToTabWithID 显示提交（预览确认后提交）。
-func (a *App) SubmitDisplayToTabWithID(tabID string, display string, input map[string]any) map[string]any {
+//
+// 前端按 (tabID, display, input, submissionId) 传 4 个实参，旧签名少一个 → 绑定报参数错。
+func (a *App) SubmitDisplayToTabWithID(tabID string, display string, input map[string]any, submissionID string) map[string]any {
+	resumeLog("submit: SubmitDisplayToTabWithID tab=%s submissionId=%s", tabID, submissionID)
 	return a.SubmitToTabWithID(tabID, display, input)
 }
 

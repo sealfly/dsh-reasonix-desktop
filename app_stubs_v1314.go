@@ -50,7 +50,9 @@ func (a *App) Submit(_text string) error { return nil }
 func (a *App) SubmitDisplay(_a1 string, _a2 string) error { return nil }
 
 // SubmitDisplayToTab 提交 display 回合到指定标签页。
-func (a *App) SubmitDisplayToTab(_a1 string, _a2 string) error { return nil }
+//
+// 前端契约是 3 个实参 (tabID, display, input)（mock 桥同形），旧签名只有 2 个 → 绑定报参数错。
+func (a *App) SubmitDisplayToTab(_tabID string, _display string, _input map[string]any) error { return nil }
 
 // SubmitInvocationsToTab 提交调用列表到指定标签页。
 func (a *App) SubmitInvocationsToTab(_a1 string, _a2 string, _a3 string, _a4 []any) error { return nil }

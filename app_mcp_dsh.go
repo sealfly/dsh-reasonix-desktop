@@ -829,7 +829,17 @@ func (a *App) MCPCapabilityMatrix() map[string]any {
 
 // AnswerMCPInteractionForTab MCP 交互（elicitation）应答。
 // DSH 的 mcp-client 未实现 elicitation 交互通道，这里如实降级：不排队、不伪造成功。
-func (a *App) AnswerMCPInteractionForTab(tabID string, interactionID string, answers map[string]any) error {
+//
+// 参数按前端契约 4 个：mock 桥里的 prompt-kind 分发器明确按
+// `AnswerMCPInteractionForTab(tabID, interactionID, action, content)` 调用
+// （action 形如 "cancel"/"accept"，content 为应答内容）；旧签名 3 个
+// (tabID, interactionID, answers map) → 走到该分发路径就会被绑定层拒绝。
+//
+// ⚠️ 第 4 个形参**不能用 any**：真机实测（2026-09-20）Wails 绑定在 `any` 形参收到 JS 的
+// `null` 时**既不 resolve 也不 reject**（Promise 永久挂起、无任何报错），而前端的真实调用恰恰是
+// `r.content ?? null` —— 即默认就传 null。改用 map[string]any 后 null 能正常解码为 nil。
+func (a *App) AnswerMCPInteractionForTab(tabID string, interactionID string, action string, content map[string]any) error {
+	resumeLog("mcp: AnswerMCPInteractionForTab tab=%s id=%s action=%s content=%v", tabID, interactionID, action, content)
 	return fmt.Errorf("当前 DSH MCP 客户端不支持交互式应答")
 }
 

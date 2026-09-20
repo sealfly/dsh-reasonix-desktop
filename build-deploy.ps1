@@ -57,6 +57,17 @@ Write-Host "== Verify dist assets =="
 & node (Join-Path $root "scripts\verify-dist-assets.js")
 if ($LASTEXITCODE -ne 0) { throw "dist asset verification failed (missing or untracked assets; see output above)" }
 
+# 0.6) Bridge arity: every method the real UI calls must accept exactly the argument count it
+#      passes. Wails validates arity and rejects otherwise with
+#      "error parsing arguments: received N arguments to method 'main.App.X', expected M" —
+#      a one-line message in a corner of the UI, so these break silently.
+#      2026-09-20: this gate's absence let the right-dock "remote" tab ship broken ("loading
+#      failed" forever) and 56 more methods carried the same defect. Only REAL UI call sites
+#      fail the build; the dev mock bridge and the reviewed-exception table do not.
+Write-Host "== Verify bridge arity =="
+& node (Join-Path $root "scripts\bridge-arity-check.js")
+if ($LASTEXITCODE -ne 0) { throw "bridge arity verification failed (Go signatures do not match frontend call sites; see output above)" }
+
 # 1) Build
 Write-Host "== Build =="
 # Ensure go is on PATH (wails build needs it); try common install locations

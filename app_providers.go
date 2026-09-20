@@ -624,7 +624,27 @@ func (a *App) AddOfficialProviderAccess(kind, key string) string {
 
 // UpgradeDeepSeekProviderAccess 兼容旧入口：DSH 的 deepseek 走内置 llm-deepseek 命名空间，
 // 这里只把 key 写进凭据存储（DEEPSEEK_API_KEY），不新建 llm-pi-ai 供应商。
-func (a *App) UpgradeDeepSeekProviderAccess(name, key string) string {
+//
+// 参数形态：1.38.2 的 SettingsPanel 只传**一个**实参（`onUpgradeRecommended: e => …`，
+// 点「升级推荐接入」时把当前供应商/凭据对象或 key 传进来），而旧签名是 (name, key string) 两参
+// → Wails 绑定直接抛参数错。这里按一个 any 接收并尽力取 key：
+// 字符串即 key；对象则依次找 apiKey / key / value 字段。
+func (a *App) UpgradeDeepSeekProviderAccess(provider any) string {
+	name, key := "", ""
+	switch v := provider.(type) {
+	case string:
+		key = v
+	case map[string]any:
+		for _, k := range []string{"apiKey", "key", "value", "secret"} {
+			if s, ok := v[k].(string); ok && strings.TrimSpace(s) != "" {
+				key = s
+				break
+			}
+		}
+		if s, ok := v["id"].(string); ok {
+			name = s
+		}
+	}
 	env := firstNonEmpty(name, deepseekAPIKeyRef)
 	if strings.TrimSpace(key) == "" {
 		return "缺少 API key"

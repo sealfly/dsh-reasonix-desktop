@@ -27,8 +27,14 @@ func (a *App) CloseTerminalForTab(_tabID, sessionID string) error {
 	return a.term.Close(sessionID)
 }
 
-// ResizeTerminalForTab 调整终端尺寸（无 PTY，忽略；前端无参数调用）。
-func (a *App) ResizeTerminalForTab() {}
+// ResizeTerminalForTab 调整终端尺寸。
+//
+// **说明（诚实边界）**：本项目的终端是无 PTY 实现（terminal.go 顶部有说明：stdout/stderr 走管道、
+// 无 ANSI 控制），因此 cols/rows 对远端 shell 没有意义 —— 这里按前端契约接收 4 个实参（tabID、
+// sessionID、cols、rows）并如实忽略，而不是假装成功。
+// 之前的签名是 4 个 any 且注释写"前端无参数调用"，与真机不符：前端 TerminalTransport.resize
+// 明确按 (tabId, sessionId, cols, rows) 调用，参数不符会被 Wails 绑定直接拒绝。
+func (a *App) ResizeTerminalForTab(_tabID string, _sessionID string, _cols int, _rows int) {}
 
 // ListTerminalSessionsForTab 列出终端会话（同 Workspace）。
 func (a *App) ListTerminalSessionsForTab(tabID string) map[string]any {

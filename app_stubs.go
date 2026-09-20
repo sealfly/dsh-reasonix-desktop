@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -43,19 +44,19 @@ func (a *App) ListThemePacks() []any { return []any{} }
 func (a *App) ThemePacks() []any { return []any{} }
 
 // ExtensionActions 扩展动作。
-func (a *App) ExtensionActions() []any { return []any{} }
+func (a *App) ExtensionActions(_a1 any) []any { return []any{} }
 
 // BackgroundRuntimes 后台运行时。
 func (a *App) BackgroundRuntimes() []any { return []any{} }
 
 // HooksSettings 钩子设置。
-func (a *App) HooksSettings() map[string]any { return map[string]any{"hooks": []any{}} }
+func (a *App) HooksSettings(_a1 any) map[string]any { return map[string]any{"hooks": []any{}} }
 
 // ExternalOpeners 外部打开器。
 func (a *App) ExternalOpeners() map[string]any { return map[string]any{"openers": []any{}, "preferred": ""} }
 
 // InboxSnapshot 收件箱快照。
-func (a *App) InboxSnapshot() []any { return []any{} }
+func (a *App) InboxSnapshot(_a1 any) []any { return []any{} }
 
 // Memory 记忆（DSH 原生无记忆 API，能力来自记忆插件生态——见 app_memory_plugins.go）。
 // available=true 让前端记忆面板正常渲染（空态），记忆插件启用后由插件 RPC 提供数据；
@@ -80,7 +81,7 @@ func (a *App) Memory() map[string]any {
 func (a *App) MemoryForTab(_tabID string) map[string]any { return a.Memory() }
 
 // MemoryRevisions 记忆修订。
-func (a *App) MemoryRevisions() []any { return []any{} }
+func (a *App) MemoryRevisions(_a1 any) []any { return []any{} }
 
 // MemoryRevisionsForTab 指定会话记忆修订。
 func (a *App) MemoryRevisionsForTab(_a1 any, _a2 any) []any { return []any{} }
@@ -327,7 +328,7 @@ func (a *App) RemoveWorkspace(_root string) error { return nil }
 func (a *App) PickWorkspace() string { return "" }
 
 // PickExportFile 选择导出文件。
-func (a *App) PickExportFile() map[string]any { return nil }
+func (a *App) PickExportFile(_a1 any, _a2 any) map[string]any { return nil }
 
 // SaveExportFile 保存导出文件。
 func (a *App) SaveExportFile(_a1 any, _a2 any, _a3 any) error { return nil }
@@ -339,13 +340,12 @@ func (a *App) SaveExportImageFiles(_a1 any, _a2 any) error { return nil }
 func (a *App) SaveDoc(_path, _content string) error { return nil }
 func (a *App) SaveDocForTab(_tabID, _path, _content string) error { return nil }
 
-// SaveClipboardImage / SavePastedFile / SavePastedImage 保存粘贴内容。
+// SaveClipboardImage / SavePastedFile 保存粘贴内容。
+//
+// SavePastedImage / AttachmentDataURL / AttachDropped 已按 1.38.2 前端契约真实现，见 app_attachments.go
+// （零参/参数错位会被 Wails 绑定拒绝，粘贴图片曾因此静默失败）。
 func (a *App) SaveClipboardImage() string { return "" }
 func (a *App) SavePastedFile(_name string, _data string) string { return "" }
-func (a *App) SavePastedImage(_name string, _data string) string { return "" }
-
-// AttachDropped 附加拖放文件。
-func (a *App) AttachDropped(_tabID string, _paths []string) {}
 
 // SearchFileRefsForTab 搜索文件引用。
 func (a *App) SearchFileRefsForTab(_tabID, _query string) []any { return []any{} }
@@ -353,11 +353,34 @@ func (a *App) SearchFileRefsForTab(_tabID, _query string) []any { return []any{}
 // ResolveMarkdownImageForTab 解析 markdown 图片。
 func (a *App) ResolveMarkdownImageForTab(_tabID, _src string) string { return "" }
 
-// ResolveWorkspacePathForTab 解析工作区路径。
-func (a *App) ResolveWorkspacePathForTab(_tabID string) string { return "" }
+// ResolveWorkspacePathForTab 解析工作区路径（前端传 tabID + 相对路径，返回绝对路径）。
+//
+// 旧签名只有 1 个形参，而前端 WorkspacePanel 按 `ResolveWorkspacePathForTab(tabID, path)` 调用，
+// Wails 绑定会直接抛参数错 —— 右键菜单里的「复制绝对路径」因此不可用。
+func (a *App) ResolveWorkspacePathForTab(_tabID string, relPath string) string {
+	p := strings.TrimSpace(relPath)
+	if p == "" {
+		return ""
+	}
+	if filepath.IsAbs(p) {
+		return filepath.Clean(p)
+	}
+	root := a.resolveWorkspaceRoot(_tabID)
+	if root == "" {
+		root = a.workspaceRootForTabID(_tabID)
+	}
+	if root == "" {
+		return p
+	}
+	abs := filepath.Join(root, p)
+	if _, err := os.Stat(abs); err == nil {
+		return abs
+	}
+	return p
+}
 
 // CheckUpdate 检查更新。
-func (a *App) CheckUpdate() map[string]any { return map[string]any{"available": false, "version": ""} }
+func (a *App) CheckUpdate(_a1 any) map[string]any { return map[string]any{"available": false, "version": ""} }
 
 // ApplyUpdateRequest 应用更新。
 func (a *App) ApplyUpdateRequest(_a1 any, _a2 any, _a3 any) error { return nil }
@@ -370,7 +393,10 @@ func (a *App) OpenDownloadPage() {}
 
 
 // RecordUIPerf 记录 UI 性能。
-func (a *App) RecordUIPerf(_event string, _ms float64) {}
+//
+// 前端按 `RecordUIPerf(metrics)` 传**一个对象**（transcriptScrollGeometry 里的性能汇总），
+// 旧签名是 (_event string, _ms float64) 两参 → Wails 绑定直接抛参数错（性能埋点整条失效）。
+func (a *App) RecordUIPerf(_metrics any) {}
 
 // ReloadSettings 重新加载设置。
 

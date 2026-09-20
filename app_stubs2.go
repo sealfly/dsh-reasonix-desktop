@@ -3,13 +3,12 @@ package main
 // 鎵归噺鐢熸垚鐨勭┖瀹炵幇锛坓en-stubs.js 浠?preload.js + 鍓嶇璋冪敤娓呭崟瀵规瘮鐢熸垚锛夈€?
 // 瑕嗙洊鍓嶇璋冪敤浣?Go 绔己澶辩殑鏂规硶锛岃繑鍥炲畨鍏ㄧ┖鎬?闄嶇骇锛岄槻 not-a-function 宕╂簝銆?
 
-func (a *App) AcceptMemorySuggestion() error { return nil }
+func (a *App) AcceptMemorySuggestion(_a1 any) error { return nil }
 func (a *App) AcceptMemorySuggestionForTab(_a1 any, _a2 any) error { return nil }
-func (a *App) AcceptSkillSuggestion() error { return nil }
+func (a *App) AcceptSkillSuggestion(_a1 any) error { return nil }
 func (a *App) AcceptSkillSuggestionForTab(_a1 any, _a2 any) error { return nil }
 func (a *App) ActivateThemePack(_a1 any) error { return nil }
 func (a *App) AddSkillPath(_a1 any) error { return nil }
-func (a *App) AttachmentDataURL() string { return "" }
 func (a *App) AvailableSubagentTools() []any {
 	// 贴合 DSH：子智能体是运行时派生的子会话，从 subagent.list 读真实条目。
 	entries := []any{}
@@ -36,7 +35,7 @@ func (a *App) AvailableSubagentTools() []any {
 	}
 	return entries
 }
-func (a *App) BalanceForTab() error { return nil }
+func (a *App) BalanceForTab(_a1 any) error { return nil }
 func (a *App) CancelJobForTab(_a1 any, _a2 any) error { return nil }
 func (a *App) CancelTab(_a1 any) error { return nil }
 func (a *App) CancelTabWithInboxItems(_a1 any, _a2 any) error { return nil }
@@ -54,26 +53,24 @@ func (a *App) Capabilities() map[string]any {
 		"allowImplicitInvocation": getSkillPrefsManager().load().ImplicitInvocation,
 	}
 }
-func (a *App) ChooseRecoveryBranch() error { return nil }
+func (a *App) ChooseRecoveryBranch(_a1 any) error { return nil }
 func (a *App) CleanRecoveryLineage(_a1 any) error { return nil }
 func (a *App) ClearBotSecret(_a1 any) error { return nil }
 func (a *App) ClearSession() error { return nil }
-func (a *App) ClearSessionForTab() error { return nil }
-func (a *App) CommitRewindForTab() error { return nil }
-func (a *App) CommitWorkspaceFileRevertForTab() error { return nil }
-func (a *App) CompactForTab() error { return nil }
-func (a *App) ConfirmRemoteHostKey() error { return nil }
-func (a *App) ConfirmRemoteSecret() error { return nil }
-func (a *App) ContextPanel() error { return nil }
+func (a *App) ClearSessionForTab(_a1 any) error { return nil }
+func (a *App) CommitRewindForTab(_a1 any, _a2 any, _a3 any, _a4 any) error { return nil }
+func (a *App) CommitWorkspaceFileRevertForTab(_a1 any, _a2 any, _a3 any) error { return nil }
+func (a *App) CompactForTab(_a1 any) error { return nil }
+func (a *App) ContextPanel(_a1 any) error { return nil }
 func (a *App) CopyThemePack(_a1 any, _a2 any, _a3 any) error { return nil }
 func (a *App) CreateBlankProject(_parentDir string, _projectName string) error { return nil }
 func (a *App) CreateIsolatedWorktree(_workspaceRoot string) error { return nil }
-func (a *App) CreateTopic() error { return nil }
-func (a *App) DeleteInboxItem() error { return nil }
+func (a *App) CreateTopic(_a1 any, _a2 any, _a3 any) error { return nil }
+func (a *App) DeleteInboxItem(_a1 any, _a2 any) error { return nil }
 func (a *App) DeleteRecoveryCopy(_a1 any) error { return nil }
 func (a *App) DeleteThemePack(_a1 any) error { return nil }
 func (a *App) DiagnoseBotConnection(_a1 any) error { return nil }
-func (a *App) DismissTodoBatchForTab() error { return nil }
+func (a *App) DismissTodoBatchForTab(_a1 any, _a2 any) error { return nil }
 func (a *App) EnqueueInboxSteer(_a1 any, _a2 any, _a3 any, _a4 any) error { return nil }
 // EnsureBlankSurface 新建空白会话（单面布局；前端"新建对话"入口），返回 tabMeta（新会话）。
 func (a *App) EnsureBlankSurface(scope string, workspaceRoot string) map[string]any {
@@ -101,7 +98,7 @@ func (a *App) blankSessionMeta(scope, workspaceRoot string) map[string]any {
 	a.applyDefaultApproval(s)
 	return s
 }
-func (a *App) ExportThemePack() string { return "" }
+func (a *App) ExportThemePack(_a1 any, _a2 any) string { return "" }
 func (a *App) Forget(_name string) error { return nil }
 func (a *App) ForgetForTab(_tabID string, _name string) error { return nil }
 func (a *App) ForkForTab(_a1 any, _a2 any) error { return nil }
@@ -110,7 +107,7 @@ func (a *App) GetSessionCatalogStatus() map[string]any { return nil }
 func (a *App) GetTopicSummary(_key string) map[string]any { return nil }
 func (a *App) HeartbeatGenerateID() error { return nil }
 func (a *App) HeartbeatReloadConfig() error { return nil }
-func (a *App) HeartbeatSaveConfig() error { return nil }
+func (a *App) HeartbeatSaveConfig(_a1 any) error { return nil }
 func (a *App) HeartbeatTriggerNow(_a1 any) error { return nil }
 func (a *App) HistoryContentForTab(_a1 any, _a2 any, _a3 any) error { return nil }
 func (a *App) HistorySliceForTab(_tabID string, req map[string]any) map[string]any {
@@ -148,48 +145,45 @@ func (a *App) SaveSessionGroupsVersioned(_scope, _workspaceRoot string, _expecte
 
 // SetPreferredExternalOpener 璁剧疆棣栭€夊閮ㄦ墦寮€鍣ㄣ€?
 func (a *App) SetPreferredExternalOpener(_id string) error { return nil }
-func (a *App) ImportThemePack() error { return nil }
-func (a *App) InvokeExtensionAction() error { return nil }
-func (a *App) IsolatedWorktreeAvailability() error { return nil }
-func (a *App) ListRemoteDir() []any { return []any{} }
+func (a *App) ImportThemePack(_a1 any, _a2 any) error { return nil }
+func (a *App) InvokeExtensionAction(_a1 any, _a2 any, _a3 any) error { return nil }
+func (a *App) IsolatedWorktreeAvailability(_a1 any) error { return nil }
 func (a *App) ListTaskEventPage(_req map[string]any) error { return nil }
-func (a *App) ListTaskEventsForTab() error { return nil }
-func (a *App) ListTaskPage() error { return nil }
-func (a *App) ListTasksForTab() error { return nil }
+func (a *App) ListTaskEventsForTab(_a1 any, _a2 any, _a3 any) error { return nil }
+func (a *App) ListTaskPage(_a1 any) error { return nil }
+func (a *App) ListTasksForTab(_a1 any) error { return nil }
 func (a *App) OpenChannelSessionPageForTab(_a1 any, _a2 any, _a3 any) error { return nil }
-func (a *App) OpenRemoteWorkspace() error { return nil }
 func (a *App) OpenTaskSessionByKey(_req map[string]any) error { return nil }
-func (a *App) OpenTaskSessionForTab() error { return nil }
+func (a *App) OpenTaskSessionForTab(_a1 any, _a2 any) error { return nil }
 func (a *App) PickBlankProjectParent() error { return nil }
 func (a *App) PickSkillFolder() error { return nil }
 func (a *App) PickThemeBackground() error { return nil }
 func (a *App) PollBotConnectionInstall(_a1 any) error { return nil }
-func (a *App) PreviewRewindForTab() error { return nil }
-func (a *App) PreviewSession() map[string]any { return nil }
+func (a *App) PreviewRewindForTab(_a1 any, _a2 any, _a3 any) error { return nil }
+func (a *App) PreviewSession(_a1 any) map[string]any { return nil }
 func (a *App) PreviewWorkspaceFileRevertForTab(_tabID string, _path string) error { return nil }
 func (a *App) PurgeRecoveryCopy(_a1 any) error { return nil }
 func (a *App) PurgeTrashedSession(_a1 any) error { return nil }
-func (a *App) ReadInboxItem() error { return nil }
-func (a *App) ReadRemoteFile() error { return nil }
+func (a *App) ReadInboxItem(_a1 any, _a2 any) error { return nil }
 func (a *App) Remember(_scope string, _note string) error { return nil }
 func (a *App) RememberForTab(_tabID string, _scope string, _note string) error { return nil }
 func (a *App) RequeueTaskByKey(_req map[string]any) error { return nil }
-func (a *App) RequeueTaskForTab() error { return nil }
+func (a *App) RequeueTaskForTab(_a1 any, _a2 any, _a3 any, _a4 any) error { return nil }
 func (a *App) ResetThemePack() error { return nil }
 func (a *App) ResolvePlanDecisionTab(_a1 any, _a2 any, _a3 any) error { return nil }
 func (a *App) ResolveRecoveryTab(_a1 any, _a2 any, _a3 any, _a4 any) error { return nil }
-func (a *App) RestoreArchivedMemory() error { return nil }
+func (a *App) RestoreArchivedMemory(_a1 any) error { return nil }
 func (a *App) RestoreArchivedMemoryForTab(_a1 any, _a2 any) error { return nil }
-func (a *App) RestoreMemoryRevision() error { return nil }
+func (a *App) RestoreMemoryRevision(_a1 any, _a2 any) error { return nil }
 func (a *App) RestoreMemoryRevisionForTab(_a1 any, _a2 any, _a3 any) error { return nil }
 func (a *App) RestoreSession(_a1 any) error { return nil }
-func (a *App) RetryInboxItem() error { return nil }
-func (a *App) RevealBackgroundRuntime() error { return nil }
+func (a *App) RetryInboxItem(_a1 any, _a2 any) error { return nil }
+func (a *App) RevealBackgroundRuntime(_a1 any) error { return nil }
 func (a *App) RunShellForTab(_a1 any, _a2 any) error { return nil }
 func (a *App) SaveHooksSettingsForRoot(_a1 any, _a2 any, _a3 any) error { return nil }
-func (a *App) SaveLocalPathAs() error { return nil }
+func (a *App) SaveLocalPathAs(_a1 any) error { return nil }
 func (a *App) SaveThemePack(_a1 any) error { return nil }
-func (a *App) ScanPromptHistory() []any { return []any{} }
+func (a *App) ScanPromptHistory(_a1 any) []any { return []any{} }
 func (a *App) SetBotConnectionToolApprovalMode(_a1 any, _a2 any) error { return nil }
 func (a *App) SetBotSecret(_a1 any, _a2 any) error { return nil }
 func (a *App) SetBotSettings(_a1 any) error { return nil }
@@ -199,19 +193,18 @@ func (a *App) StartBotConnectionInstall(_a1 any, _a2 any) error { return nil }
 func (a *App) StartTopicActivation(req map[string]any) map[string]any {
 	return a.StartTopicActivationImpl(req)
 }
-func (a *App) SteerInboxItem() error { return nil }
+func (a *App) SteerInboxItem(_a1 any, _a2 any) error { return nil }
 func (a *App) StopTaskByKey(_req map[string]any) error { return nil }
-func (a *App) StopTaskForTab() error { return nil }
+func (a *App) StopTaskForTab(_a1 any, _a2 any, _a3 any, _a4 any, _a5 any) error { return nil }
 func (a *App) SubmitDeliveryRecoveryToTabWithID(_a1 any, _a2 any, _a3 any, _a4 any) error { return nil }
 func (a *App) SubmitEditedDisplayToTabWithID(_a1 any, _a2 any, _a3 any, _a4 any, _a5 any) error { return nil }
-func (a *App) SubmitExtensionForm() error { return nil }
-func (a *App) SummarizeFromForTab() error { return nil }
-func (a *App) SummarizeUpToForTab() error { return nil }
-func (a *App) TerminalOutputForTab() error { return nil }
+func (a *App) SubmitExtensionForm(_a1 any, _a2 any, _a3 any, _a4 any) error { return nil }
+func (a *App) SummarizeFromForTab(_a1 any, _a2 any) error { return nil }
+func (a *App) SummarizeUpToForTab(_a1 any, _a2 any) error { return nil }
+func (a *App) TerminalOutputForTab(_a1 any, _a2 any) error { return nil }
 func (a *App) TestBotConnection(_a1 any, _a2 any) error { return nil }
-func (a *App) ToolResultForTab() error { return nil }
+func (a *App) ToolResultForTab(_a1 any, _a2 any) error { return nil }
 func (a *App) TrySubagentProfile(_a1 any, _a2 any) error { return nil }
-func (a *App) UndoRewindForTab() error { return nil }
-func (a *App) UpdateInboxItem() error { return nil }
-func (a *App) UsageStats() error { return nil }
-func (a *App) WriteRemoteFile() error { return nil }
+func (a *App) UndoRewindForTab(_a1 any, _a2 any) error { return nil }
+func (a *App) UpdateInboxItem(_a1 any, _a2 any, _a3 any, _a4 any) error { return nil }
+func (a *App) UsageStats(_a1 any) error { return nil }

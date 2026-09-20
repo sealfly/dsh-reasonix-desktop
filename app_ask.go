@@ -155,11 +155,12 @@ func (a *App) SubmitInitialGoalToTabWithID(tabID string, goal string, display st
 		resumeLog("goal.create session=%s objective=%q", sid, truncate(goal, 60))
 	}
 	// 2. 提交首条消息（桥方法返回 map，这里把 ok 状态转成 error）
+	//    注意参数顺序与前端契约一致：(tabID, display, input, invocations, submissionID)
 	var r map[string]any
 	if len(invocations) > 0 {
-		r = a.SubmitInvocationsToTabWithID(sid, display, invocations, input)
+		r = a.SubmitInvocationsToTabWithID(sid, display, input, invocations, "")
 	} else {
-		r = a.SubmitDisplayToTabWithID(sid, display, input)
+		r = a.SubmitDisplayToTabWithID(sid, display, input, "")
 	}
 	if ok, _ := r["ok"].(bool); !ok {
 		if e, _ := r["error"].(string); e != "" {

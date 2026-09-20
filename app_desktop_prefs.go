@@ -111,8 +111,13 @@ func (a *App) SetDesktopZoomFactor(factor float64) error {
 
 // ===== 崩溃上报 / 托盘语言 =====
 
-// ReportCrash 记录崩溃（写日志，不阻断）。
-func (a *App) ReportCrash(_report string) {}
+// ReportCrash 记录崩溃/诊断上报（写日志，不阻断）。
+//
+// 前端 SettingsPanel 按 `ReportCrash(kind, detail)` 传两个实参（t.reportKind || "bot"、t.reportDetail），
+// 旧签名只有 1 个形参 → Wails 绑定抛参数错，「发送诊断」按钮点了没反应。
+func (a *App) ReportCrash(kind string, detail string) {
+	resumeLog("crash-report: kind=%q detail=%d 字节", kind, len(detail))
+}
 
 func (a *App) SetTrayLocale(locale string) error {
 	a.st.SetLanguage(locale)

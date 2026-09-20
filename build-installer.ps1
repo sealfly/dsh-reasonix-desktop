@@ -93,6 +93,14 @@ Write-Host "== Verify dist assets =="
 & node (Join-Path $root "scripts\verify-dist-assets.js")
 if ($LASTEXITCODE -ne 0) { throw "dist asset verification failed (missing or untracked assets; see output above)" }
 
+# 0.6) Bridge arity gate (see build-deploy.ps1 for the full story): Wails rejects a bridge call
+#      whose argument count differs from the Go signature, and the failure is a single line of
+#      text in the UI — so it ships unnoticed. 2026-09-20: the right-dock "remote" tab was broken
+#      this way, along with 56 more methods. Only real UI call sites fail this gate.
+Write-Host "== Verify bridge arity =="
+& node (Join-Path $root "scripts\bridge-arity-check.js")
+if ($LASTEXITCODE -ne 0) { throw "bridge arity verification failed (Go signatures do not match frontend call sites; see output above)" }
+
 # 1) wails build -nsis: main exe + wails_tools.nsh + initial installer
 Write-Host "== Build (wails -nsis) =="
 Push-Location $root

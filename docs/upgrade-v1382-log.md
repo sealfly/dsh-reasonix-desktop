@@ -645,3 +645,94 @@ clone 都逐字节相同。
    按 PRINCIPLES 原则 6 类别 5 的硬要求执行）。
 4. **注入脚本运行期诊断的 UI 化**：把 `resume-debug.log` 的成功/失败诊断做成设置页里的一行状态，
    用户能自查"某个注入是否还活着"。
+
+---
+
+## 9. 桥方法参数错位：从「远程页签打不开」查到 57 处并全部修掉
+
+### 9.1 现象与追问
+
+用户看到右栏除「概览 / 文件 / 改动 / 子代理」外**多了一个「远程」页签**，问它从哪来。查证结论：
+
+- **是上游 1.38.2 自带的、条件渲染的页签**，bundle 里原文：
+  `[s&&!o&&DockTab{i("rightDock.overview")}] [DockTab{i("workspace.filesTab")}] [DockTab{i("workspace.changedTab")}] [a&&DockTab{i("rightDock.remote")}]`
+  —— 只有条件 `a` 为真才渲染，视图体是远程工作区组件。
+- **条件为什么成立**：`~/.reasonix/remote-hosts.json` 里有 **2 台主机**（`桌面虾` root@172.16.65.70 等）。
+  没配主机就不会出现该页签。
+- **不是本项目的注入**：`scripts/dsh-*.js` 里没有任何创建"远程/ssh"页签的代码，注入只加「子代理N」
+  （DOM 里 class 是 `dsh-sp-tab workbench-dock__tab`，与上游的纯 `workbench-dock__tab` 可分）。
+
+**但该页签的内容是坏的**：面板里写着
+`加载失败: Error: error parsing arguments: received 2 arguments to method 'main.App.ListRemoteDir', expected 0`
+—— 前端按 2 个实参调用（懒加载 chunk `RemotePanel-*.js`），而 Go 侧那四个方法还是
+`app_stubs2.go` 里的**零参占位桩**；Wails 绑定按参数个数校验，直接拒绝。
+
+### 9.2 顺着这条线查出 57 处同类错位
+
+同一类问题**远不止这 4 个方法**。新增 `scripts/bridge-arity-check.js`（前端调用实参个数 ↔
+Go 签名形参个数）后，真实 UI 可达路径上共查出 **57 处**错位，覆盖会话、任务、收件箱、
+记忆、主题包、供应商、提交链路等。
+
+- 写完第一版检查器时得到 62 处，其中若干是**假阳性**：切分实参时把 `<` `>` 当括号（Go 泛型用），
+  于是箭头函数 `f(e=>e.name)` 与比较运算把深度算错。修正为 **JS/Go 两套切分规则**后，
+  `AddProviderConnectionWithOptions`、`RenameProviderConnections` 等 5 处假错位消失 ——
+  **若不先修检查器，就会去"修"本来正确的代码**。
+- 也确认了开发态 mock 桥（`bridge-*.js`）自身签名偏松（`HooksSettings` 在 mock 里是 0 参、
+  前端却传 1 参），所以**判定标准取"真实 UI 调用点"**，不取 mock。
+
+### 9.3 修法（保留诚实语义，不造假数据）
+
+| 类别 | 数量 | 处理 |
+|---|---|---|
+| 零参占位桩 | 49 | `scripts/align-stub-arity.js` 按前端实参个数补齐形参（`any`），行为仍为"安全空实现" |
+| 已实现但签名不符 | 8 | 人工按调用语义改：`AttachDropped`、`SavePastedImage`、`AttachmentDataURL`、`ResolveWorkspacePathForTab`、`ReportCrash`、`UpgradeDeepSeekProviderAccess`、`RecordUIPerf`、`ResizeTerminalForTab` |
+| 参数**顺序**颠倒 | 1 | `SubmitInvocationsToTabWithID`：前端是 `(tabID, display, input, invocations, submissionId)`，Go 是 `(tabID, display, invocations, input)` —— 不仅少一个，第 3/4 个还是反的，会把 input 对象当 `[]any` 解码 |
+| 有意例外 | 1 | `Cancel`：真实 UI 从不零参调用它；Go 的 `Cancel(tabID)` 是 `CancelForTab` 的基础，改 0 参会破坏按标签页取消。已写进检查器的**已审阅例外表**并附原因 |
+
+本轮顺带**真实现**了两条链路（原来是静默失效的空桩）：
+
+- **粘贴图片**：`SavePastedImage(dataURL)` 落盘到 `~/.reasonix/attachments/` 并返回路径，
+  `AttachmentDataURL(path)` 反向转 data URL 供预览；`AttachDropped(path)` 返回
+  `{kind,path,isDir,displayPath,previewUrl}`（目录 → `kind:"workspace"`，前端据此加工作区引用）。
+- **远程文件读写**（`app_remote_files.go`）：列目录 = 一次 ssh 会话来跑 POSIX sh 循环
+  （`ls -A` 逐行读，带空格的目录名不会被拆；`stat -c %Y` → 退回 `stat -f %m` 兼容 BSD）；
+  读文件 = 一次往返先给 mtime/大小再给正文（NUL 判二进制、2MiB 截断标记）；
+  写文件 = 正文走 stdin 给 `cat >`，传了 expectedMtime 时先比对、不一致返回 `conflict` 而不是冲掉别人的修改。
+  `OpenRemoteWorkspace` 仍**明确报错**（远端 serve 本项目不做）。
+
+### 9.4 真机验证
+
+- **逐方法真机调用 58 项**：`参数错位 0`。原先必失败的 57 个方法全部走到真实语义；
+  `SavePastedImage` 真的落盘（`~/.reasonix/attachments/paste-….png`），
+  `AttachDropped` 真的描述了 `C:\Windows\win.ini`。
+- **探针自己踩的坑（记下来）**：`App.X([a,b])` 等于把整个数组当第 1 个实参，会得到
+  "received 1 arguments … expected N" —— 那是**探针的错**，不是产品的错；必须 `App.X(...args)`。
+  首轮 36 项"参数错位"全是这个原因，差点误报成产品缺陷。
+- 远程方法在本机**连不上那台主机**（`172.16.65.70:22` 超时，用户确认测试机已下线），
+  从 SSH 层返回的是诚实错误：
+  `Warning: Identity file Clawbot@168 not accessible: No such file or directory`
+  —— 这同时暴露该主机的 `identityFile` 填的是**文件名而非密钥路径**，建议用户修正。
+  因此远程读写的**成功路径**改由离线测试覆盖（12 个用例，用可替换的执行钩子模拟远端 shell）。
+
+### 9.5 又一个真机级的坑：`any` 形参 + JS `null` = Promise 永久挂起
+
+`AnswerMCPInteractionForTab` 逐个实参试探后发现：**只要某个 `any` 形参收到 `null`/`undefined`，
+Wails 绑定既不 resolve 也不 reject**（无任何报错，调用方永远等下去）。而前端真实调用恰恰是
+`AnswerMCPInteractionForTab(tabID, interactionID, action, r.content ?? null)` —— **默认就传 null**。
+
+改为 `map[string]any` 后 null 正常解码为 nil、REJECT 正常返回。同时扫了真实 UI 的全部调用点，
+确认没有别的地方把字面 `null`/`undefined` 传给桥方法（命中的 5 处全是 Monaco/vendor 内部函数），
+所以本轮批量补的 `any` 形参没有引入挂死风险。
+
+> 结论沉到工具里：检查器把"任何 `any` 形参 + 调用点可能传 null"列为需人工确认项，
+> 避免下一次批量改签名时把"抛错"换成"静默挂死"（后者更难查）。
+
+### 9.6 结果
+
+```
+bridge-arity-check:  真实 UI 错位 0、仅 mock 错位 0、已审阅例外 1
+go build / go vet:   exit 0
+go test ./...:       ok（含新增远程文件 12 例 + 附件 6 例）
+真机逐方法调用:       OK 57 / 参数错位 0 / 1（MCP 交互应答按设计返回明确错误）
+安装包重建:          安装包 101MB / 懒人包 177.7MB，签名 Valid，verify-packaged-app 14/14
+```
