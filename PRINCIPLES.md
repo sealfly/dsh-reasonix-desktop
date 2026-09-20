@@ -209,7 +209,11 @@
 - [ ] 本项目独有桥方法（`DshStd*`、`MarketPage`、`Terminal*` 等 23 个）未被删除
 - [ ] 若已做**源码级焊接**：补丁脚本已重放且锚点校验通过（未通过则先修锚点，**不得静默丢失我们的页面**）
 - [ ] `~/.reasonix/` 用户数据完整
-- [ ] `.ps1` 构建脚本仍带 UTF-8 BOM（`node scripts/ensure-bom.js --check build-deploy.ps1 build-installer.ps1`）
+- [ ] `.ps1` 构建脚本与 `build/windows/installer/project.nsi` 仍带 UTF-8 BOM
+      （`node scripts/ensure-bom.js --check build-deploy.ps1 build-installer.ps1 build/windows/installer/project.nsi`）。
+      **`.nsi` 丢 BOM 会让 makensis 直接报 `Bad text encoding: project.nsi:109`** —— 2026-09-20
+      e80d810 就是这么把安装包构建弄坏的（BOM=True → False），直到重建才暴露；`build-installer.ps1`
+      现已内置前置守卫，缺失即中止并打印修复命令。改完 `.ps1`/`.nsi` 一律先补 BOM 再构建。
 
 ## 原则 7：测试会话/工作区清理准则（磁盘零残留）
 
