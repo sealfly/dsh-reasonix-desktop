@@ -1,0 +1,1 @@
+var e=String.raw`(?:\\[ \t]|[^\s])`,n=new RegExp(`(?:^|\\s)@(${e}*)$`);function refTokenRe(){return new RegExp(`(^|\\s)@(${e}+)`,"g")}function escapeRefPath(e){return e.replace(/[ \t]/g,e=>"\\"+e)}function unescapeRefPath(e){return e.replace(/\\([ \t])/g,"$1")}export{unescapeRefPath as i,escapeRefPath as n,refTokenRe as r,n as t};

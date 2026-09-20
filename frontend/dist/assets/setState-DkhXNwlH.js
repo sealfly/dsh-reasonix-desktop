@@ -1,0 +1,1 @@
+function applySetState(t,e){return"function"==typeof e?e(t):e}export{applySetState as t};

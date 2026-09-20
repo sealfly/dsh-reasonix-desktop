@@ -1,0 +1,1 @@
+async function navigateWorkspace(t,a){const e=a.claimIntent();a.beginSurface(e);try{const n=void 0===t?await a.pickWorkspace(e):await a.switchWorkspace(t,e);return a.isIntentCurrent(e)?(n&&(a.markProjectChanged(t=>t+1),await a.refreshTabsAfterMutation(()=>a.isIntentCurrent(e))),n):n}finally{a.maskTarget(e)}}export{navigateWorkspace};

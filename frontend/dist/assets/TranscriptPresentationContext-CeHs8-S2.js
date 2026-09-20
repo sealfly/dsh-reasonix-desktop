@@ -1,0 +1,1 @@
+import{i as e}from"./rolldown-runtime-B0ziMyKk.js";import{i as r}from"./vendor-react-BPtf2N0Y.js";var t=e(r(),1),o=(0,t.createContext)({gestureActive:!1,windowed:!1,geometryChanged:()=>{}}),a=o.Provider,useTranscriptPresentation=()=>(0,t.useContext)(o);export{useTranscriptPresentation as n,a as t};

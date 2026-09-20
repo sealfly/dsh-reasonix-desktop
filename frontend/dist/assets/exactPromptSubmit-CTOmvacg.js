@@ -1,0 +1,1 @@
+async function resolvePromptForTab(o,r,t,a,e,i,n){const s="ask"!==a&&i?void 0:(await o.ListTabs()).find(o=>o.id===r),v="ask"===a?s?.turnId:i??s?.turnId;if(!o.ResolvePromptForTab||!v)throw new Error("active turn identity is unavailable");await o.ResolvePromptForTab(r,t,v,n??s?.runtime?.epoch??"",a,e)}export{resolvePromptForTab};

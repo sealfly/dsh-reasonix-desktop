@@ -1,0 +1,1 @@
+async function continueDelivery(e){const{tabId:i,ready:n,goal:t}=e;if(i&&n){if((t??"").trim()){if(!(await e.resumeGoal(i)))return;if(e.ownsUI?!e.ownsUI(e.uiOwnership):e.activeTabId?.()!==i)return}await e.send(i)}}export{continueDelivery};

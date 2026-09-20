@@ -1,0 +1,1 @@
+import{t as n}from"./vendor-react-BPtf2N0Y.js";import{t as o}from"./FrontendDiagnosticsControl-Bl5VINwV.js";import{$ as t}from"./index-oFeqbpn3.js";var r=n(),s=t("stable",Boolean(!1));function FrontendDiagnosticsPanel(n){return s?(0,r.jsx)(o,{...n}):null}export{o as FrontendDiagnosticsControl,FrontendDiagnosticsPanel as default};
