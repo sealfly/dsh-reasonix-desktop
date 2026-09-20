@@ -15,3 +15,13 @@
 # -text = 关闭 EOL 转换（仍保留文本 diff，不是 binary）。dist 现存字节即权威版本：
 # 上游产物的混合换行原样入库，不再被任何一侧悄悄改写。
 frontend/dist/** -text
+
+# 构建输入：被内联进 dist/index.html 的载荷脚本必须 LF（钉住，不随检出设置变化）。
+#
+# 为什么：注入结果 = 载荷脚本的逐字节内联，所以载荷的换行会直接进入发布的 index.html。
+# 实测（2026-09-20）：构建机上 dsh-update-banner.js / injections.json 是 LF（工具写出），
+# 而 clone 在 core.autocrlf=true 下检出成 CRLF → 同一次重放产出多出 1015 个 CRLF 的
+# index.html。内容逐字符一致，但「clone 重放 == 提交产物」就无法用字节比对来验证了。
+# 钉成 LF 后，任何平台/任何 autocrlf 设置的 clone 重放结果都相同。
+scripts/dsh-*.js text eol=lf
+scripts/injections.json text eol=lf
