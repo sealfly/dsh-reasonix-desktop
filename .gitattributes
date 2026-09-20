@@ -25,3 +25,9 @@ frontend/dist/** -text
 # 钉成 LF 后，任何平台/任何 autocrlf 设置的 clone 重放结果都相同。
 scripts/dsh-*.js text eol=lf
 scripts/injections.json text eol=lf
+
+# 同理：品牌资产里被内联进 index.html 的两个文本源（apply-branding.js 读取后写入 dist）。
+# 实测：在 core.autocrlf=false 的 clone 里重放会把这 8 行写成 LF，使 index.html 比构建机
+# 少 8 字节（内容逐字符一致）。钉住后两种 autocrlf 设置产出相同字节。
+branding/brand.css text eol=lf
+branding/head-error-hook.js text eol=lf
