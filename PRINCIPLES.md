@@ -276,6 +276,17 @@
    （懒人包 `-Bundle` + 普通版）→ 体积确认 → 双端推送。
 3. **镜像原则 6**：插件集成相关文件（prepare-plugin-offline.ps1、app_plugin_seed.go、
    project.nsi 打包段）属本项目独有实现，官方升级不得覆盖。
+4. **内置 skill 与插件同等对待**：`skills/<name>/SKILL.md` 随包分发并在首启播种到
+   `~/.dsh/skills`（`app_skill_seed.go`，幂等）。新增 skill 必须：
+   - 放进仓库 `skills/`（`project.nsi` 的 `File /r "skills"` 自动带上；`build-installer.ps1`
+     在打包前校验该目录存在，缺失即失败）；
+   - frontmatter 必须含 `name`（**与目录名一致**）与 `description`；
+   - `app_skill_seed_test.go` 的 `TestRepoSkillsArePackagable` 会在缺失/命名不符时报错。
+   **播种的保护语义（不要改成无脑覆盖）**：播种时在 skill 目录写 `.dsh-seeded`（内容 =
+   播入内容的 sha256）。目标不存在 → 写入；内容一致 → 跳过（缺标记则补上，使手工拷过的
+   也能跟随升级）；内容不同但标记 == 当前内容 → 用户没动过，更新为新版；
+   **内容不同且哈希对不上标记 → 判定用户改过，保留用户版本**（`kept-user`，只留日志）。
+   卸载不删 `~/.dsh/skills`（用户数据）。
 
 ### 8.2 dsh-std 合规检查与提醒（每次要求集成插件时执行）
 

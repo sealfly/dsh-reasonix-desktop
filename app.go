@@ -47,6 +47,8 @@ func (a *App) startup(ctx context.Context) {
 	go a.preinstallMemoryPlugins()
 	// 默认附加插件 seed（离线包优先注入；记忆插件 + dsh-agent-teams，幂等）
 	go a.seedDefaultPlugins()
+	// 内置 skill seed（随包 skills/ → ~/.dsh/skills；幂等，保护用户改过的同名 skill）
+	go a.seedBuiltinSkills()
 	// 记忆插件默认关闭（根 patch disabled，仅首次应用一次）
 	go ensureMemoryDefaultOff()
 	// 预热会话列表缓存（DSH session.list 投影计算慢，预热后左侧任务栏秒开）
