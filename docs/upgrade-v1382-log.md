@@ -503,6 +503,41 @@ UI-FLOW OK (19/19)
 **防复发**：门禁已接进两个构建脚本（任何缺失即中止构建）；`.gitignore` 不再忽略 dist；
 PRINCIPLES P6 检查清单保留「dist 资产完整且可复现」一项。
 
+### 7.1 追加：byte 级可复现（同日继续挖）
+
+补齐资产后，用**真正的干净 clone** 复验时发现更隐蔽的一层：**「提交字节 ≠ 运行字节 ≠ clone 字节」三方不一致**。
+根因是仓库级 `core.autocrlf=true` 且此前没有 `.gitattributes`：
+
+| 失真 | 实测 |
+|---|---|
+| blob 被归一化，工作区不是 | **132 个文件**（index.html + 131 个 monaco 等）工作区是 CRLF、blob 是 LF；因 index 的 stat 缓存，`git status` 一直显示干净 |
+| clone 检出又被反向改写 | `frontend/dist/**` 42 个文件在 clone 里变成 CRLF；index.html 从 160446 → 161569 字节（多 1123 个 CRLF）|
+
+修法：`frontend/dist/** -text`（关闭 EOL 转换、保留文本 diff）+ `git add --renormalize frontend/dist`
+把现有 **原始字节**重新入库 → dist 现存字节成为唯一权威版本，任何平台/任何 autocrlf 设置的
+clone 都逐字节相同。
+
+接着验证「clone 重放构建链 == 提交产物」，又抓出两处 EOL 漂移（内容逐字符一致，纯换行）：
+
+| 步骤 | 漂移 | 修法 |
+|---|---|---|
+| 注入（`apply-all-injections.js`）| 载荷脚本换行直接进入 index.html：构建机上 6 个载荷是 LF、4 个是 CRLF，clone 侧却是清一色 CRLF → 重放多出 1015 个 CRLF | `scripts/dsh-*.js`、`scripts/injections.json` 钉 `text eol=lf`，归一化工作区，重生成（160446 → 158702）|
+| 品牌（`apply-branding.js`）| 内联 `branding/brand.css` 与 `head-error-hook.js`，其换行随 autocrlf 变化 → 品牌区 8 行漂移 | 同样钉 `text eol=lf`，重生成（158702 → 158694，CRLF=0）|
+
+**最终验证**：
+
+| 判据 | 结果 |
+|---|---|
+| clone A（默认 autocrlf=true）重放构建链 | index.html **与构建机逐字节相同**，`git status` **0 项变更** —— 重放完全复现提交产物 |
+| clone B（`core.autocrlf=false`）重放 | index.html 与构建机逐字节相同；另有 **130 项**差异，全部落在 `frontend/dist/assets/monaco/**` |
+| 门禁 / 注入自检 / DOM 回归 | exit 0 / `--check` 幂等 / DOM-TEST 37/37 |
+| 内容等价性 | 重生成前后归一化换行后**逐字符一致**（纯 EOL 变更，无语义变化）|
+
+**已知限制（未在本轮闭合）**：`third_party/monaco` 的换行未钉住，`core.autocrlf=false` 的
+clone 在 monaco 拷贝步骤会得到 LF 版本、与提交的 CRLF 版本差 130 个文件（内容相同）。
+彻底闭合需要 pin `third_party/**` + 重生成 monaco 并提交 15 MB 资产 —— 与「重建安装包
+（把已同步的内置 skill 播种等新功能打进去）」合并做一次更划算。
+
 ---
 
 ## 8. 后续（P3）待办
