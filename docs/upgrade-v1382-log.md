@@ -465,7 +465,47 @@ UI-FLOW OK (19/19)
 同时把 DSH 的重复投影计算压到每 3s 最多一次。回归：Go 全量测试 + UI-FLOW 19/19 + DOM-TEST 37/37 全绿。
 ---
 
-## 7. 后续（P3）待办
+## 7. 仓库完整性：dist 资产静默丢失（2026-09-20 修复）
+
+**症状**：同步远端新提交后，别的会话新增的门禁 `scripts/verify-dist-assets.js` 在本机 **exit 1**——
+磁盘上 555 个 dist 文件，git 只跟踪 140 个，**415 个未跟踪（23.3 MB）**，其中包括
+`assets/monaco/vs/**`（143 个）、`provider-icons/**`（35 个）与 1.38.2 主入口
+`assets/index-oFeqbpn3.js`。
+
+**根因**：`.gitignore` 第 7-8 行的 `frontend/dist/`（注释写"构建产物不提交"）。
+`d72a110`（v1.31.4→v1.38.2）换 dist 时，被忽略的路径不会进 `git add -A`，
+于是新 chunk 只存在于构建机磁盘——**任何干净 checkout 首屏 JS 缺失，永久卡「加载中」**，
+而构建机上一切正常、肉眼无从察觉。
+
+**修法**：
+
+1. 补实物：`git add -f frontend/dist` → 415 个全部入库（380 个 09-17 构建产物 +
+   35 个 09-08 provider-icons 图标包；后者按 id 拼路径在运行时加载，静态引用扫描会把它
+   误报成孤儿，实为必需资产。与 `d72a110` 的 291 个删除项重叠的 143 个正是无哈希的 monaco
+   路径，同名不同内容，属正常替换）。
+2. 修根因：**删掉 `frontend/dist/` 忽略规则**，改为注明「必须入库 + 事故溯源」的注释。
+   此后新增 chunk 会直接以 untracked 暴露在 `git status`，配合门禁硬失败，
+   不再依赖「人工记得加 `-f`」这种约定。
+3. 同步订正四处因之失效的表述：门禁未跟踪提示（不再要求 `-f`，并把它变成对规则回退的探测）、
+   PRINCIPLES P6 检查清单、`LOGO-NOTES.md`、`MIGRATION.md`。
+
+**验证**（全部实测，非纸面推演）：
+
+| 判据 | 结果 |
+|---|---|
+| `git ls-files frontend/dist` vs 磁盘 | **555 / 555** |
+| `node scripts/verify-dist-assets.js` | **exit 0**（入口 39、闭包 291、入口缺失 0、未跟踪 0）|
+| `git archive HEAD frontend/dist` 解出 vs 磁盘 | 逐名一致 **555/555**，index.html 的 39 个入口缺失 0 |
+| 远端实测（GitHub API 读远端 tree） | frontend/dist 555、monaco 143、provider-icons 35、主入口在 |
+| 三端 tree 哈希 | 本地 = CNB = GitHub = `bd21cf71` |
+| 同步进来的上游代码 | `go build ./...` exit 0；`go test ./...` ok 46.5s |
+
+**防复发**：门禁已接进两个构建脚本（任何缺失即中止构建）；`.gitignore` 不再忽略 dist；
+PRINCIPLES P6 检查清单保留「dist 资产完整且可复现」一项。
+
+---
+
+## 8. 后续（P3）待办
 
 > 下列为**当前仍未做**的事项；已完成项（providerPresets、8 个 provider catalog 方法、
 > `FetchAllProviderModels` 形状、14 个契约字段、`Settings()` 性能）见 §5 / §6.4。
