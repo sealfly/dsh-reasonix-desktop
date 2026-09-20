@@ -583,6 +583,40 @@ clone 都逐字节相同。
 
 ---
 
+## 7.3 重建后的真机实测（2026-09-20，安装包 → 安装 → 运行 → 功能）
+
+**方法**：把经典安装包静默装到临时目录（`/S /D=<tmp>`，非 Program Files、无需提权），用
+`DSH_UI_TEST_PORT=9310` 启动**装好后的 exe**，通过 `/eval`、`/click` 驱动**真实界面**；模型链路
+另起假端点 `scripts/fake-openai-provider.js`(9411) 配合。全程用真机结果判定，不靠读代码。
+
+| 判据 | 结果 |
+|---|---|
+| 静默安装 | 退出码 0，44.3 秒；DSH 后端分区探测到 3080 已占用 → 走「已存在，跳过」，**未触发 npm 安装** |
+| 安装落地 | `$INSTDIR\{DSH 客户端, skills, plugins-offline, start-dsh.cmd, uninstall.exe}` |
+| **skills 落地** | `skills\dsh-std-plugin-gen\SKILL.md` 5741B/104 行，与仓库 **SHA 一致** ← NSIS 路径修复的实证 |
+| 首屏 | `readyState=complete`、`.boot-shell` 已消失、`#root` 有子节点、正文 30k 字符 |
+| 前端注入 | DOM 里 **8 个** `dsh-inject:*` 脚本块；`__DSH_SUBAGENT_PANEL__`/`__DSH_MEMORY_PLUGINS__`/`__DSH_VERSION_MANAGE__`/`__DSH_INLINE_EDITOR__`/`__DSH_UPDATE_BANNER__` 全为 true |
+| 关键资产 | 主入口 `assets/index-oFeqbpn3.js`、`monaco/vs/loader.js`、`editor.main.js`、`provider-icons/openai.svg` 全部 **HTTP 200** |
+| 设置页 | 20 个页签齐全；**MCP 与工具 / 远程 SSH / Agent Skills / 子智能体 / 插件 / 记忆 / 诊断 / 权限** 8 个页面逐个切到、页面组件（`settings-page--mcp|remote|skills|...`）出现且正文非空 |
+| 供应商链路 | `scripts/ui-test-provider-flow.js` **19/19**（真实界面点选 → 刷新模型 → 勾选 → 保存 → 读回 DSH 校验 → 清理）|
+| Monaco | 页内真实加载 loader + `editor.main`：**91 种语言**、编辑器高度 600 = 容器 600、4 行/25 高亮 token、行号与取值回读正确 ← LF 归一化后资产完好 |
+| 就地编辑器 | 点「✏️ 编辑」进入编辑态：覆盖层 **768 = 父容器 768**（原「只剩上半部」形态不存在）、Monaco 665px/37 行/**386** token，按钮切为「退出编辑」，Esc 可退出 |
+| 技能播种 | app 首启后 `~/.dsh/skills/dsh-std-plugin-gen/{SKILL.md,.dsh-seeded}` 出现，与安装包内文件 **SHA 一致**；app 内 `SkillsSettings` 里能看到该技能，**Harness 自身的技能目录也实时出现了它** |
+| 桥延迟 | `Settings` 14ms、`RemoteHosts` 1ms、`MCPServers` 656ms（桥共 478 个方法）|
+
+**这轮暴露并修掉的工具缺陷**（已写进 `ui_test_hook.go` 注释，防下次再踩）：
+
+1. **`/click` 的 `el.click()` 驱动不了部分 React 页面**：设置中心页签点了之后 `active` 类不变、
+   页面不切换 —— 是个**假阴性**（测试看着在跑，页面其实没动）。改成按
+   `pointerdown → mousedown → pointerup → mouseup → click` 派发带 `clientX/Y`、`bubbles`、`composed`
+   的完整序列后立刻生效；修复后用**修正后的端点**复验 5/5（MCP 1305 字、远程 SSH、Agent Skills 页面均正常切换）。
+2. **调不存在桥方法会静默挂死**：写成 `App.Skills()`（真名是 `SkillsSettings`）时返回的是**永不 settle**
+   的 Promise，`/eval` 只能报「求值超时（20s）」，完全看不出原因；探针须先判 `typeof … === 'function'`。
+3. 另记：`wails build` 要求 `go` 在 PATH 上（本会话 `C:\Go\bin` 不在），否则报
+   `unable to find compiler: go` —— 与代码无关，属环境。
+
+---
+
 ## 8. 后续（P3）待办
 
 > 下列为**当前仍未做**的事项；已完成项（providerPresets、8 个 provider catalog 方法、
