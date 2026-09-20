@@ -1,0 +1,17 @@
+# 换行策略：dist 产物禁止任何 EOL 转换，必须字节级可复现。
+#
+# 背景（2026-09-20 实测）：本仓库 core.autocrlf=true，且此前没有 .gitattributes，
+# 于是 LF blob 在检出时被改写成 CRLF —— 一个干净 clone 得到的 frontend/dist 与构建机
+# 字节不一致：42 个文件（19 js / 18 css / svg / md / txt / .gitkeep）被改写；
+# index.html 更明显：构建机上是「上游 CRLF + 注入 LF」的混合（1752 CRLF + 1123 纯 LF），
+# 但 blob 被归一化成纯 LF，clone 又检出成纯 CRLF（2875 个 CRLF，多出 1123 字节）。
+#
+# 为什么必须钉死：
+#   1) 「测过的产物 == 发布的产物」：任何字节差异都让本地实测结论对 clone 不成立；
+#   2) 注入/品牌脚本按字符串锚点改写 index.html，锚点形态越确定越安全；
+#   3) 构建机与 CI/clone 的 dist 必须能逐字节比对（verify-dist-assets.js 只查存在性与
+#      跟踪状态，字节一致性靠本规则 + 人工 diff 保证）。
+#
+# -text = 关闭 EOL 转换（仍保留文本 diff，不是 binary）。dist 现存字节即权威版本：
+# 上游产物的混合换行原样入库，不再被任何一侧悄悄改写。
+frontend/dist/** -text
