@@ -201,7 +201,7 @@
 - [ ] 全部注入是否就位：`node scripts/apply-all-injections.js`（语法门禁 0 失败 + 每个 id 哨兵恰好 1 个）
 - [ ] 自有资产是否就位：`node scripts/apply-monaco-vendor.js`（Monaco 等 vendor 资源；缺 loader 即失败）
 - [ ] 目录级对比旧/新 dist：旧有新无的自有目录（排除 hash 文件名）= 被冲掉的资产
-- [ ] **dist 资产完整且可复现**：`node scripts/verify-dist-assets.js`（index.html 入口引用 + chunk 依赖闭包必须**存在**，且必须**全部被 git 跟踪**）。未跟踪 = 别人 clone 不到 = 首屏白屏（2026-09-18 卡「加载中」事故：升级只提交了 index.html，291 个 assets 被 `.gitignore` 的 `frontend/dist/` 吃掉）→ 用 `git add -f frontend/dist` 补交。两个构建脚本已内置该门禁。
+- [ ] **dist 资产完整且可复现**：`node scripts/verify-dist-assets.js`（index.html 入口引用 + chunk 依赖闭包必须**存在**，且必须**全部被 git 跟踪**）。未跟踪 = 别人 clone 不到 = 首屏白屏（2026-09-18 卡「加载中」事故：升级只提交了 index.html，415 个 assets 被 `.gitignore` 的 `frontend/dist/` 吃掉。**根因已修**：该忽略规则已删除，dist 必须入库，新增 chunk 会直接以 untracked 暴露 → `git add frontend/dist`）。两个构建脚本已内置该门禁。
 - [ ] 运行期确认注入生效：`%TEMP%\resume-debug.log` 里有对应的 `frontend: [<脚本>] …` 成功诊断
 - [ ] **载荷字段面对照**：`node scripts/settings-contract-check.js <上游 frontend/src/lib/types.ts>`
       （缺字段会被前端静默归一化为默认值 —— 主题跳变即此类）

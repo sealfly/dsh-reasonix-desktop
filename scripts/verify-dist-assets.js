@@ -145,7 +145,7 @@ if (untracked.length) {
   console.error('  ✗ 以下文件存在于磁盘但未被 git 跟踪（别人 clone 不到 = 不可复现）：');
   console.error(show(untracked));
   if (untracked.length > 15) console.error('      … 另有 ' + (untracked.length - 15) + ' 个');
-  console.error('    处理：git add -f ' + (distPrefix || 'frontend/dist') + '   （-f 必须带：dist 被 .gitignore 忽略）');
+  console.error('    处理：git add ' + (distPrefix || 'frontend/dist') + '   （.gitignore 已不再忽略 dist，无需 -f；若仍被忽略说明规则被改回去了）');
 }
 if (bad) {
   if (warnOnly) {

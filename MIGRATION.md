@@ -116,7 +116,7 @@ go test ./...
 
 **具体体现**：
 - Electron 版：`renderer/dist/` 是 gitignored 的（不提交），从官方构建复制过来；适配全在 preload/main。
-- Wails 版：`frontend/dist/` 直接 `go:embed` 嵌入（同样 gitignored）；适配全在 Go 后端。
+- Wails 版：`frontend/dist/` 直接 `go:embed` 嵌入，**必须入库**（不 gitignored：干净 checkout 要能复现首屏，缺 chunk 会永久卡「加载中」，见 `scripts/verify-dist-assets.js`）；适配全在 Go 后端。
 
 **对比"改动了会怎样"**：一旦改 dist（比如改 bridge.ts 让它不调某方法，或改 styles.css 修叠影），就违背了"一切适配走桥"——外壳层的问题应该在外壳层解决，而不是去改前端产物。这次叠影就是反面教材：Electron 版试图用 CSS 注入、窗口抖动去"适配"前端，方向错了；正确做法是回到前端设计的环境（Wails），让前端原样工作。
 

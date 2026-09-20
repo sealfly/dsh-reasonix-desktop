@@ -46,7 +46,7 @@
     ```
     （浅色主题 `data-theme=light` 不匹配 → 仍用蓝色版 `logo-wordmark-0KJq8oA3.svg`）
 - 备份：`%TEMP%\logo-backup-orange-<时间戳>\`（替换前的 index.html 与两个 index-*.js）
-- ⚠️ 注意：`frontend/dist/` 整体在 `.gitignore` 里，**新增的 dist 资源必须 `git add -f`** 才能入库
+- ⚠️ 注意：`frontend/dist/` **必须入库**（`.gitignore` 已不再忽略它），新增的 dist 资源必须 `git add frontend/dist` 提交，否则干净 checkout 首屏缺资源
 - 迭代记录：初版用 `#E58A3A`（加载点同色）→ 作者反馈偏暗 → 改为品牌亮橙 `#FF5A2C` ✓
 
 ## 🔷 2026-09-10 追加：应用图标（exe / 任务栏 / 桌面快捷方式 / 安装包）
