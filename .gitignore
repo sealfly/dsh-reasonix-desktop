@@ -1,7 +1,16 @@
 # 构建产物
 build/
 # 自定义 NSIS 安装器脚本（build-installer.ps1 依赖，含 DSH 后端组件选项，必须入库）
+#
+# 注意：git 不允许「父目录被排除后再重新包含其子文件」，所以直接写
+# !build/windows/installer/ 是**死规则**——实测 `git add build/windows/installer/project.nsi`
+# 会被静默跳过（2026-09-20 再次踩到：BOM/路径修复差点没进提交）。必须逐级
+# 「排除本级内容 → 放行下一级目录」，最后才放行具体文件。
+build/*
+!build/windows/
+build/windows/*
 !build/windows/installer/
+build/windows/installer/*
 !build/windows/installer/project.nsi
 !build/windows/installer/start-dsh.cmd
 # 前端 dist（从 Electron 项目 renderer/dist 复制）

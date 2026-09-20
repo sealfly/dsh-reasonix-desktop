@@ -163,6 +163,17 @@ if (Test-Path $pluginsManifest) {
 }
 if (-not (Test-Path $pluginsManifest)) { throw "plugin offline manifest missing: $pluginsManifest" }
 
+# 3.7) NSIS 脚本编码守卫：project.nsi 含中文注释，makensis 要求 UTF-8 BOM，
+#      否则报晦涩的 "Bad text encoding: project.nsi:109"（109 行正是第一处中文注释）。
+#      2026-09-20 实测：e80d810 用会丢 BOM 的编辑器重写该文件（BOM=True -> False），
+#      从那次提交起安装包构建一直是坏的，直到本次重建才暴露。这里把「机器判定」前置。
+$nsiScript = Join-Path $installerDir "project.nsi"
+$nsiHead = [System.IO.File]::ReadAllBytes($nsiScript)
+if ($nsiHead.Length -lt 3 -or $nsiHead[0] -ne 0xEF -or $nsiHead[1] -ne 0xBB -or $nsiHead[2] -ne 0xBF) {
+  Write-Error "$nsiScript 丢了 UTF-8 BOM —— makensis 会以 'Bad text encoding' 失败。修复：node scripts/ensure-bom.js build/windows/installer/project.nsi"
+  exit 1
+}
+
 # 4) makensis repackage with the patched exe (custom project.nsi carries DSH component)
 Write-Host "== NSIS (custom project.nsi with DSH option) =="
 Push-Location $installerDir

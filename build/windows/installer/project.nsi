@@ -1,4 +1,4 @@
-Unicode true
+﻿Unicode true
 
 ####
 ## Please note: Template replacements don't work in this file. They are provided with default defines like
@@ -179,7 +179,10 @@ Section "DSH-ReasonixUI 桌面客户端" SecApp
 
     # 内置 skill——应用首启播种到 ~/.dsh/skills
     # (应用侧 app_skill_seed.go: 幂等; 用户改过的同名 skill 一律保留不覆盖)
-    File /r "skills"
+    # 路径按本脚本所在目录解析(与 OutFile "..\..\bin\..."、File /r "plugins-offline" 同一约定):
+    # 脚本在 build\windows\installer, 仓库根的 skills\ 因此是 ..\..\..\skills。
+    # 写成 "skills" 会指向 build\windows\installer\skills(不存在) → makensis 报 no files found。
+    File /r "..\..\..\skills"
 
     CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
     CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"

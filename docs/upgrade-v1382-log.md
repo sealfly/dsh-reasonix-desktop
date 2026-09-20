@@ -533,10 +533,53 @@ clone 都逐字节相同。
 | 门禁 / 注入自检 / DOM 回归 | exit 0 / `--check` 幂等 / DOM-TEST 37/37 |
 | 内容等价性 | 重生成前后归一化换行后**逐字符一致**（纯 EOL 变更，无语义变化）|
 
-**已知限制（未在本轮闭合）**：`third_party/monaco` 的换行未钉住，`core.autocrlf=false` 的
-clone 在 monaco 拷贝步骤会得到 LF 版本、与提交的 CRLF 版本差 130 个文件（内容相同）。
-彻底闭合需要 pin `third_party/**` + 重生成 monaco 并提交 15 MB 资产 —— 与「重建安装包
-（把已同步的内置 skill 播种等新功能打进去）」合并做一次更划算。
+**已闭合（同日）**：`third_party/monaco` 也已钉住 —— `.gitattributes` 加 `third_party/** -text`
+（该树只有 monaco，143 个纯文本文件，无二进制损坏风险；写成目录级规则是为了将来新增 vendor
+资产默认就 byte-exact），归一化工作区到 LF 后重跑 `apply-monaco-vendor.js` 同步 130 个文件。
+逐文件比对：原始 SHA 变化 130 个、**归一化换行后变化 0 个**（纯 EOL）。
+
+**最终结论**：两个全新 clone（`core.autocrlf=true` 与 `false`）各自重放「品牌 + monaco + 注入」
+三件套后，`git status` **均为 0 项变更**、index.html 与构建机逐字节相同 —— 即
+「clone → 重放 → 产物 == 提交产物」在两种换行配置下都成立。
+
+---
+
+## 7.2 安装包重建：同步进来的提交把构建打断了（2026-09-20）
+
+背景：`e80d810`（内置 skill 随包分发）之后没人重建过安装包，所以它引入的两个缺陷一直没暴露。
+
+**症状**：`makensis` 在经典安装包步骤直接失败 —— `Bad text encoding: project.nsi:109`
+（109 行正是第一处中文注释）。
+
+**根因 1（BOM 丢失）**：`e80d810` 用会丢 BOM 的编辑器重写了 `project.nsi`。`git cat-file` 实测：
+`e80d810~1` BOM=True（10474 字节）→ `e80d810` BOM=False（10648 字节）。makensis 对含非 ASCII
+的脚本要求 UTF-8 BOM，否则报上面那条晦涩错误 —— 即**从 e80d810 起安装包构建一直是坏的**。
+
+**根因 2（路径错误）**：同一提交新增的 `File /r "skills"` 路径也不对。NSIS 的 `File` 按
+**脚本所在目录**解析（与同文件里的 `OutFile "..\..\bin\..."`、`File /r "plugins-offline"`
+同一约定），而脚本在 `build\windows\installer\`，那里并没有 `skills\` —— 仓库根的 skills 是
+`..\..\..\skills`。只修 BOM 的话这一步会以 `no files found` 硬失败；即便侥幸放过，内置 skill
+也进不了安装包（`app_skill_seed.go` 找的正是 exe 同级的 `skills\`）。
+
+**修法**：补 BOM（`node scripts/ensure-bom.js`）+ 路径改 `..\..\..\skills` + 在
+`build-installer.ps1` 的 makensis 之前加**编码守卫**（校验前 3 字节是 UTF-8 BOM，缺失即中止
+并打印修复命令）—— 把「人记得补 BOM」换成机器判定，与 `verify-dist-assets.js` 同一思路。
+
+**验证（全部实测）**：
+
+| 判据 | 结果 |
+|---|---|
+| `makensis -V4` 直接证据 | 日志出现 `Descending to: "..\..\..\skills\dsh-std-plugin-gen\"` 与 `File: "SKILL.md" [compress] 1972/4017 bytes` |
+| `no files found` | 0 行 |
+| 经典安装包 | **101 MB**，签名 **Valid**，已复制到桌面 |
+| 懒人包（`-Bundle`）| **177.7 MB**，签名 **Valid**，已复制到桌面 |
+| exe 发布校验 `verify-packaged-app.js` | **14/14**（注入内联、桥方法、Monaco、就地编辑器铺满规则）|
+| appliers 幂等 | 重建后 `git status` 只剩本轮 3 处预期改动，dist 未被改写 |
+| 安装包本体标记扫描 | 0/14 —— 属预期：内层 exe 被 NSIS 压缩，标记不可直搜；由上面两条 + 同一轮内 `Sign exe → makensis` 的顺序保证 |
+
+**教训**：`edit` 类工具会丢 BOM（本仓库已记录同类事故），所以「改完 `.ps1`/`.nsi` 必须
+`ensure-bom.js` 补回」不能只写在清单里，得有门禁兜住 —— 本次已加。巡检顺带确认
+`prepare-dsh-runtime.ps1` 虽缺 BOM，但**纯 ASCII（非 ASCII 字节数 0）**，无需处理。
 
 ---
 
