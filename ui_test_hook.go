@@ -17,16 +17,20 @@ package main
 //
 //	GET  /health                       → {ok, title, url}
 //	POST /eval  {"js": "<表达式>"}      → {ok, value} 在页面里求值并回传（表达式返回 Promise 会等 settle）
-//	POST /click {"selector": "..."}    → 点击匹配的第一个元素（派发 pointer+mouse 完整序列）
+//	POST /click {"selector": "..."}    → 点击匹配的第一个元素（原生 el.click()）
 //
-// 两个实测坑（2026-09-20 真机验证时踩到，写在这儿免得下次再花时间）：
-//  1) **只调 el.click() 驱动不了本应用的部分 React 页面**：设置中心的页签（button.settings-center__navitem）
-//     用 .click() 点了 active 类不变、页面不切换，看起来像"测试通过但页面没动"。必须按
-//     pointerdown → mousedown → pointerup → mouseup → click 顺序派发带 clientX/Y、bubbles、composed
-//     的事件才生效。本端点的实现即按此序列。
+// 三个实测坑（2026-09-20 真机验证时踩到，写在这儿免得下次再花时间）：
+//  1) **标记陈旧会让"点错元素"伪装成"点击无效"**：先用 /eval 给元素打 data-uit-* 标记、再单独调
+//     /click 时，若上一轮的标记没清掉，`querySelector('[data-uit-x="1"]')` 命中的是**旧元素**
+//     （文档序靠前的那个）。现场表现是"点了页签但页面不切换"，看着像 React 不理 el.click()。
+//     实测对照（四种方式轮流切 记忆→MCP 与工具）：原生 el.click()、pointerdown+click、
+//     mousedown+click、五事件序列**全部都能正确切换且 3 秒内不漂移** —— 所以 el.click() 没问题，
+//     错的是标记。打标记前务必先清 `[data-uit-*]`，或干脆在**同一次 /eval** 里按文本定位并点击。
 //  2) **桥里不存在的方法返回永不 settle 的 Promise**：例如写成 Skills（真实名是 SkillsSettings）时，
 //     在 /eval 里 await 它会一直挂到 20s 超时，报"求值超时"而看不出原因。探针调用前先判
 //     `typeof window.go.main.App.X === 'function'`；桥上一共 ~478 个方法，用 Object.keys 先列一遍最稳。
+//  3) 同一元素连发 pointerdown/up + mousedown/up + click 会一次点击产生多个事件；本应用无副作用，
+//     但对"保存/删除"这类按钮不建议这么点 —— 用原生 click() 即可。
 //
 // 结果回传机制：Wails 的 WindowExecJS 没有返回值，所以注入的 JS 把结果通过桥方法
 // UiTestReport(nonce+json) 送回 Go，再由 /eval 按 nonce 匹配返回。
@@ -114,15 +118,8 @@ func (a *App) startUITestHook() {
   var el=document.querySelector(%q);
   if(!el) return {clicked:false,reason:"not-found"};
   if(el.disabled) return {clicked:false,reason:"disabled",tag:el.tagName,text:(el.textContent||"").trim().slice(0,80)};
-  var r=el.getBoundingClientRect();
-  var x=r.left+r.width/2, y=r.top+r.height/2;
-  var types=["pointerdown","mousedown","pointerup","mouseup","click"];
-  for (var i=0;i<types.length;i++){
-    var t=types[i];
-    var E=(t.indexOf("pointer")===0&&window.PointerEvent)?PointerEvent:MouseEvent;
-    el.dispatchEvent(new E(t,{bubbles:true,cancelable:true,composed:true,clientX:x,clientY:y,button:0,buttons:t.indexOf("down")>=0?1:0}));
-  }
-  return {clicked:true,tag:el.tagName,text:(el.textContent||"").trim().slice(0,80),seq:"pointer+mouse"};
+  el.click();
+  return {clicked:true,tag:el.tagName,text:(el.textContent||"").trim().slice(0,80),seq:"native-click"};
 })()`, req.Selector)
 		result, err := a.uiTestEval(expr)
 		if err != nil {

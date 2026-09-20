@@ -606,14 +606,30 @@ clone 都逐字节相同。
 
 **这轮暴露并修掉的工具缺陷**（已写进 `ui_test_hook.go` 注释，防下次再踩）：
 
-1. **`/click` 的 `el.click()` 驱动不了部分 React 页面**：设置中心页签点了之后 `active` 类不变、
-   页面不切换 —— 是个**假阴性**（测试看着在跑，页面其实没动）。改成按
-   `pointerdown → mousedown → pointerup → mouseup → click` 派发带 `clientX/Y`、`bubbles`、`composed`
-   的完整序列后立刻生效；修复后用**修正后的端点**复验 5/5（MCP 1305 字、远程 SSH、Agent Skills 页面均正常切换）。
+1. **测试标记陈旧会让「点错元素」伪装成「点击无效」**（我先误判成 React 不理 `el.click()`，已更正）：
+   先用一次 `/eval` 打 `data-uit-nav` 标记、再单独调 `/click` 时，若上一轮标记没清掉，`querySelector`
+   命中的是**文档序靠前的旧元素**（实测：想点「MCP 与工具」，实际一直在点「模型服务」，现场表现就是
+   "页签点了不切换"）。随后做对照实验（同一目标轮流用四种方式：原生 `el.click()`、`pointerdown+click`、
+   `mousedown+click`、五事件序列）——**四种全部正确切换且 3 秒内不漂移**，证明 `el.click()` 本身没问题，
+   错的是标记。`/click` 端点已回归最简的原生 `click()`（避免一次点击产生多个事件），注释写明
+   "打标记前先清 `[data-uit-*]`，或干脆在同一次 `/eval` 里定位并点击"。
 2. **调不存在桥方法会静默挂死**：写成 `App.Skills()`（真名是 `SkillsSettings`）时返回的是**永不 settle**
    的 Promise，`/eval` 只能报「求值超时（20s）」，完全看不出原因；探针须先判 `typeof … === 'function'`。
+   桥共 478 个方法，先 `Object.keys` 列一遍最稳。
 3. 另记：`wails build` 要求 `go` 在 PATH 上（本会话 `C:\Go\bin` 不在），否则报
    `unable to find compiler: go` —— 与代码无关，属环境。
+
+**截图取证的坑（同一轮，值得复用）**：
+
+- **`PrintWindow(PW_RENDERFULLCONTENT)` 对本应用的主界面状态会返回旧帧**：四个不同界面状态截出
+  **逐字节相同**的 PNG（哈希一致、71 色桶、24KB），而设置页状态却能拿到真实帧 —— 只靠它取证会
+  "看起来截到了，其实是上一张"。
+- **`SetForegroundWindow` 在后台进程里常被系统拒绝**（窗口不在前台时抓屏通道直接是空帧）；
+  改用 `SetWindowPos(HWND_TOPMOST)`（**不需要抢焦点**）把窗口临时提到最上层再抓屏，成功率高得多，
+  抓完 `HWND_NOTOPMOST` 复位。
+- 因此截图工具做成**双通道 + 自校验**：PrintWindow 与前台抓屏各取一帧、按色桶数择优，并输出
+  `尺寸/方法/是否前台/色桶数/主色占比`；调用侧再校验「**截图前后的界面状态一致**」+「**帧哈希不与
+  已交付的图重复**」—— 正是这两条把上面的废图挡了下来（某一轮 10 张里挡掉 3 张，宁可少交付也不交付错图）。
 
 ---
 
