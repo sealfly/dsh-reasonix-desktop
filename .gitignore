@@ -4,8 +4,11 @@ build/
 !build/windows/installer/
 !build/windows/installer/project.nsi
 !build/windows/installer/start-dsh.cmd
-# 前端 dist（从 Electron 项目 renderer/dist 复制，构建产物不提交）
-frontend/dist/
+# 前端 dist（从 Electron 项目 renderer/dist 复制）
+# 必须入库，禁止忽略：Wails 壳在构建时直接嵌入 frontend/dist，干净 checkout 缺任何一个
+# chunk 都会让首屏永久卡在「加载中」。历史上这里忽略过 frontend/dist/，导致 1.38.2 升级
+# 提交（d72a110）静默丢失 415 个资产（含 assets/monaco 与 provider-icons）。
+# 新增 chunk 必须以 git add 入库，由 scripts/verify-dist-assets.js 门禁强制校验。
 # Wails 自动生成的绑定（每次 wails build 重新生成）
 frontend/wailsjs/
 # 可执行文件
