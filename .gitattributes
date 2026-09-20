@@ -31,3 +31,10 @@ scripts/injections.json text eol=lf
 # 少 8 字节（内容逐字符一致）。钉住后两种 autocrlf 设置产出相同字节。
 branding/brand.css text eol=lf
 branding/head-error-hook.js text eol=lf
+
+# 自有前端资产树（vendor 目录类，PRINCIPLES 原则 6 类别 5）：同样 byte-exact。
+# 这些文件会被 apply-monaco-vendor.js 原样拷进 frontend/dist，所以源的换行就是产物的换行。
+# 实测：core.autocrlf=false 的 clone 在拷贝步骤会把 dist 的 130 个 monaco 文件改成 LF，
+# 与提交的 CRLF 版本不一致（内容相同、仅换行）。钉 -text 后三处字节对齐：
+# 工作区 == blob == 任何平台任何 autocrlf 设置的 clone。
+third_party/** -text
