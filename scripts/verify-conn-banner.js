@@ -33,6 +33,11 @@ const required = [
   ["桥调用超时竞速（防永不 settle 拖死轮询）", /function\s+withTimeout\s*\(/],
   ["诊断出口 window.__dshBanner", /window\.__dshBanner\s*=/],
   ["聚焦/可见性时复检", /visibilitychange/],
+  // 「断开 → 连上」自动重载：否则"应用先起、后端后起"时项目树会一直停在空态
+  // （真机实测：DSH 里 12 个项目 / 39 个会话，界面显示「还没有项目」，刷新后才恢复）。
+  ["跃迁识别 wasConnected", /wasConnected\s*===\s*false\s*&&\s*connected/],
+  ["跃迁时自动重载", /function\s+reloadForReconnect\s*\(/],
+  ["重载冷却（防抖动反复刷新）", /RELOAD_AT_KEY/],
 ];
 
 let failed = 0;

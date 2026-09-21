@@ -886,3 +886,55 @@ function check() {
   证明恢复正确的方式：重新注入后 `index.html` 的 sha256 **逐字节等于损坏前那一份**
   （`8522956CE664FE54`）。
   → 教训：**不要用 PowerShell 读写含中文的 UTF-8 文件**；要么用编辑工具，要么用 Node。
+
+---
+
+## 12. 「历史项目与会话看不见了」：应用先于后端启动导致项目树停在空态
+
+### 12.1 现场与排除
+
+用户反馈：应用里看不到历史项目与会话。逐层取证后确认**数据一条没丢**：
+
+| 检查 | 结果 |
+|---|---|
+| 桥 `ListTabs()` | **39 个会话**，标题/cwd 都是真实值（`issue回复问题`、`工作区内容与项目精神了解` …） |
+| 桥 `GetProjectTreeSnapshot()` | **12 个项目**（`chenz`、`dsh-reasonix-desktop`、`dsh`、`12580业务流程`、`DSH-deskop`、`DeepSeek WORK!`、`IVR skill` …） |
+| 界面 DOM | 项目树 `还没有项目`（`projectTree.emptyNoProjects`），行数 0 |
+| 应用日志（当前实例） | 只有 `Tabs/ListTabs` 在跑，**没有任何项目树/目录相关调用** |
+
+关键插桩（把项目树可能用到的桥方法全部计数）：`GetProjectGroups` / `ListProjectGroups` /
+`GetProjectTreeSnapshot` / `GetProjectTreeRuntimeSnapshot` / `ListProjectTree` / `ListProjectTopics`
+**全部 0 次调用**（对照项 `ListTabs` 有调用，证明插桩有效）。也就是说：前端根本没去取项目树。
+
+### 12.2 根因
+
+- 项目树（`ProjectTree` 组件）**只在挂载时取一次数**（`useEffect(() => { fr() }, [fr, me])` 里调
+  `GetProjectTreeSnapshot`），之后既不轮询，也要等**后端的元数据事件**才刷新；
+- 而本项目不会发那类事件 → 于是只要"应用启动时 DSH 后端还没起来"，这次取数就拿到空树并**一直**显示
+  「还没有项目」；
+- 本次正好踩中：应用先起（后端 3092 还没拉起来）→ 空树 → 我随后用桥方法直接 `DshLaunch`
+  （**没走横幅按钮**，因此也没有那 3.5s 后的 `location.reload()`）→ 树就一直空着。
+- 反证：手动刷新页面后，12 个项目 + 39 个会话**立刻全部回来**。
+
+### 12.3 修法（自愈）
+
+在连接横幅的复检里识别**「断开 → 连上」跃迁**，并自动重载一次页面（`reloadForReconnect`）：
+
+- 跃迁时才重载：首次判定为已连接（`wasConnected === null`）不重载，避免刷新死循环；
+- 冷却：`sessionStorage` 记录上次自动重载时间，20s 内不再重载，避免后端抖动反复刷新；
+- 诊断出口扩展为 `window.__dshBanner = {ticks, connected, wasConnected, transition, timeout, at, pollMs}`。
+
+这样"后端稍后才可用"（用户点启动、外部拉起、后端重启）都会自愈，而不是留一个空白侧栏让人以为数据没了。
+
+### 12.4 真机验证
+
+```
+阶段1 应用已启动、后端未起：树="还没有项目" 横幅=true dbg={connected:false, wasConnected:false}
+阶段2 外部拉起后端（不做任何手动操作）：
+  +6s → 页面自动重载，横幅收起，树="正在整理历史 …"
+  +9s → 树="chenz dsh-reasonix-desktop dsh 12580业务流程 DSH-deskop DeepSeek WORK! IVR skill …
+            issue回复问题 …"
+结论：自动重载=true，项目树已恢复=true
+```
+
+`verify-conn-banner.js` 相应新增三条不变量（跃迁识别、自动重载、冷却），缺失即报失败。

@@ -175,10 +175,30 @@
   const POLL_CONNECTED_MS = 15000;
   let pollTimer = null;
   let ticks = 0; // 诊断计数：暴露在 window.__dshBanner 上，便于确认轮询真的在跑
+  // 上一次的连通判定（null = 还没判过）。用来识别"断开 → 连上"这个跃迁。
+  let wasConnected = null;
 
   function bannerVisible() {
     const n = document.getElementById(CONN_ID);
     return !!(n && n.classList.contains('show'));
+  }
+
+  // 「断开 → 连上」时自动重载页面。
+  //
+  // 为什么需要：前端有大量组件**只在挂载时取一次数** —— 项目树是典型：它挂载时调用
+  // GetProjectTreeSnapshot，之后既不轮询、也要等后端事件才刷新，而我们没发那类事件。
+  // 于是"应用先启动、DSH 后端后起来"时，项目树会把空树记下来，一直显示「还没有项目」。
+  // 真机实测（2026-09-21）：DSH 里有 12 个项目 / 39 个会话，界面却是空的；
+  // 手动刷新页面后全部恢复。这里让"后端稍后可用"这种情况自愈。
+  // 冷却：同一次会话 20s 内只自动重载一次，避免后端抖动导致反复刷新。
+  const RELOAD_AT_KEY = 'dsh-conn-autoreload-at';
+  function reloadForReconnect() {
+    let last = 0;
+    try { last = parseInt(sessionStorage.getItem(RELOAD_AT_KEY) || '0', 10) || 0; } catch (e) {}
+    if (Date.now() - last < 20000) return false;
+    try { sessionStorage.setItem(RELOAD_AT_KEY, String(Date.now())); } catch (e) {}
+    location.reload();
+    return true;
   }
 
   function hideBanner() {
@@ -206,17 +226,22 @@
     withTimeout(realApp().DshConnStatus(), 10000).then(s => {
       statusCache = s;
       const connected = !!(s && s.connected);
-      // 诊断出口：排查"横幅不消失/不出现"时先看这里（ticks 是否增长、connected 是否变化）
-      window.__dshBanner = { ticks, connected, timeout: !!(s && s.__timeout), at: Date.now(), pollMs: connected ? POLL_CONNECTED_MS : POLL_DISCONNECTED_MS };
+      const transition = wasConnected === false && connected; // 断开 → 连上
+      // 诊断出口：排查"横幅不消失/不出现/项目树空白"时先看这里
+      window.__dshBanner = { ticks, connected, wasConnected, transition, timeout: !!(s && s.__timeout), at: Date.now(), pollMs: connected ? POLL_CONNECTED_MS : POLL_DISCONNECTED_MS };
       if (connected) {
         // **连上就把横幅收掉**。
         // 旧实现只在启动 4s 后查一次、且只有 showBanner 没有 hideBanner ——
         // 真机实测（2026-09-21）：DshConnStatus() 返回 connected:true 时，
         // #dsh-conn-banner 仍是 class=show / display:block / opacity:1，一直挂在那儿误导用户。
         hideBanner();
+        wasConnected = true;
+        // 之前判过"未连接"，现在连上了 → 让只在挂载取数的组件（项目树等）重新初始化
+        if (transition && reloadForReconnect()) return;
         schedule(POLL_CONNECTED_MS);
         return;
       }
+      wasConnected = false;
       // 未连接：用户手动关过（24h 内）就不再自动弹
       let suppressed = false;
       try {
@@ -227,7 +252,7 @@
       schedule(POLL_DISCONNECTED_MS);
     }).catch(e => {
       // 查询失败（如桥还没就绪）：保持现状，稍后再试
-      window.__dshBanner = { ticks, connected: null, error: String(e && e.message ? e.message : e), at: Date.now() };
+      window.__dshBanner = { ticks, connected: null, wasConnected, error: String(e && e.message ? e.message : e), at: Date.now() };
       schedule(POLL_DISCONNECTED_MS);
     });
   }
