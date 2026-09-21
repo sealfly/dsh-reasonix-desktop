@@ -32,6 +32,17 @@ scripts/injections.json text eol=lf
 branding/brand.css text eol=lf
 branding/head-error-hook.js text eol=lf
 
+# 补齐（2026-09-21 实测）：上面只钉了 dsh-*.js / injections.json，其余构建脚本
+# （apply-branding.js、apply-all-injections.js、apply-monaco-vendor.js 等）没有规则，
+# 在 core.autocrlf=true 的 clone 上被检出成 CRLF。后果是一整条链的假差异：
+#   ① 它们内联进 index.html 的片段带 CRLF → 与提交的纯 LF blob 差 2575 字节；
+#   ② apply-monaco-vendor.js 用 fs.copyFileSync 从 third_party 复制（纯字节，不做归一化），
+#      而 third_party 同样是「无规则 + autocrlf=true」检出的 CRLF → dist 里 130 个
+#      monaco 文件与 blob 不一致。合计 131 个文件在每次重放后出现假差异。
+# 改为覆盖整个 scripts/ 与 branding/：任何平台、任何 autocrlf 设置下重放结果都相同。
+scripts/** text eol=lf
+branding/** text eol=lf
+
 # 自有前端资产树（vendor 目录类，PRINCIPLES 原则 6 类别 5）：同样 byte-exact。
 # 这些文件会被 apply-monaco-vendor.js 原样拷进 frontend/dist，所以源的换行就是产物的换行。
 # 实测：core.autocrlf=false 的 clone 在拷贝步骤会把 dist 的 130 个 monaco 文件改成 LF，
