@@ -938,3 +938,78 @@ function check() {
 ```
 
 `verify-conn-banner.js` 相应新增三条不变量（跃迁识别、自动重载、冷却），缺失即报失败。
+
+---
+
+## 13. 项目树事件化：不整页重载也能刷新（顺带挖出并修掉一个"null 崩溃"隐雷）
+
+### 13.1 为什么要做
+
+§12 的自愈靠**整页重载**，能救回来但代价大（整页白一下、丢当前滚动/选中）。更彻底的做法是
+让后端在数据变化时发前端**本来就在订阅**的事件 —— 查前端代码可确认它订阅的是：
+
+```
+project-tree:changed / project-tree:changed-v2   ← 外壳树（项目/会话结构），payload {revision, reason}
+project-tree:runtime-changed                     ← 运行态装饰（open/running/status），payload {revision, topics}
+```
+
+而本项目此前**一个都没发过**（只发 `agent:event` / `topic:activation` / `terminal:*`），
+这就是"树只在挂载时取一次数、之后永不刷新"的根因。
+
+### 13.2 实现（`app_tree_events.go`）
+
+- `emitProjectTreeChanged(reason)`：发 `project-tree:changed-v2` 与 `project-tree:changed`，payload `{revision, reason}`；
+- `emitProjectTreeRuntimeChanged()`：发 `project-tree:runtime-changed`，payload 与 `GetProjectTreeRuntimeSnapshot()` 同形；
+- 触发点：① `DshConnStatus()` 检测到**离线 → 在线跃迁**；② `DshLaunch()` 成功（含 alreadyRunning）；
+  ③ `fetchSessions()` 拉到会话后**内容签名变化**（sha1，顺序无关）——避免把 3s 轮询变成事件噪声；
+- **revision 统一**：`GetProjectTreeSnapshot` 原先**恒定返回 1**，而前端会把事件里的 revision 记在
+  `Ce.current`（只增不减）——一旦事件带了更大的 revision，常数 1 的快照就会被判"不新鲜"而丢弃。
+  现在快照与事件共用同一个单调递增计数（`currentTreeRevision()`）；运行态快照同理
+  （前端只接受 `revision >= 当前值` 的快照，旧实现用"会话条数"，条数不变而运行态变化时更新会被静默忽略）。
+
+### 13.3 事件化当场炸出一个隐雷（值得单独记）
+
+事件路径**此前从未执行过**（因为从来没发过事件），一开启就崩：
+
+```
+[react] TypeError: Cannot read properties of null (reading 'state')
+  at ProjectTree-DusZdLr0.js … at Object.updateMemo [as useMemo]
+```
+
+链路：事件回调里 `c.GetSessionCatalogStatus().then(e => Me(e))`，而我们的
+`GetSessionCatalogStatus` 是零值桩 **`return nil`** → catalog 状态被设成 `null` →
+随后 `useMemo` 读 `catalog.state` → 抛错 → **React 错误边界把整个界面替换成错误页**。
+（真机现象：侧栏连同项目树整块消失，只剩"Reasonix 遇到错误"。）
+
+修法：`GetSessionCatalogStatus` 改为真实现（返回非 nil 的 catalog 状态，含 `state` / `canRebuild` /
+`indexed` / `total` …），并把 `buildProjectTree` 的内联 catalog 抽成同一个 `sessionCatalogStatus()`。
+
+**同类隐雷排查**（返回 nil 的 map 桩，看前端是否立刻取属性）：
+
+| 方法 | 前端用法 | 结论 |
+|---|---|---|
+| `GetSessionCatalogStatus` | `Me(结果)` 后读 `.state` | **崩** → 已改真实现 |
+| `WorkspaceConflictForTab` | `"none"===e.state ? null : e` | **崩** → 已改为返回 `{state:"none"}`（本项目不做冲突检测） |
+| `PickExportFile` | `n && await SaveExportFile(n,…)` / `if(!e)return` | nil 是**正确语义**（用户取消），保留并加注释 |
+| `GetRecoveryLineage` | 经规范化函数 `N(t)` 再取长度 | 暂安全，未改（已记入文档） |
+| `GetTopicSummary` | 仅出现在桥包装层，无真实消费点 | 暂安全，未改 |
+| `PreviewSession` | 调用点在 `try/catch` 内 | 暂安全，未改 |
+
+新增回归守卫 `app_bridge_contract_test.go`：把"这些结果必须非 nil 且带必要字段"固定下来
+（`GetSessionCatalogStatus` 的 `state`/`canRebuild`、快照的 `catalog`/`revision`、
+`WorkspaceConflictForTab` 的 `state=none`、运行态快照的 `revisions`/`topics` 形状）。
+
+### 13.4 真机验证
+
+```
+插桩 GetProjectTreeSnapshot 计数 + performance.timeOrigin：
+  基线（等 6s）            → calls=0
+  调用 DshLaunch()（已连接）→ Go 发 project-tree:changed
+  +1.5s                    → calls=1，页面重载过=false
+结论：事件触发树重载=true；页面未重载=true
+      树内容="项目 chenz dsh-reasonix-desktop dsh 12580业务流程 DSH-deskop DeepSeek WORK! IVR skill …"
+      错误界面=false
+```
+
+新增测试：`app_tree_events_test.go`（revision 单调、签名去重且顺序无关、连接跃迁语义、
+无 ctx 不发也不崩、跃迁只发一次）。全量 `go test` 绿；`bridge-arity-check` 真实 UI 错位 0。

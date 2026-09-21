@@ -103,7 +103,8 @@ func (a *App) Forget(_name string) error { return nil }
 func (a *App) ForgetForTab(_tabID string, _name string) error { return nil }
 func (a *App) ForkForTab(_a1 any, _a2 any) error { return nil }
 func (a *App) GetRecoveryLineage(_a1 any) map[string]any { return nil }
-func (a *App) GetSessionCatalogStatus() map[string]any { return nil }
+// GetSessionCatalogStatus 已改为真实现（返回非 nil 的 catalog 状态），见 app_tree.go。
+// 旧零值桩 `return nil` 会在 project-tree:changed 事件路径上让前端 catalog 变 null、崩掉整个渲染。
 func (a *App) GetTopicSummary(_key string) map[string]any { return nil }
 func (a *App) HeartbeatGenerateID() error { return nil }
 func (a *App) HeartbeatReloadConfig() error { return nil }

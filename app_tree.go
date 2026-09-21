@@ -77,6 +77,12 @@ func (a *App) fetchSessions() []dshSession {
 	sessionsCache = items
 	sessionsCacheAt = time.Now()
 	sessionsCacheMu.Unlock()
+	// 会话列表**内容变化**时通知前端刷新项目树（签名去重，避免把 3s 轮询变成事件噪声）。
+	// 这也是"应用先于后端启动"场景的兜底：后端一可用，这里就会发一次 project-tree:changed。
+	if a.noteSessionListSignature(items) {
+		a.emitProjectTreeChanged("metadata")
+		a.emitProjectTreeRuntimeChanged()
+	}
 	return items
 }
 
@@ -166,12 +172,42 @@ func (a *App) buildProjectTree() projectTree {
 		})
 	}
 	return projectTree{
-		Revision: 1,
-		Projects: projects,
-		Catalog:  map[string]any{"state": "ready", "mode": "memory", "revision": 1, "indexed": len(items), "total": len(items), "repairPending": 0},
-		Indexed:  len(items),
-		Total:    len(items),
+		Revision:     int(currentTreeRevision()),
+		Projects:     projects,
+		Catalog:      a.sessionCatalogStatus(),
+		Indexed:      len(items),
+		Total:        len(items),
 		IndexingDone: true,
+	}
+}
+
+// GetSessionCatalogStatus 返回会话目录状态（桥方法）。
+//
+// 前端在 project-tree:changed / -v2 事件路径上会调用它并把结果直接存进 catalog 状态；
+// 必须返回非 nil 对象（旧零值桩 return nil 会崩渲染，见 sessionCatalogStatus 的说明）。
+func (a *App) GetSessionCatalogStatus() map[string]any {
+	return a.sessionCatalogStatus()
+}
+
+// sessionCatalogStatus 返回会话目录（catalog）状态。
+//
+// ⚠️ 必须返回**非 nil** 对象：前端在收到 project-tree:changed 事件后会
+// `GetSessionCatalogStatus().then(Me)`，把结果直接存进 catalog 状态；随后
+// useMemo 会读 `catalog.state`。旧实现是 `return nil`（app_stubs2.go 的零值桩），
+// 一旦事件真的发出来就会 `Cannot read properties of null (reading 'state')`
+// → React 错误边界把整个界面替换成错误页（2026-09-21 实测踩到）。
+func (a *App) sessionCatalogStatus() map[string]any {
+	n := len(a.fetchSessions())
+	return map[string]any{
+		"state":                "ready",
+		"mode":                 "memory",
+		"revision":             currentTreeRevision(),
+		"indexed":              n,
+		"total":                n,
+		"repairPending":        0,
+		"sourceCount":          n,
+		"unindexedTargetCount": 0,
+		"canRebuild":           false,
 	}
 }
 
@@ -186,15 +222,23 @@ func turnsOf(v map[string]any) int {
 }
 
 // GetProjectTreeSnapshot 返回项目树快照（前端侧栏渲染）。
+//
+// revision 必须与 project-tree:changed 事件**共用同一个单调递增计数**：
+// 前端会把收到的 revision 记在 Ce.current（只增不减），若快照恒为 1，等事件带了更大的
+// revision 之后，快照就会被判成"不新鲜"而丢弃（2026-09-21 修复）。
 func (a *App) GetProjectTreeSnapshot() map[string]any {
 	t := a.buildProjectTree()
 	return map[string]any{
-		"revision": 1, "projects": t.Projects, "catalog": t.Catalog,
+		"revision": currentTreeRevision(), "projects": t.Projects, "catalog": t.Catalog,
 		"indexed": t.Indexed, "total": t.Total, "indexingDone": true,
 	}
 }
 
 // GetProjectTreeRuntimeSnapshot 运行时投影（会话运行状态叠加）。
+//
+// revision 与事件共用同一单调计数：前端 projectTreeRuntime 模块**只接受 revision 不小于
+// 当前值**的快照（`e.revision < c.revision` 即丢弃）。旧实现用"会话条数"当 revision，
+// 条数不变而运行态变化（如某个会话开始运行）时更新会被静默忽略。
 func (a *App) GetProjectTreeRuntimeSnapshot() map[string]any {
 	items := a.fetchSessions()
 	topics := make([]any, 0, len(items))
@@ -215,7 +259,7 @@ func (a *App) GetProjectTreeRuntimeSnapshot() map[string]any {
 			},
 		})
 	}
-	return map[string]any{"revision": len(items), "topics": topics}
+	return map[string]any{"revision": currentTreeRevision(), "topics": topics}
 }
 
 // ListProjectTree 返回项目 root 列表。

@@ -155,7 +155,14 @@ func (a *App) ListSessionsForTab(_tabID string) []any { return []any{} }
 func (a *App) ListTrashedSessions() []any { return []any{} }
 
 // WorkspaceConflictForTab 工作区冲突。
-func (a *App) WorkspaceConflictForTab(_tabID string) map[string]any { return nil }
+//
+// ⚠️ 必须返回**非 nil** 且带 `state` 的对象：前端拿到后**立刻**读 `e.state`
+// （`"none" === e.state ? null : e`），零值桩 `return nil` 会 `Cannot read properties of
+// null (reading 'state')` 把整个界面打进 React 错误边界（2026-09-21 同类事故：GetSessionCatalogStatus）。
+// 本项目不做工作区冲突检测，如实返回 "none"（无冲突）。
+func (a *App) WorkspaceConflictForTab(_tabID string) map[string]any {
+	return map[string]any{"state": "none"}
+}
 
 // SetCloseBehavior 关闭行为（quit/background）。
 func (a *App) SetCloseBehavior(behavior string) error {

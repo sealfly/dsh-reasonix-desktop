@@ -91,16 +91,17 @@ func pingDsh(host string, port int) error {
 func (a *App) DshConnStatus() map[string]any {
 	cfg := loadDshConnConfig()
 	status := map[string]any{
-		"configured": map[string]any{"host": cfg.Host, "port": cfg.Port},
-		"connected":  false,
-		"detected":   map[string]any{"host": "", "port": 0},
-		"version":    dshCoreVersion(),
+		"configured":  map[string]any{"host": cfg.Host, "port": cfg.Port},
+		"connected":   false,
+		"detected":    map[string]any{"host": "", "port": 0},
+		"version":     dshCoreVersion(),
 		"installRoot": dshInstallRoot(),
 	}
 	// 1. 试配置地址
 	if err := pingDsh(cfg.Host, cfg.Port); err == nil {
 		status["connected"] = true
 		status["detected"] = map[string]any{"host": cfg.Host, "port": cfg.Port}
+		a.noteConnectedForTree(true)
 		return status
 	}
 	// 2. 配置非默认时回退探测默认 127.0.0.1:3080
@@ -108,10 +109,25 @@ func (a *App) DshConnStatus() map[string]any {
 		if err := pingDsh(dshDefaultHost, dshDefaultPort); err == nil {
 			status["connected"] = true
 			status["detected"] = map[string]any{"host": dshDefaultHost, "port": dshDefaultPort}
+			a.noteConnectedForTree(true)
 			return status
 		}
 	}
+	a.noteConnectedForTree(false)
 	return status
+}
+
+// noteConnectedForTree 记录连接状态；发生"离线 → 在线"跃迁时通知前端刷新项目树。
+//
+// 为什么在这里发：前端项目树只在挂载时取一次数，之后靠 project-tree:changed 事件刷新。
+// 应用先于后端启动时，那次取数是空的 —— 本应用此前从不发这个事件，于是侧栏一直空着
+// （真机实测：DSH 里 12 个项目 / 39 个会话，界面显示「还没有项目」）。连接一旦恢复就发一次，
+// 前端即可自愈，**不必整页重载**。
+func (a *App) noteConnectedForTree(online bool) {
+	if markConnectedTransition(online) {
+		a.emitProjectTreeChanged("connected")
+		a.emitProjectTreeRuntimeChanged()
+	}
 }
 
 // TestDshConn 测试指定 host:port 连接（前端"测试连接"按钮）。
@@ -172,8 +188,11 @@ func (a *App) DshLaunch() map[string]any {
 	cfg := loadDshConnConfig()
 	host, port := cfg.Host, cfg.Port
 
-	// 已可用 → 直接返回（不重复拉起）
+	// 已可用 → 直接返回（不重复拉起）。顺便发一次树事件：调用方多半是"启动后端"的用户动作，
+	// 此时发一次能让挂在空态的项目树自愈。
 	if err := pingDsh(host, port); err == nil {
+		a.emitProjectTreeChanged("launch")
+		a.emitProjectTreeRuntimeChanged()
 		return map[string]any{"ok": true, "alreadyRunning": true, "host": host, "port": port}
 	}
 	// 端口被占但 ping 不通：占用者不是本应用能用的 DSH，别去起
@@ -208,6 +227,9 @@ func (a *App) DshLaunch() map[string]any {
 			continue
 		}
 		resumeLog("dsh: DshLaunch 成功 profile=%s %s:%d", profile, host, port)
+		a.noteConnectedForTree(true) // 记连接跃迁（下次状态查询不会重复发）
+		a.emitProjectTreeChanged("launch")
+		a.emitProjectTreeRuntimeChanged()
 		return map[string]any{"ok": true, "started": true, "host": host, "port": port, "profile": profile,
 			"note": "DSH 已启动并就绪"}
 	}

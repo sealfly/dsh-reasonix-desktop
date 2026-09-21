@@ -230,6 +230,16 @@
       12 个项目 / 39 个会话，界面却是空的，刷新才恢复。重载需带冷却，避免抖动反复刷新。
       ⚠️ 该脚本含中文注释：**不要用 PowerShell 读写它**（PS 5.1 按 ANSI 读 UTF-8 会把注释改坏），
       用编辑工具或 Node；万一改坏，可从 `frontend/dist/index.html` 的注入块里原样提取回来。
+- [ ] **桥方法返回值契约**：**前端会立刻取属性的返回值不得是 nil**。零值桩 `return nil`
+      （map）在"调用点被真正触发"之前都不报错，一旦触发就是
+      `Cannot read properties of null (reading 'x')` → React 错误边界把整个界面换成错误页
+      （2026-09-21：`GetSessionCatalogStatus` 返回 nil，在 `project-tree:changed` 事件路径上
+      让 catalog 变 null，侧栏整块消失）。要么返回带必要字段的空对象，要么返回**明确语义**的值
+      （如 `{state:"none"}`），确实"取消/无数据"才用 nil 并加注释。回归：`app_bridge_contract_test.go`。
+- [ ] **数据变化要发事件**：前端多处只订阅事件刷新（`project-tree:changed-v2`、
+      `project-tree:runtime-changed` 等）。会话列表变化 / 连接跃迁 / 启动后端后必须发对应事件，
+      否则界面会停在陈旧状态（项目树只在挂载时取一次数）。**revision 要与快照共用同一个
+      单调递增计数** —— 快照恒返回 1 会因"不新鲜"被前端丢弃。回归：`app_tree_events_test.go`。
 - [ ] **「启动 DSH」尊重配置**：`DshLaunch` 必须用「连接设置」里的 host:port（不得写死 3080）；
       端口被占但 ping 不通时**明确报错**（典型：占用者是要求 token 的 DSH 实例，而本应用 `DshClient`
       没有 token 支持）；profile 先试 `web`，缺 bundle 时自动回退 `tauri`；拉起后轮询等待就绪并把
