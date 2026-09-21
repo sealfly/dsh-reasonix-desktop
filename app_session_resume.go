@@ -6,6 +6,7 @@ package main
 // 把 assistant/message 事件折叠成消息（含工具调用），符合项目原则：桥只做展示适配，不限制 DSH。
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -101,18 +102,49 @@ func (a *App) historySliceForTabImpl(tabID string, req map[string]any) map[strin
 			sid = cleanSessionID(p)
 		}
 	}
-	msgs := a.sessionMessages(sid)
-	resumeLog("HistorySliceForTab sid=%q msgs=%d req=%v", sid, len(msgs), req)
-	entries := make([]any, 0, len(msgs))
-	for i, m := range msgs {
+	// 前端把 cursor 当**不透明串**原样回传（见 mockHistorySlice 的 cursor 处理），
+	// 我们用它承载 DSH 的 beforeSeq，从而真的能翻到更早的提问。
+	before := decodeSeqCursor(fmt.Sprint(req["cursor"]))
+	w, err := a.fetchHistoryWindow(sid, before)
+	if err != nil || w == nil {
+		resumeLog("HistorySliceForTab sid=%q 拉取失败: %v", sid, err)
+		return map[string]any{"entries": []any{}, "nextCursor": "", "hasOlder": false,
+			"totalTurns": 0, "startTurn": 0, "endTurn": 0, "stale": false, "revisionKnown": false, "source": "dsh",
+			"error": fmt.Sprint(err)}
+	}
+	usersInPage := countUserMessages(w.Msgs)
+	total := w.TotalTurns
+	if total < usersInPage {
+		total = usersInPage
+	}
+	if total == 0 {
+		// 既没有 projections 又没有 user 消息（极短会话/只有摘要）→ 退回消息条数，避免空白
+		total = len(w.Msgs)
+	}
+	// 本页的提问是**会话末尾**的 usersInPage 个 → 全局起始序号 = total - usersInPage
+	startTurn := total - usersInPage
+	if startTurn < 0 {
+		startTurn = 0
+	}
+	resumeLog("HistorySliceForTab sid=%q 本页消息=%d 提问=%d total=%d startTurn=%d hasMore=%v beforeSeq=%d",
+		sid, len(w.Msgs), usersInPage, total, startTurn, w.HasMore, before)
+
+	entries := make([]any, 0, len(w.Msgs))
+	question := startTurn
+	for i, m := range w.Msgs {
 		msg := map[string]any{
 			"role":      m.Role,
 			"content":   m.Content,
 			"reasoning": "",
 		}
+		turnNo := m.Turn
+		if m.Role == "user" {
+			question++
+			turnNo = question // 全局问题号（1-based），与点位 data-turn = 序号-1 对齐
+		}
 		entry := map[string]any{
-			"entryId": fmt.Sprintf("dsh-%s:t%d:m%d", sid, m.Turn, i),
-			"turn":    m.Turn,
+			"entryId": fmt.Sprintf("dsh-%s:t%d:m%d", sid, turnNo, i),
+			"turn":    turnNo,
 			"order":   i,
 			"message": msg,
 			"refs":    []any{},
@@ -123,7 +155,7 @@ func (a *App) historySliceForTabImpl(tabID string, req map[string]any) map[strin
 		if m.Role == "user" {
 			entry["role"] = "user"
 			entry["content"] = m.Content
-			entry["checkpointTurn"] = m.CheckpointTurn
+			entry["checkpointTurn"] = turnNo
 			if m.SubmitText != "" {
 				entry["submitText"] = m.SubmitText
 			}
@@ -133,19 +165,131 @@ func (a *App) historySliceForTabImpl(tabID string, req map[string]any) map[strin
 		}
 		entries = append(entries, entry)
 	}
+	nextCursor := ""
+	hasOlder := w.HasMore
+	if hasOlder && w.MinSeq > 0 {
+		nextCursor = encodeSeqCursor(w.MinSeq)
+	}
 	return map[string]any{
 		"entries":       entries,
-		"nextCursor":    "",
-		"hasOlder":      false,
-		"totalTurns":    len(msgs),
-		"startTurn":     0,
-		"endTurn":       len(msgs),
+		"nextCursor":    nextCursor,
+		"hasOlder":      hasOlder,
+		"totalTurns":    total,
+		"startTurn":     startTurn,
+		"endTurn":       total,
 		"stale":         false,
 		"revision":      0,
 		"revisionKnown": false,
 		"digest":        "",
 		"source":        "dsh",
 		"error":         "",
+	}
+}
+
+// encodeSeqCursor / decodeSeqCursor：把 DSH 的 beforeSeq 装进前端的不透明 cursor。
+// 形式与前端 mock 的 cursor 一致（base64 的小 JSON 对象），前端只做透传。
+func encodeSeqCursor(seq int64) string {
+	if seq <= 0 {
+		return ""
+	}
+	raw, _ := json.Marshal(map[string]any{"seq": seq})
+	return base64.StdEncoding.EncodeToString(raw)
+}
+
+func decodeSeqCursor(cursor string) int64 {
+	c := strings.TrimSpace(cursor)
+	if c == "" || c == "<nil>" {
+		return 0
+	}
+	raw, err := base64.StdEncoding.DecodeString(c)
+	if err != nil {
+		return 0
+	}
+	var v struct {
+		Seq int64 `json:"seq"`
+	}
+	if json.Unmarshal(raw, &v) != nil {
+		return 0
+	}
+	return v.Seq
+}
+
+// historyQuestionWindow 按「提问序号」把消息切成窗口，返回字节区间 [from,to)、提问总数与是否还有更早的提问。
+//
+// 语义与前端 mockHistoryPage 一致：一"轮" = 一条 user 消息；limit<=0 取默认 60；
+// 窗口取**最近 limit 个提问**（含其后的 assistant 消息）。
+func historyQuestionWindow(msgs []resumeMessage, startHint int, limit int) (from int, to int, total int, hasOlder bool) {
+	if limit <= 0 {
+		limit = 60
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	total = countUserMessages(msgs)
+	// 无 user 消息（极短会话/只有摘要）时退回按消息条数计，避免空白
+	counted := total
+	if counted == 0 {
+		counted = len(msgs)
+	}
+	start := startHint
+	if start <= 0 || start > counted {
+		start = counted
+	}
+	begin := start - limit
+	if begin < 0 {
+		begin = 0
+	}
+	if total == 0 {
+		return begin, start, counted, begin > 0
+	}
+	// 有 user：把"第 n 个提问"翻译成消息下标
+	seen := 0
+	fromIdx, toIdx := -1, len(msgs)
+	for i, m := range msgs {
+		if m.Role != "user" {
+			continue
+		}
+		if seen == begin && fromIdx < 0 {
+			fromIdx = i
+		}
+		if seen == start {
+			toIdx = i
+			break
+		}
+		seen++
+	}
+	if fromIdx < 0 {
+		fromIdx = 0
+	}
+	return fromIdx, toIdx, total, begin > 0
+}
+
+// historyPageFromWindow 把一页窗口整理成前端 ResumeSessionPage 期望的形状。
+//
+// totalTurns 取**会话真实轮次**（projections.sessionStats.turns）：尾页只有 5 条提问时，
+// 旧实现把 totalTurns 报成 5（甚至报成消息条数），问题导航因此只画出 5 个点位、
+// 与真实 211 次提问完全对不上。
+func historyPageFromWindow(w *historyWindow, limit int) map[string]any {
+	if w == nil {
+		return map[string]any{"messages": []any{}, "startTurn": 0, "endTurn": 0, "totalTurns": 0, "hasOlder": false}
+	}
+	from, to, total, _ := historyQuestionWindow(w.Msgs, 0, limit)
+	msgs := w.Msgs[from:to]
+	usersInPage := countUserMessages(msgs)
+	startTurn := total - usersInPage
+	if startTurn < 0 {
+		startTurn = 0
+	}
+	out := make([]any, 0, len(msgs))
+	for _, m := range msgs {
+		out = append(out, map[string]any{"role": m.Role, "content": m.Content})
+	}
+	return map[string]any{
+		"messages":   out,
+		"startTurn":  startTurn,
+		"endTurn":    total,
+		"totalTurns": total,
+		"hasOlder":   w.HasMore || startTurn > 0,
 	}
 }
 
@@ -159,12 +303,25 @@ func resumeLog(format string, args ...any) {
 }
 
 // resumeEvent 匹配 DSH session.history 的事件帧（只取需要的字段）。
+//
+// ⚠️ 字段位置差异（2026-09-21 真机踩到，直接导致「问题导航」失效）：
+// user/message 事件把内容放在 **data.content**（同级还有 data.role / data.id），
+// 而 assistant/message 放在 data.message.content。旧结构只读 data.message.content，
+// 于是每条用户提问都被 resumeEventText 判成空串而 continue 掉 →
+//   1) mockHistoryPage 的 userCount 恒为 0 → totalTurns 退化成"消息条数"（如 25），
+//      问题导航据此画出 25 个点位，却没有任何一条对应真实提问；
+//   2) hasOlder 恒为 false → 点位全显示「第 n 个问题（点击加载）」且**点了毫无反应**
+//      （前端要点位未加载就会走 requestOlder 分页，但 hasOlder=false 直接返回 false）。
+// 修复后 user 条目能正确产出、并带上顺序问题号，导航即可定位与跳转。
 type resumeEvent struct {
 	Event struct {
 		Type string `json:"type"`
 		Data struct {
-			Turn    int `json:"turn"`
-			Step    int `json:"step"`
+			Turn    int             `json:"turn"`
+			Step    int             `json:"step"`
+			Role    string          `json:"role"`
+			ID      string          `json:"id"`
+			Content json.RawMessage `json:"content"`
 			Message struct {
 				Role    string          `json:"role"`
 				Content json.RawMessage `json:"content"`
@@ -196,14 +353,21 @@ type historyPayload struct {
 }
 
 // fetchHistory 调用 DSH session.history 拉取会话事件。
-func (a *App) fetchHistory(sessionID string) (*historyPayload, error) {
+//
+// beforeSeq>0 时只取**该序号之前**的一页（实测有效：不带参数返回尾部 34248 事件，
+// 带 beforeSeq 返回更早的一页已换窗口）。这是问题导航"点击加载更早提问"的基础。
+func (a *App) fetchHistory(sessionID string, beforeSeq int64) (*historyPayload, error) {
 	if a.dsh == nil {
 		resumeLog("fetchHistory: dsh nil")
 		return nil, fmt.Errorf("dsh client not ready")
 	}
-	raw, err := a.dsh.RPC("session.history", map[string]any{"sessionId": sessionID})
+	payload := map[string]any{"sessionId": sessionID}
+	if beforeSeq > 0 {
+		payload["beforeSeq"] = beforeSeq
+	}
+	raw, err := a.dsh.RPC("session.history", payload)
 	if err != nil {
-		resumeLog("fetchHistory %q err=%v", sessionID, err)
+		resumeLog("fetchHistory %q beforeSeq=%d err=%v", sessionID, beforeSeq, err)
 		return nil, err
 	}
 	var hp historyPayload
@@ -211,6 +375,31 @@ func (a *App) fetchHistory(sessionID string) (*historyPayload, error) {
 		return nil, err
 	}
 	return &hp, nil
+}
+
+// sessionTotalTurns 从 projections.sessionStats.turns 取会话真实轮次（= 提问数）。
+//
+// 为什么不能数消息：DSH 一次只回尾部一页，尾页里的 user/message 条数（实测 5）
+// 远小于会话真实轮次（实测 211）；拿它当总数会让问题导航只画出 5 个点位。
+func (hp *historyPayload) sessionTotalTurns() int {
+	if hp == nil || hp.Projections == nil {
+		return 0
+	}
+	values, _ := hp.Projections["values"].(map[string]any)
+	if values == nil {
+		return 0
+	}
+	stats, _ := values["sessionStats"].(map[string]any)
+	if stats == nil {
+		return 0
+	}
+	switch t := stats["turns"].(type) {
+	case float64:
+		return int(t)
+	case int:
+		return t
+	}
+	return 0
 }
 
 // resumeEventText 从 message.content（[{type:text,text},...] 或纯字符串）提取纯文本。
@@ -247,31 +436,84 @@ func resumeEventText(content json.RawMessage) string {
 // 关键：DSH 事件流里有 user/message 事件（用户问题），是问题导航的问题边界；
 // turn/start 事件提供真实轮次号。assistant/message 一条对应一轮 assistant 输出。
 func (a *App) sessionMessages(sessionID string) []resumeMessage {
-	hp, err := a.fetchHistory(sessionID)
-	if err != nil || hp == nil {
+	w, err := a.fetchHistoryWindow(sessionID, 0)
+	if err != nil || w == nil {
 		return []resumeMessage{}
 	}
-	out := make([]resumeMessage, 0, len(hp.Events))
-	currentTurn := 0
+	return w.Msgs
+}
+
+// historyWindow 是一个 DSH 历史窗口的解析结果。
+//
+// 为什么需要"窗口"概念：DSH 的 session.history 一次只返回**尾部一页**（实测 34248 事件、
+// hasMore=true），要拿更早的提问必须带 `beforeSeq` 再拉一页（实测 beforeSeq 能改变窗口范围）。
+// 而会话真实轮次要另取 projections.sessionStats.turns（实测该会话 211 轮，而尾页里只有 5 条
+// user/message）—— 旧实现把"尾页消息条数"当总轮次，问题导航于是只画 5 个点位且与真实提问对不上。
+type historyWindow struct {
+	Msgs       []resumeMessage
+	HasMore    bool  // DSH 说还有更早的事件
+	MinSeq     int64 // 本页最早事件序号（下一页的 beforeSeq）
+	TotalTurns int   // 会话真实轮次（提问数），来自 projections.sessionStats.turns
+}
+
+// fetchHistoryWindow 拉取一页历史（beforeSeq>0 表示要更早的一页）并解析。
+func (a *App) fetchHistoryWindow(sessionID string, beforeSeq int64) (*historyWindow, error) {
+	hp, err := a.fetchHistory(sessionID, beforeSeq)
+	if err != nil || hp == nil {
+		return nil, err
+	}
+	w := &historyWindow{
+		Msgs:       parseHistoryMessages(hp.Events),
+		HasMore:    hp.HasMore,
+		TotalTurns: hp.sessionTotalTurns(),
+	}
 	for _, ev := range hp.Events {
+		if ev.Event.Seq > 0 && (w.MinSeq == 0 || ev.Event.Seq < w.MinSeq) {
+			w.MinSeq = ev.Event.Seq
+		}
+	}
+	if w.TotalTurns < countUserMessages(w.Msgs) {
+		w.TotalTurns = countUserMessages(w.Msgs)
+	}
+	return w, nil
+}
+
+// countUserMessages 统计提问条数。
+func countUserMessages(msgs []resumeMessage) int {
+	n := 0
+	for _, m := range msgs {
+		if m.Role == "user" {
+			n++
+		}
+	}
+	return n
+}
+
+// parseHistoryMessages 把事件流折叠成消息（按 seq 升序，并给提问编顺序号）。
+func parseHistoryMessages(events []resumeEvent) []resumeMessage {
+	out := make([]resumeMessage, 0, len(events))
+	currentTurn := 0
+	for _, ev := range events {
 		switch ev.Event.Type {
 		case "turn/start":
 			if ev.Event.Data.Turn > 0 {
 				currentTurn = ev.Event.Data.Turn
 			}
 		case "user/message":
-			text := resumeEventText(ev.Event.Data.Message.Content)
+			// 内容在 data.content（不是 data.message.content）—— 见 resumeEvent 上的说明。
+			text := resumeEventText(ev.Event.Data.Content)
+			if text == "" {
+				text = resumeEventText(ev.Event.Data.Message.Content)
+			}
 			if text == "" {
 				continue
 			}
 			out = append(out, resumeMessage{
-				Role:           "user",
-				Content:        text,
-				Seq:            ev.Event.Seq,
-				Turn:           currentTurn,
-				CheckpointTurn: currentTurn,
-				SubmitText:     text,
-				CreatedAt:      ev.Event.Time,
+				Role:       "user",
+				Content:    text,
+				Seq:        ev.Event.Seq,
+				SubmitText: text,
+				CreatedAt:  ev.Event.Time,
 			})
 		case "assistant/message":
 			role := ev.Event.Data.Message.Role
@@ -295,6 +537,23 @@ func (a *App) sessionMessages(sessionID string) []resumeMessage {
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Seq < out[j].Seq })
+	// 给每条用户提问编**顺序问题号**（1..N）。
+	//
+	// 为什么不是 DSH 的 turn：前端问题导航把「第 n 个问题」按 turn 建索引（点位 data-turn = turn-1），
+	// 而 DSH 的 turn 是会话级轮次号（本机实测同一 payload 里全是 207/208…），
+	// 与点位 0..N-1 完全对不上 → 所有点位都会显示"未加载"且无法跳转。
+	// 按提问先后顺序编号后，点位、问题文本、跳转三者才对得上。
+	question := 0
+	for i := range out {
+		if out[i].Role != "user" {
+			continue
+		}
+		question++
+		out[i].Turn = question
+		if out[i].CheckpointTurn == 0 {
+			out[i].CheckpointTurn = question
+		}
+	}
 	return out
 }
 
@@ -439,7 +698,15 @@ func (a *App) ResumeSessionPage(sessionID any, limit any) map[string]any {
 		resumeLog("ResumeSessionPage: empty after clean")
 		return map[string]any{"messages": []any{}, "startTurn": 0, "endTurn": 0, "totalTurns": 0, "hasOlder": false}
 	}
-	return mockHistoryPage(a.sessionMessages(sid), 0, toLimit(limit))
+	w, err := a.fetchHistoryWindow(sid, 0)
+	if err != nil {
+		resumeLog("ResumeSessionPage %q 拉取失败: %v", sid, err)
+		return map[string]any{"messages": []any{}, "startTurn": 0, "endTurn": 0, "totalTurns": 0, "hasOlder": false}
+	}
+	page := historyPageFromWindow(w, toLimit(limit))
+	resumeLog("ResumeSessionPage %q → messages=%d totalTurns=%v startTurn=%v hasOlder=%v",
+		sid, len(page["messages"].([]any)), page["totalTurns"], page["startTurn"], page["hasOlder"])
+	return page
 }
 
 // ResumeSessionPageForTab 恢复指定 tab 的会话历史页（前端 bridge: ResumeSessionPageForTab(e, t, o=60)）。

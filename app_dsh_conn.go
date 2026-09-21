@@ -7,8 +7,10 @@ package main
 // 原则：DSH 是共享后端绝不主动关它；启动器只在 3080 空闲时才拉起 dsh web。
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -147,52 +149,150 @@ func (a *App) SetDshConn(host string, port int) map[string]any {
 }
 
 // DshLaunch 启动 DSH 后端（前端"启动 DSH"按钮）。
-// 只在 3080 空闲时拉起：先探测 dsh 命令，后台执行 dsh web，返回启动结果。
-// 绝不干扰已运行的 DSH 实例（共享后端原则）。
+//
+// 2026-09-21 真机修复（旧实现有三个硬伤，导致"启动 DSH"点了没用）：
+//
+//	1. **写死 127.0.0.1:3080**：用户在「连接设置」里改成别的端口（如 3092）后，
+//	   这里仍然去起 3080 —— 配置与行为不一致。现在尊重配置的 host:port。
+//	2. **不检查端口占用**：3080 被另一个 DSH 实例占着时照样 `dsh web`，
+//	   结果是 EADDRINUSE 或者起出一个本应用**用不了**的后端（实测：占用者要求 token，
+//	   而 DshClient 没有任何 token 支持 → session.list 返回 unauthorized）。
+//	   现在端口被占且 ping 不通时**明确报错**并给出处置建议，而不是起个注定失败的进程。
+//	3. **不等待就绪、不回报原因**：现在拉起后轮询 ping，成功才回报；失败则带上子进程
+//	   stderr 尾部（例如 `cannot resolve profile bundle "dsh-tauri"` 这种一眼能看懂的原因）。
+//
+// 启动形态：优先 Desktop 内置 dsh（与前端版本匹配、通常无需 token），
+// 参数 `--profile <p> --no-open --port <port>`；profile 先试 web，
+// 若该 profile 缺 bundle（本机实测 `~/.dsh/profiles/web` 里 dsh-tauri* 是指向
+// 已删除的 Harness Desktop resources 的死链，任何 `dsh web` 都起不来），
+// 自动回退到最小可用 profile（tauri = dsh-base + dsh-web-app）。
+//
+// 共享后端原则不变：绝不主动关停已在运行、且可用的 DSH。
 func (a *App) DshLaunch() map[string]any {
-	// 已运行则直接返回
-	if err := pingDsh(dshDefaultHost, dshDefaultPort); err == nil {
-		return map[string]any{"ok": true, "alreadyRunning": true, "host": dshDefaultHost, "port": dshDefaultPort}
+	cfg := loadDshConnConfig()
+	host, port := cfg.Host, cfg.Port
+
+	// 已可用 → 直接返回（不重复拉起）
+	if err := pingDsh(host, port); err == nil {
+		return map[string]any{"ok": true, "alreadyRunning": true, "host": host, "port": port}
 	}
-	// 找 dsh 命令
-	dshCmd := "dsh"
-	if _, err := exec.LookPath("dsh"); err != nil {
-		// 常见 npm 全局位置
-		candidates := []string{
-			filepath.Join(os.Getenv("APPDATA"), "npm", "dsh.cmd"),
-			filepath.Join(os.Getenv("ProgramFiles"), "nodejs", "dsh.cmd"),
-		}
-		found := false
-		for _, c := range candidates {
-			if c != "" {
-				if _, err := os.Stat(c); err == nil {
-					dshCmd = c
-					found = true
-					break
-				}
+	// 端口被占但 ping 不通：占用者不是本应用能用的 DSH，别去起
+	if tcpPortInUse(host, port) {
+		msg := fmt.Sprintf("%s:%d 已被占用，但该后端不接受本应用的调用"+
+			"（常见原因：占用者是另一个要求 token 鉴权的 DSH 实例，而本应用客户端只发裸 RPC）。"+
+			"请在「连接设置」里换一个端口（例如 3092）后再启动。", host, port)
+		resumeLog("dsh: DshLaunch 中止 —— %s", msg)
+		return map[string]any{"ok": false, "host": host, "port": port, "error": msg, "portBusy": true}
+	}
+
+	exe, prefix, ok := dshInvocation()
+	if !ok {
+		// 兜底：npm 全局装一个（保持原行为）
+		if npmPath, err := exec.LookPath("npm"); err == nil {
+			inst := hiddenCmd(npmPath, "install", "-g", "@deepseek-ai/dsh")
+			if err := inst.Start(); err == nil {
+				go func() { _ = inst.Wait() }()
+				return map[string]any{"ok": true, "installing": true,
+					"note": "未找到 dsh, 已开始自动安装 @deepseek-ai/dsh (npm), 完成后点启动"}
 			}
 		}
-		if !found {
-			// 自动安装：探测 Node/npm，存在则后台 npm i -g @deepseek-ai/dsh（装默认最新版）
-			if npmPath, err := exec.LookPath("npm"); err == nil {
-				inst := hiddenCmd(npmPath, "install", "-g", "@deepseek-ai/dsh")
-				if err := inst.Start(); err == nil {
-					go func() { _ = inst.Wait() }()
-					return map[string]any{"ok": true, "installing": true, "note": "未找到 dsh, 已开始自动安装 @deepseek-ai/dsh (npm), 完成后点启动"}
-				}
+		return map[string]any{"ok": false, "error": "未找到 dsh 且自动安装不可用。请手动安装: npm install -g @deepseek-ai/dsh"}
+	}
+
+	var lastErr string
+	for _, profile := range dshLaunchProfiles() {
+		args := append(append([]string{}, prefix...), dshLaunchArgs(profile, port)...)
+		if err := launchDshAndWait(exe, args, host, port, dshLaunchWait); err != nil {
+			lastErr = fmt.Sprintf("profile=%s: %v", profile, err)
+			resumeLog("dsh: DshLaunch %s 失败 —— %v", profile, err)
+			continue
+		}
+		resumeLog("dsh: DshLaunch 成功 profile=%s %s:%d", profile, host, port)
+		return map[string]any{"ok": true, "started": true, "host": host, "port": port, "profile": profile,
+			"note": "DSH 已启动并就绪"}
+	}
+	msg := "启动 DSH 失败"
+	if lastErr != "" {
+		msg += "：" + lastErr
+	}
+	return map[string]any{"ok": false, "host": host, "port": port, "error": msg}
+}
+
+// dshLaunchWait 启动后等待就绪的上限。
+const dshLaunchWait = 25 * time.Second
+
+// dshLaunchProfiles 依次尝试的 profile（web 是常规入口；tauri 是 dsh-base + dsh-web-app 的最小组合，
+// 用于 web profile 缺 bundle 时兜底）。可用 DSH_LAUNCH_PROFILES 覆盖（逗号分隔，便于排障）。
+func dshLaunchProfiles() []string {
+	if v := strings.TrimSpace(os.Getenv("DSH_LAUNCH_PROFILES")); v != "" {
+		parts := strings.Split(v, ",")
+		out := make([]string, 0, len(parts))
+		for _, p := range parts {
+			if p = strings.TrimSpace(p); p != "" {
+				out = append(out, p)
 			}
-			return map[string]any{"ok": false, "error": "未找到 dsh 且自动安装不可用。请手动安装: npm install -g @deepseek-ai/dsh"}
+		}
+		if len(out) > 0 {
+			return out
 		}
 	}
-	// 后台启动 dsh web（不阻塞应用）
-	cmd := hiddenCmd(dshCmd, "web")
+	return []string{"web", "tauri"}
+}
+
+// dshLaunchArgs 构造 dsh 启动参数（--no-open 避免弹浏览器；--port 用用户配置的端口）。
+func dshLaunchArgs(profile string, port int) []string {
+	return []string{"--profile", profile, "--no-open", "--port", fmt.Sprint(port)}
+}
+
+// tcpPortInUse 判断 host:port 是否已被监听（短超时，仅用于给出可读的错误提示）。
+func tcpPortInUse(host string, port int) bool {
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, fmt.Sprint(port)), 800*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
+}
+
+// launchDshAndWait 拉起 dsh 并轮询等待可用；失败时杀进程并返回**子进程 stderr 尾部**作为原因。
+func launchDshAndWait(exe string, args []string, host string, port int, wait time.Duration) error {
+	cmd := hiddenCmd(exe, args...)
+	var errBuf bytes.Buffer
+	cmd.Stderr = &errBuf
 	if err := cmd.Start(); err != nil {
-		return map[string]any{"ok": false, "error": "启动 DSH 失败: " + err.Error()}
+		return fmt.Errorf("启动失败: %w", err)
 	}
-	go func() {
-		_ = cmd.Wait() // 让出进程；DSH web 常驻
-	}()
-	return map[string]any{"ok": true, "started": true, "host": dshDefaultHost, "port": dshDefaultPort, "note": "DSH 正在启动，初始化可能需要几秒"}
+	exited := make(chan error, 1)
+	go func() { exited <- cmd.Wait() }()
+
+	deadline := time.Now().Add(wait)
+	for time.Now().Before(deadline) {
+		select {
+		case err := <-exited:
+			return fmt.Errorf("进程提前退出: %v%s", err, errTail(&errBuf))
+		default:
+		}
+		if pingDsh(host, port) == nil {
+			go func() { <-exited }() // 让出僵尸，DSH 常驻
+			return nil
+		}
+		time.Sleep(600 * time.Millisecond)
+	}
+	_ = cmd.Process.Kill()
+	return fmt.Errorf("等待 %s 未就绪%s", wait, errTail(&errBuf))
+}
+
+// errTail 取子进程 stderr 的末几行，便于把失败原因直接呈现给用户。
+func errTail(buf *bytes.Buffer) string {
+	s := strings.TrimSpace(buf.String())
+	if s == "" {
+		return ""
+	}
+	lines := strings.Split(s, "\n")
+	if len(lines) > 4 {
+		lines = lines[len(lines)-4:]
+	}
+	return " —— " + strings.Join(lines, " ")
 }
 
 // dshLaunchText 供前端按钮文案（单点维护）。

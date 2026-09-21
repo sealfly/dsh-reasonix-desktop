@@ -215,6 +215,16 @@
       ⚠️ 改签名时注意：**`any` 形参收到 JS 的 `null`/`undefined` 会让 Wails 既不 resolve 也不 reject**
       （Promise 永久挂起且无报错）—— 该传 null 的位置要用具体类型（如 `map[string]any`）。
 - [ ] 本项目独有桥方法（`DshStd*`、`MarketPage`、`Terminal*` 等 23 个）未被删除
+- [ ] **`session.history` 的字段位置与分页语义**（问题导航 questionNav 依赖它；错了会"点位全显示
+      「第 {n} 个问题（点击加载）」且点击毫无反应"）：user/message 的内容在 **`data.content`**
+      （不是 `data.message.content`，那是 assistant 的位置）；点位总数要用
+      **`projections.values.sessionStats.turns`（会话真实轮次）**，不能数尾页消息条数
+      （DSH 一次只回尾部一页，实测 34248 事件 / `hasMore:true`，真实 211 轮而尾页只有 5 条提问）；
+      翻更早的页用 **`beforeSeq`**（实测有效，已用不透明 cursor 承载）。回归：`app_session_history_test.go`。
+- [ ] **「启动 DSH」尊重配置**：`DshLaunch` 必须用「连接设置」里的 host:port（不得写死 3080）；
+      端口被占但 ping 不通时**明确报错**（典型：占用者是要求 token 的 DSH 实例，而本应用 `DshClient`
+      没有 token 支持）；profile 先试 `web`，缺 bundle 时自动回退 `tauri`；拉起后轮询等待就绪并把
+      子进程 stderr 尾部带进错误信息。回归：`app_dsh_launch_test.go`。
 - [ ] 若已做**源码级焊接**：补丁脚本已重放且锚点校验通过（未通过则先修锚点，**不得静默丢失我们的页面**）
 - [ ] `~/.reasonix/` 用户数据完整
 - [ ] `.ps1` 构建脚本与 `build/windows/installer/project.nsi` 仍带 UTF-8 BOM

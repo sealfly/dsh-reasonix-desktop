@@ -736,3 +736,97 @@ go test ./...:       ok（含新增远程文件 12 例 + 附件 6 例）
 真机逐方法调用:       OK 57 / 参数错位 0 / 1（MCP 交互应答按设计返回明确错误）
 安装包重建:          安装包 101MB / 懒人包 177.7MB，签名 Valid，verify-packaged-app 14/14
 ```
+
+---
+
+## 10. 「第 x 个问题」导轨（questionNav）失效：根因在后端与环境，修了三处
+
+### 10.1 现象
+
+用户反馈：对话栏右侧的「第 x 个问题」波浪快捷栏**失效**（点位悬停显示「第 {n} 个问题（点击加载）」，点击无反应）。
+
+### 10.2 先确认它是什么
+
+它是本应用自己的 `questionNav`（中文文案在 `frontend/dist/assets/zh-DrhyLgkz.js`：
+`questionNav.notLoaded = "第 {n} 个问题（点击加载）"`、`progress = "问题 {current} / {total}"`），
+组件是 `TranscriptQuestionNavigator` + `QuestionJumpBar`，数据来自 transcript store：
+
+- 点位总数 `totalQuestions = max(历史总轮次, 已载入提问数)`，`≥2` 才渲染；
+- 每个点位 `data-turn = 提问序号-1`，`data-loaded` 由「该提问是否在已载入条目里」决定；
+- 点未加载的点位 → 走 `requestOlder` 分页；点已加载的 → 本地跳转。
+
+### 10.3 根因链（真机实测）
+
+| # | 事实 | 证据 |
+|---|---|---|
+| 1 | 应用需要 DSH 后端，配置 `127.0.0.1:3080` | `DshConnStatus() → connected:false` |
+| 2 | 3080 被**另一个要求 token 的 DSH 实例**占着 | `TestDshConn(3080) → rpc session.list bad response: invalid character 'u'`（unauthorized） |
+| 3 | 本应用客户端**没有 token 支持**，结构上连不上它 | `type DshClient struct{ host; port; http }` |
+| 4 | 应用自己的「启动 DSH」也起不来：`DshLaunch` 写死 3080、忽略配置端口 | 代码 `app_dsh_conn.go`（旧实现） |
+| 5 | 即便去起，全局 `dsh web` 也**必然失败** | `cannot resolve profile bundle "dsh-tauri" from … ~/.dsh/profiles/web` |
+| 6 | 因为该 profile 里 9 个 `dsh-tauri*` 是**死链** | junction 指向 `%LOCALAPPDATA%\Deepseek Harness Desktop\resources\node_modules\…`，而该目录已随 Harness Desktop 更新/卸载消失（resources 里只剩一个 `.bak`） |
+| 7 | 于是应用没有会话/历史数据 → 导轨无点位或点位全"未加载"且点不动 | 现场 DOM：`jump-item` 25 个、`data-loaded` 全 false |
+
+### 10.4 定位到的**我们自己的**两个解析缺陷（这才是"点了没反应"的直接原因）
+
+用 `session.history` 的原始响应比对，发现 `sessionMessages` 读错了字段：
+
+```jsonc
+// DSH 真实事件：内容在 data.content（同级 data.role / data.id）
+{"event":{"type":"user/message","seq":2360314,"data":{"content":[{"type":"text","text":"…"}],"role":"user","id":"…"}}}
+```
+
+- 旧结构只读 `data.message.content`（那是 assistant 的位置）→ **每条用户提问都被判为空串丢弃**；
+- 连带 `mockHistoryPage` 的 `userCount` 恒为 0 → `totalTurns` 退化成"消息条数"（实测 25），
+  导轨据此画 25 个点位，却没有任何一条对应真实提问；
+- `hasOlder` 旧实现**硬编码 false** → 前端要点位未加载就走分页，直接被拒 → 点击无反应；
+- 且 `turn` 用的是 DSH 会话级轮次号（实测同一 payload 全是 207/208…），与点位 `0..N-1` 对不上。
+
+另外 DSH 的 `session.history` 一次只回**尾部一页**（实测 34248 事件、`hasMore:true`），
+真实总轮次在 `projections.values.sessionStats.turns`（实测 211，而尾页只有 5 条提问）——
+旧实现把尾页条数当总数。分页游标实测是 **`beforeSeq`**（`beforeSeq=2360310` 会返回更早的一页）。
+
+### 10.5 三处修复
+
+1. **`app_session_resume.go` 解析修正**：user/message 读 `data.content`（并回退 `data.message.content`）；
+   提问按**顺序问题号**编号（而非 DSH 轮次号），使点位、问题文本、跳转三者对齐。
+2. **真实总数 + 分页**：新增 `fetchHistoryWindow(sid, beforeSeq)`（带 `beforeSeq` 拉更早一页）、
+   `historyPayload.sessionTotalTurns()`（取 `projections.sessionStats.turns`）、
+   以及不透明游标 `encodeSeqCursor/decodeSeqCursor`；`HistorySliceForTab` 现在返回
+   `totalTurns`=真实轮次、`startTurn`=本页首问的全局序号、`hasOlder`=`hasMore`、`nextCursor`。
+3. **`DshLaunch` 重写（`app_dsh_conn.go`）**：尊重配置的 host:port（旧实现写死 3080）；
+   端口被占但 ping 不通时**明确报错**而不是起个注定失败的进程；
+   启动参数 `--profile <p> --no-open --port <port>`，profile 先试 `web`、
+   失败自动回退最小组合 `tauri`；拉起后**轮询等待就绪**，失败时把子进程 stderr 尾部带出来。
+
+### 10.6 真机验证
+
+用应用**自带的 DSH**（`%APPDATA%\…\dependencies\dsh`，`0.1.1-rc.1`，实测**不要求 token**）
+在 3092 起后端后：
+
+```
+DshLaunch() → {ok:true, started:true, port:3092, profile:"tauri"}   5.2s（web 因死链失败 → 自动回退 tauri）
+DshConnStatus() → connected:true
+```
+
+导轨（同一会话，211 轮）：
+
+| | 修复前 | 修复后 |
+|---|---|---|
+| 点位 | 25 个，**0 已加载** | **120 个**（覆盖 0…210，即真实 211 轮采样） |
+| 已加载 | 0 | 5（尾部一页） |
+| 点击已加载点 | 无反应 | **跳转生效**：scrollTop `5691 → 24` |
+| 点击未加载点 | 无反应 | **分页生效**：已加载 3 → 5 |
+
+新增测试：`app_session_history_test.go`（4 例：data.content 解析、真实总数/游标、游标往返、无 user 兜底）、
+`app_dsh_launch_test.go`（5 例：启动参数用配置端口、profile 回退顺序、端口占用探测、stderr 取尾、坏 exe 快速失败）。
+
+### 10.7 顺带修掉与仍未做
+
+- 修：`ws_probe_test.go` 的哨兵写死 3080 且只做 TCP 可达判断 → 3080 被 token 实例占用时报**假失败**；
+  现在跟随「连接设置」的 host:port，且只在 DSH **真的可用**（RPC 通）时才探测。
+- **未做（已知问题）**：注入的连接横幅 `#dsh-conn-banner` **连上后不会自动消失**
+  （实测 `connected:true` 时仍 `class=show / display:block / opacity:1`，只在启动时判定一次）。
+- **未做**：`~/.dsh/profiles/web` 里 9 条 `dsh-tauri*` 死链没有清理（那是 Harness Desktop 留下的，
+  清理会影响它的 profile），所以「启动 DSH」目前靠回退 `tauri` 工作。
+- **未做**：`DshClient` 仍无 token 支持，无法连接需要鉴权的 DSH。

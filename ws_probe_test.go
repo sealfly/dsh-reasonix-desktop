@@ -7,7 +7,9 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -15,13 +17,28 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-func dshReachable() bool {
-	c, err := net.DialTimeout("tcp", "127.0.0.1:3080", 2*time.Second)
+// dshProbeTarget 返回探测目标：优先「连接设置」里配置的 host:port，回退默认 127.0.0.1:3080。
+//
+// 2026-09-21 修正：旧实现写死 3080，而 3080 上可能是**另一个要求 token 的 DSH 实例**
+// （本应用客户端没有 token 支持），WS 握手直接 EOF → 探针报假失败。
+// 现在跟随配置，并且只有在 DSH **真的可用**（RPC 通）时才探测。
+func dshProbeTarget() (string, int) {
+	cfg := loadDshConnConfig()
+	if strings.TrimSpace(cfg.Host) == "" || cfg.Port <= 0 {
+		return dshDefaultHost, dshDefaultPort
+	}
+	return cfg.Host, cfg.Port
+}
+
+// dshUsable 目标 DSH 是否可用（能应答 session.list 才算，避免把"端口被占但不是我们的 DSH"当成可用）。
+func dshUsable(host string, port int) bool {
+	c, err := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(port)), 2*time.Second)
 	if err != nil {
 		return false
 	}
 	_ = c.Close()
-	return true
+	_, err = NewDshClientAt(host, port).RPC("session.list", map[string]any{})
+	return err == nil
 }
 
 // TestWsProbeProtocol 是**上行能力哨兵**：固化 DSH 当前的实测约束——
@@ -32,10 +49,12 @@ func dshReachable() bool {
 // 测试语义：DSH 若**未来开放上行 WS**（本测试开始收到 client-response），
 // 这里会失败 → 提醒在 submitViaWS 中接上该通道（升级韧性，原则 6）。
 func TestWsProbeProtocol(t *testing.T) {
-	if !dshReachable() {
-		t.Skip("DSH 3080 未运行，跳过 WS 协议探针")
+	host, port := dshProbeTarget()
+	if !dshUsable(host, port) {
+		t.Skipf("DSH %s:%d 不可用（未运行或需要 token 鉴权），跳过 WS 协议探针", host, port)
 	}
-	conn, _, err := websocket.DefaultDialer.Dial("ws://127.0.0.1:3080/api/events.mux", nil)
+	url := fmt.Sprintf("ws://%s/api/events.mux", net.JoinHostPort(host, strconv.Itoa(port)))
+	conn, _, err := websocket.DefaultDialer.Dial(url, nil)
 	if err != nil {
 		t.Fatalf("dial events.mux: %v", err)
 	}
