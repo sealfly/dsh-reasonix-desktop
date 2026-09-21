@@ -825,8 +825,64 @@ DshConnStatus() → connected:true
 
 - 修：`ws_probe_test.go` 的哨兵写死 3080 且只做 TCP 可达判断 → 3080 被 token 实例占用时报**假失败**；
   现在跟随「连接设置」的 host:port，且只在 DSH **真的可用**（RPC 通）时才探测。
-- **未做（已知问题）**：注入的连接横幅 `#dsh-conn-banner` **连上后不会自动消失**
-  （实测 `connected:true` 时仍 `class=show / display:block / opacity:1`，只在启动时判定一次）。
+- **已修（本轮补做）**：注入的连接横幅 `#dsh-conn-banner` **连上后不自动消失**。详见 §11。
 - **未做**：`~/.dsh/profiles/web` 里 9 条 `dsh-tauri*` 死链没有清理（那是 Harness Desktop 留下的，
   清理会影响它的 profile），所以「启动 DSH」目前靠回退 `tauri` 工作。
 - **未做**：`DshClient` 仍无 token 支持，无法连接需要鉴权的 DSH。
+
+---
+
+## 11. 连接横幅「连上后不消失」修复
+
+### 11.1 现场事实
+
+`DshConnStatus()` 明明返回 `connected:true`（402ms），但 `#dsh-conn-banner` 仍是
+`class=show / display:block / opacity:1` —— 一块持续误导用户的提示。
+
+### 11.2 根因（旧实现）
+
+```js
+function check() {
+  realApp().DshConnStatus().then(s => {
+    if (!s.connected) { …showBanner()… }   // ← 只有"显示"分支，没有"隐藏"分支
+  }).catch(() => {});
+}
+// 且 boot() 里只有 setTimeout(check, 4000)：**只查一次，没有轮询**
+```
+
+于是：启动时未连接 → 弹出 → 之后再也不会收（除非用户手点 ✕ 或整页刷新）。
+
+### 11.3 修法
+
+1. `check()` 变成对称：`connected` → `hideBanner()`；未连接 → 按 24h 抑制规则 `showBanner()`；
+2. **周期轮询**：未连接 8s 一次（用户刚点完"启动 DSH"要尽快看到恢复），已连接 15s 一次
+   （每次 `DshConnStatus` 真的会 ping 一次 DSH，实测 0.2~0.5s，成本可接受）；
+3. **给桥调用加超时竞速**（`withTimeout`，10s）：Wails 桥上异常/不存在的方法可能返回
+   **永不 settle 的 Promise**（本项目在 `ui_test_hook.go` 记过这个坑），不设防会让轮询永久停摆
+   —— 实测症状正是"横幅显示后再也不会变"；
+4. `showBanner()` 改为幂等（已在显示则不重建），否则轮询会把「正在启动 DSH 后端…」的进度文字清掉；
+5. 窗口回到前台/获得焦点时立即复检一次；
+6. 暴露诊断出口 `window.__dshBanner = {ticks, connected, timeout, at, pollMs}`，排障先看它。
+
+### 11.4 真机验证（不刷新页面）
+
+| 阶段 | 期望 | 实测 |
+|---|---|---|
+| 后端未连接 | 横幅出现 | `shown=true`，`ticks` 每 8s +1 |
+| 外部拉起后端 | 横幅**自动消失** | **+10s** `shown=false, connected=true` |
+| 再停掉后端 | 横幅**自动回来** | **+16s** `shown=true, connected=false` |
+
+`performance.timeOrigin` 前后一致 → **全程没有页面重载**，证明是轮询生效而非刷新。
+
+### 11.5 顺带：守卫与一次自伤
+
+- 新增 `scripts/verify-conn-banner.js`：校验源码里的 hide/轮询/超时竞速/诊断出口等不变量，
+  以及注入产物里横幅脚本**恰好 1 份且含修复标记**；做了**负向测试**（故意删掉 `hideBanner();`
+  必须报失败）。
+- **自伤记录**（避免重犯）：为做负向测试，我用 PowerShell `Get-Content -Raw` + `Set-Content`
+  往返那个含中文注释的 `.js`，**PowerShell 5.1 按 ANSI 读 UTF-8**，把中文注释读成乱码、并把
+  注释后的换行吞掉 → 源码被改坏（代码侥幸还在，注释已损）。恢复办法：**从注入产物
+  `frontend/dist/index.html` 里把该脚本原样提取回来**，再归一化结尾换行（项目约定单个 LF）。
+  证明恢复正确的方式：重新注入后 `index.html` 的 sha256 **逐字节等于损坏前那一份**
+  （`8522956CE664FE54`）。
+  → 教训：**不要用 PowerShell 读写含中文的 UTF-8 文件**；要么用编辑工具，要么用 Node。

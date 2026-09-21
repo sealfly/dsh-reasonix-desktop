@@ -221,6 +221,12 @@
       **`projections.values.sessionStats.turns`（会话真实轮次）**，不能数尾页消息条数
       （DSH 一次只回尾部一页，实测 34248 事件 / `hasMore:true`，真实 211 轮而尾页只有 5 条提问）；
       翻更早的页用 **`beforeSeq`**（实测有效，已用不透明 cursor 承载）。回归：`app_session_history_test.go`。
+- [ ] **连接横幅的行为对称**：`node scripts/verify-conn-banner.js`。横幅必须**连上就收**、
+      掉线能再弹（注入脚本里既要有 showBanner 也要有 hideBanner + 周期复检）；给桥调用加超时竞速，
+      否则遇到"永不 settle 的 Promise"会让轮询永久停摆（2026-09-21 实测：`connected:true` 时横幅
+      一直挂着）。排障看页面里的 `window.__dshBanner`。
+      ⚠️ 该脚本含中文注释：**不要用 PowerShell 读写它**（PS 5.1 按 ANSI 读 UTF-8 会把注释改坏），
+      用编辑工具或 Node；万一改坏，可从 `frontend/dist/index.html` 的注入块里原样提取回来。
 - [ ] **「启动 DSH」尊重配置**：`DshLaunch` 必须用「连接设置」里的 host:port（不得写死 3080）；
       端口被占但 ping 不通时**明确报错**（典型：占用者是要求 token 的 DSH 实例，而本应用 `DshClient`
       没有 token 支持）；profile 先试 `web`，缺 bundle 时自动回退 `tauri`；拉起后轮询等待就绪并把

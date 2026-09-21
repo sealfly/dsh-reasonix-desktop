@@ -532,6 +532,9 @@
   }
 
   function showBanner() {
+    // 已经在显示就**不要重建**：否则周期复检会把「正在启动 DSH 后端…」这类进度文字清掉。
+    const existing = document.getElementById(CONN_ID);
+    if (existing && existing.classList.contains('show')) return;
     el(CONN_ID, `
       <div class="b-title"><span class="dot"></span>DSH 后端未连接</div>
       <div class="b-desc">界面功能需要 DSH 后端（默认 ${statusCache ? statusCache.configured.host + ':' + statusCache.configured.port : '127.0.0.1:3080'}）。可一键启动，或自选其他 DSH 后端。</div>
@@ -630,35 +633,90 @@
     const g = window.go && window.go.main && window.go.main.App;
     if (g) return g;
     return {
+      // 桥不可用时不要把界面判成"未连接"（否则会弹一个用户无法处置的横幅）
+      DshConnStatus: () => Promise.resolve({ connected: true, configured: { host: '127.0.0.1', port: 3080 } }),
       TestDshConn: () => Promise.reject('bridge unavailable'),
       SetDshConn: () => Promise.reject('bridge unavailable'),
       DshLaunch: () => Promise.reject('bridge unavailable')
     };
   }
 
+  // 周期复检的节奏：未连接时查得勤（用户刚点完"启动 DSH"要尽快看到恢复），
+  // 已连接时也保持 15s 一次（每次 DshConnStatus 真的会 ping 一次 DSH，实测 0.2~0.5s，
+  // 15s 足够便宜，同时能在后端掉线后较快把横幅放回来）。
+  const POLL_DISCONNECTED_MS = 8000;
+  const POLL_CONNECTED_MS = 15000;
+  let pollTimer = null;
+  let ticks = 0; // 诊断计数：暴露在 window.__dshBanner 上，便于确认轮询真的在跑
+
+  function bannerVisible() {
+    const n = document.getElementById(CONN_ID);
+    return !!(n && n.classList.contains('show'));
+  }
+
+  function hideBanner() {
+    const n = document.getElementById(CONN_ID);
+    if (n) n.classList.remove('show');
+  }
+
+  function schedule(ms) {
+    if (pollTimer) clearTimeout(pollTimer);
+    pollTimer = setTimeout(check, ms);
+  }
+
+  // 给桥调用加超时竞速：Wails 桥上**不存在的/异常的方法可能返回永不 settle 的 Promise**
+  // （本项目已在 ui_test_hook.go 记录过这个坑）。若不复检就被它拖死，轮询会永久停摆 ——
+  // 实测症状正是"横幅显示后再也不会自动消失/消失后再也不会出现"。
+  function withTimeout(p, ms) {
+    return Promise.race([
+      Promise.resolve(p),
+      new Promise(res => setTimeout(() => res({ __timeout: true }), ms))
+    ]);
+  }
+
   function check() {
-    realApp().DshConnStatus().then(s => {
+    ticks++;
+    withTimeout(realApp().DshConnStatus(), 10000).then(s => {
       statusCache = s;
-      if (!s.connected) {
-        // 连接失败：显示横幅（用户关闭过则本次会话不再自动弹出，仍可在设置里操作）
-        try {
-          const shown = parseInt(localStorage.getItem(SHOWN_KEY) || '0', 10);
-          if (shown && Date.now() - shown < 24 * 3600 * 1000) {
-            // 已关闭过（24h 内）：仅保留设置入口不弹横幅
-            return;
-          }
-        } catch (e) {}
-        showBanner();
+      const connected = !!(s && s.connected);
+      // 诊断出口：排查"横幅不消失/不出现"时先看这里（ticks 是否增长、connected 是否变化）
+      window.__dshBanner = { ticks, connected, timeout: !!(s && s.__timeout), at: Date.now(), pollMs: connected ? POLL_CONNECTED_MS : POLL_DISCONNECTED_MS };
+      if (connected) {
+        // **连上就把横幅收掉**。
+        // 旧实现只在启动 4s 后查一次、且只有 showBanner 没有 hideBanner ——
+        // 真机实测（2026-09-21）：DshConnStatus() 返回 connected:true 时，
+        // #dsh-conn-banner 仍是 class=show / display:block / opacity:1，一直挂在那儿误导用户。
+        hideBanner();
+        schedule(POLL_CONNECTED_MS);
+        return;
       }
-    }).catch(() => {});
+      // 未连接：用户手动关过（24h 内）就不再自动弹
+      let suppressed = false;
+      try {
+        const shown = parseInt(localStorage.getItem(SHOWN_KEY) || '0', 10);
+        suppressed = !!(shown && Date.now() - shown < 24 * 3600 * 1000);
+      } catch (e) {}
+      if (!suppressed) showBanner();
+      schedule(POLL_DISCONNECTED_MS);
+    }).catch(e => {
+      // 查询失败（如桥还没就绪）：保持现状，稍后再试
+      window.__dshBanner = { ticks, connected: null, error: String(e && e.message ? e.message : e), at: Date.now() };
+      schedule(POLL_DISCONNECTED_MS);
+    });
   }
 
   function boot() {
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', () => { injectCss(); setTimeout(check, 4000); });
-    } else {
+    const start = () => {
       injectCss();
       setTimeout(check, 4000);
+      // 窗口回到前台/获得焦点时立刻复检一次（用户多半是刚去看别处启动 DSH 了）
+      document.addEventListener('visibilitychange', () => { if (!document.hidden) check(); });
+      window.addEventListener('focus', () => { if (bannerVisible()) check(); });
+    };
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', start);
+    } else {
+      start();
     }
   }
   boot();
