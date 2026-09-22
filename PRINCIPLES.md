@@ -413,7 +413,28 @@
 - **禁止**：本地存在**未推送的独有提交**时强推（会丢提交）。
   先用 `git rev-list --left-right --count <remote>/master...master` 确认右侧（本地独有）的来源可解释。
 
-### 9.3 标准同步动作（照抄执行）
+### 9.3 标准同步动作（优先用脚本；手工步骤见文末）
+
+```powershell
+node scripts/sync-remotes.js            # 核对三方状态并给出判定（默认 dry-run）
+node scripts/sync-remotes.js --apply    # 按判定执行：ff / push / force-with-lease
+node scripts/sync-remotes.js --json     # 机器可读（供其它脚本消费）
+```
+
+**它解决的是 9.1 的直接后果：fetch 失败 ≠ 远程没有新提交。** 本地 `origin/master` ref 会停留在
+上次 push 的结果上，只看它必然得到假阴性（实测：fetch 连试 5 次全失败，而 API 显示远程 SHA
+与本地一致 —— 结论对，但过程是蒙的）。工具按三级取证并**打印取证方式**：
+
+1. `git fetch` → 拿到 `refs/remotes/<remote>/master`，可做完整祖先关系判定（唯一能判 behind/ahead 的）；
+2. 回退 `git ls-remote` → **只有 SHA**，够判断"是否有差异"，不足以判定关系；
+3. 再回退 GitHub HTTP API → 同上（CNB 无匿名 API，只靠前两级）。
+
+其余硬约束：**只在确认有差异时才尝试拉取/推送**；`diverged` 且内容不等价时**拒绝自动处理**
+（9.2 的强行人工合并）；进程级超时 12 秒（git 自身连接超时是 21 秒，且 `http.lowSpeedLimit`
+只管传输阶段、管不到连接阶段），默认 `--fetch-attempts 1` —— 失败即回退，不空耗
+（实测整轮 26 秒，纯 fetch 重试要 60 秒以上）。
+
+手工步骤（工具不可用时照抄）：
 
 ```powershell
 git fetch origin --prune; git fetch cnb --prune          # 1) 两端都拉
