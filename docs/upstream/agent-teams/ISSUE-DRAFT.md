@@ -130,5 +130,21 @@ PluginDshStdAdmit("@nanmicoder/dsh-agent-teams")
 - 提交形式：GitHub Issue（附完整材料与 diff，供作者决策）
 - 提交账号：`sealfly`
 - **结果：已提交 → [#165](https://github.com/NanmiCoder/dsh-agent-teams/issues/165)（2026-09-14，state=open）**
-- 后续：若作者认可方向，可再提 PR（fork + 上述 2 处改动）；若上游合入，本项目
-  `ensureCompanionManifests()` 的补写会自然"无事可做"（插件自带声明），无需改本项目代码。
+
+### 2026-09-23 追加：升级为 PR（用户选择方案 A）
+
+Issue 数日无回复，而该仓库社区 PR 采纳率高（#155/#167/#172/#180 已 closed），故改为直接提 PR：
+
+- **PR [#197](https://github.com/NanmiCoder/dsh-agent-teams/pull/197)**
+  `feat: add dsh-plugin.json (dsh-std manifest, Community Admission v0.15)`
+  - head `sealfly:add-dsh-plugin-manifest` → base `NanmiCoder:main`
+  - 2 文件 / **+41 −0**（新增 `dsh-plugin.json`；`package.json` 的 `files` 加一项）——聚焦，符合 CONTRIBUTING「keep each contribution scoped」
+  - `mergeable: true`；`mergeable_state: unstable`（CI 尚未启动——首次贡献者的 workflow 需维护者批准）
+  - PR 描述含：动机 / **无运行时改动**声明 / 逐字段依据表 / 宿主侧实测前后对比 /
+    **明确说明未跑仓库 runtime verify 及原因（静态清单无行为路径）** / 引用 #165
+- **上游 `main` 事实（v0.1.20）**：`main=lib/index.js`、`license=MIT`、
+  命令名 `AGENT_TEAMS_COMMAND='agent-teams'`（`src/command.ts` 实证）、
+  `compatibility.json` 推荐宿主 `0.1.5-rc.1`；`files` 另含 `compatibility.json`、`scripts/*.mjs`
+- **声明文件（针对 0.1.20）**：`docs/upstream/agent-teams/dsh-plugin-0.1.20.json`（本地已验证 `valid=true` / `state=compatible`）
+- 已在 #165 留言回链：https://github.com/NanmiCoder/dsh-agent-teams/issues/165#issuecomment-5790455566
+- 后续：等 review；若上游合入，本项目 `ensureCompanionManifests()` 的补写自然"无事可做"（插件自带声明），本项目代码无需改动
