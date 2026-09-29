@@ -393,6 +393,146 @@ async function emitUsageEvent(sessionId) {
   } catch {}
 }
 
+// ---------- 设置页「用量统计」----------
+// 前端 UsageStatsPanel 的数据契约（据 renderer/dist UsageStatsPanel 逆向核对）：
+//   { from, to, tokens, turns, requests, activeDays, cacheHit, cacheMiss, topModel,
+//     daily:  [{ day, total, byModel, cacheHit, cacheMiss, requests }],
+//     models: [{ model, provider, tokens, percent }] }
+//   - daily 需逐日零填充：趋势图/热力图按连续日历取值，缺日会断线
+//   - models 需按 token 量降序（前端取 Top5 + 「其他」聚合）
+// 数据源：@linxin666/dsh-usage 的本地账本（经 dsh:usage-ledger IPC 读取）。
+// 不走 RPC 的原因见 main.js 中 dsh:usage-ledger 的注释（DSH 0.1.5-rc.2 的 RPC 鉴权）。
+const DAY_MS = 86400000;
+function dayKeyOf(d) {
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+// 一个账本桶的 token 总量（已计费输入 + 输出；reasoning 已含在 output 内）
+function bucketTokens(b) {
+  return ((b && b.inputTokens) || 0) + ((b && b.cacheReadTokens) || 0) + ((b && b.cacheWriteTokens) || 0) + ((b && b.outputTokens) || 0);
+}
+// [from,to] → 逐日日期键数组（含首尾）；非法/反向区间返回空
+function enumerateDays(from, to, cap) {
+  const out = [];
+  const start = new Date(from + 'T00:00:00');
+  const end = new Date(to + 'T00:00:00');
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || start > end) return out;
+  for (let t = start.getTime(); t <= end.getTime(); t += DAY_MS) {
+    out.push(dayKeyOf(new Date(t)));
+    if (cap && out.length >= cap) break;
+  }
+  return out;
+}
+function emptyUsageStats(from, to) {
+  return {
+    from: from || '', to: to || '', tokens: 0, requests: 0, turns: 0, activeDays: 0,
+    cacheHit: 0, cacheMiss: 0, cost: 0, topModel: '', daily: [], models: [],
+    currency: preferredCurrency(), estimated: true,
+  };
+}
+// 账本 → 前端契约。account 口径：cacheHit=cacheRead，cacheMiss=uncached input，
+// requests=calls（provider 上报用量的调用次数），tokens=已计费输入+输出。
+function usageStatsFromLedger(daysMap, from, to) {
+  const daily = [];
+  const modelTokens = new Map();     // model -> tokens
+  const modelProviders = new Map();  // model -> Map(provider -> tokens)
+  let tokens = 0, requests = 0, cacheHit = 0, cacheMiss = 0, cost = 0, activeDays = 0;
+  for (const day of enumerateDays(from, to, 400)) {
+    const providers = daysMap ? daysMap[day] : null;
+    const byModel = {};
+    let dayTotal = 0, dayReq = 0, dayHit = 0, dayMiss = 0;
+    if (providers && typeof providers === 'object') {
+      for (const provider of Object.keys(providers)) {
+        const models = providers[provider];
+        if (!models || typeof models !== 'object') continue;
+        for (const model of Object.keys(models)) {
+          const b = models[model];
+          if (!b || typeof b !== 'object') continue;
+          const tk = bucketTokens(b);
+          const calls = b.calls || 0;
+          if (tk <= 0 && calls <= 0) continue;
+          byModel[model] = (byModel[model] || 0) + tk;
+          dayTotal += tk;
+          dayReq += calls;
+          dayHit += b.cacheReadTokens || 0;
+          dayMiss += b.inputTokens || 0;
+          cost += b.cost || 0;
+          modelTokens.set(model, (modelTokens.get(model) || 0) + tk);
+          let pm = modelProviders.get(model);
+          if (!pm) { pm = new Map(); modelProviders.set(model, pm); }
+          pm.set(provider, (pm.get(provider) || 0) + tk);
+        }
+      }
+    }
+    if (dayTotal > 0 || dayReq > 0) activeDays += 1;
+    tokens += dayTotal; requests += dayReq; cacheHit += dayHit; cacheMiss += dayMiss;
+    daily.push({ day, total: dayTotal, byModel, cacheHit: dayHit, cacheMiss: dayMiss, requests: dayReq });
+  }
+  const models = [...modelTokens.entries()]
+    .filter(([, tk]) => tk > 0)
+    .sort((a, b) => b[1] - a[1])
+    .map(([model, tk]) => {
+      // 同名模型可能来自不同供应商路由：取 token 贡献最大者作为展示供应商
+      let provider = '', best = -1;
+      const pm = modelProviders.get(model);
+      if (pm) for (const [prov, pt] of pm) if (pt > best) { best = pt; provider = prov; }
+      return { model, provider, tokens: tk, percent: tokens > 0 ? (tk / tokens) * 100 : 0 };
+    });
+  return {
+    from, to, tokens, requests, turns: 0, activeDays, cacheHit, cacheMiss, cost,
+    topModel: models.length > 0 ? models[0].model : '',
+    daily, models, currency: preferredCurrency(),
+  };
+}
+// 账本不记录「完成轮次」：尽力从会话投影的 sessionStats 补全。RPC 不可用时保持 0，
+// 并留痕（原则 3：失败不静默），不阻断图表其余部分。
+async function turnsFromSessionStats() {
+  try {
+    const list = await rpc('session.list', {});
+    const items = (list && list.items) || [];
+    let turns = 0;
+    for (const s of items) {
+      const v = (s && s.projections && s.projections.values) || {};
+      turns += (v.sessionStats && v.sessionStats.turns) || 0;
+    }
+    return turns;
+  } catch (e) {
+    console.warn('[dsh] UsageStats: sessionStats 不可用，「完成轮次」记 0:', (e && e.message) || e);
+    return null;
+  }
+}
+async function usageStatsImpl(params) {
+  const p = params || {};
+  const rangeKey = String(p.range || '30');
+  const preset = { 7: 7, 14: 14, 30: 30, 90: 90 };
+  const now = new Date();
+  let from, to;
+  if (rangeKey === 'custom') {
+    from = String(p.from || '');
+    to = String(p.to || '');
+  } else {
+    const n = preset[rangeKey] || 30;
+    const start = new Date(now);
+    start.setDate(start.getDate() - (n - 1));
+    from = dayKeyOf(start);
+    to = dayKeyOf(now);
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to) {
+    // custom 区间不完整时前端本就不渲染图表，返回空结构即可
+    return emptyUsageStats(from, to);
+  }
+  let ledger;
+  try { ledger = await ipcRenderer.invoke('dsh:usage-ledger'); } catch (e) { ledger = { ok: false, error: String((e && e.message) || e) }; }
+  if (!ledger || !ledger.ok || !ledger.days) {
+    // 未安装 @linxin666/dsh-usage（或尚未写入）时图表为空——留痕便于排查
+    console.warn('[dsh] UsageStats: 本地用量账本不可用:', (ledger && ledger.error) || 'no data');
+    return emptyUsageStats(from, to);
+  }
+  const stats = usageStatsFromLedger(ledger.days, from, to);
+  const turns = await turnsFromSessionStats();
+  if (turns !== null) stats.turns = turns;
+  return stats;
+}
+
 // ---------- DSH 历史 → WireEvent 重放 ----------
 // 事件类型归一化：DSH 实时流/历史记录的事件名写法可能不同
 // （turn/started vs turn/start、turn/done vs turn/end），统一匹配两种写法。
@@ -2299,7 +2439,7 @@ const appImpl = {
   SetPlan: async () => {},
   TodoSnapshotForTab: async () => [],
   DismissTodoBatchForTab: async () => {},
-  UsageStats: async () => ({}),
+  UsageStats: (params) => usageStatsImpl(params),
   BalanceInfo: async () => null,
   // ===== 本地终端（方案 A：主进程 spawn cmd/PowerShell，输出走 term:output/term:exit 事件）=====
   TerminalWorkspaceForTab: async (tabID) => ipcRenderer.invoke('term:list', tabID),

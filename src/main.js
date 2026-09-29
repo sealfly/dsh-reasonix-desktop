@@ -53,6 +53,7 @@ const net = require('net');
 const os = require('os');
 const { spawn, execSync } = require('child_process');
 const { DshClient } = require('./dsh-client');
+const { createAuth, resolveDshHome } = require('./dsh-auth');
 
 // 禁用 GPU 加速（disable hardware acceleration）：CPU 软渲染。
 // 当初为清理布局热切换的侧栏 logo 叠影而加（以为是 GPU 合成层残留），
@@ -161,12 +162,142 @@ function dshEventToWire(frame) {
     }
     case 'tool/result': {
       const t = d.tool || {};
-      return { kind: 'tool_result', tool: { name: t.name || d.name || d.toolName || 'tool', callId: d.callId || t.callId }, detail: d.result ? String(d.result).slice(0, 500) : undefined, ...base };
+      // 真实事件里 callId 在 d.message.source.callId（d.tool/d.callId 是旧形状，保留兼容）
+      const src = (d.message && d.message.source) || {};
+      const callId = d.callId || t.callId || src.callId;
+      const name = t.name || d.name || d.toolName || (src.kind === 'tool' ? 'tool' : 'tool');
+      return { kind: 'tool_result', tool: { name, callId }, detail: d.result ? String(d.result).slice(0, 500) : undefined, ...base };
     }
     case 'turn/end': case 'assistant/end': return { kind: 'turn_done', ...base };
     case 'user/prompt': return null; // 前端自己乐观渲染用户消息
     default: return null;
   }
+}
+
+// ---------- 实时事件桥（session/follow 流） ----------
+// 旧的 events.mux 在 DSH 0.1.5-rc.2 已不存在；会话实时内容改由 `session/follow`
+// 逻辑流提供（走 /api/remote.mux WebSocket）。这里维护「订阅哪些会话」：
+//   - 活跃会话（本轮对话/最近更新）优先，LRU 上限 FOLLOW_LIMIT，避免 60+ 会话全订
+//   - 流断开自动重连（指数退避），DSH 重启后自动恢复
+// 事件帧还原为 { sessionId, event }：与原 events.mux 消费方（dshEventToWire、
+// dsh:raw-event 透传）同构，因此渲染层无需改动。
+const FOLLOW_LIMIT = 6;
+const followedSessions = new Map(); // sessionId -> { cancel, retry, timer }
+let eventBridgeStarted = false;
+let promptSeq = 0;
+
+/** 把一条会话事件同时送进「原始透传」与「WireEvent 转换」两条通道。 */
+function emitSessionEvent(sessionId, event) {
+  if (!win || win.isDestroyed()) return;
+  const frame = { sessionId, event };
+  try { win.webContents.send('dsh:raw-event', frame); } catch {}
+  const wire = dshEventToWire(frame);
+  if (wire) { try { win.webContents.send('dsh:event', wire); } catch {} }
+}
+
+/** 订阅一个会话的实时事件（已在订阅则只更新 LRU 位置）。 */
+function ensureFollow(sessionId) {
+  const sid = String(sessionId || '');
+  if (!sid || !dsh) return;
+  const existing = followedSessions.get(sid);
+  if (existing) {
+    // 命中：提到 LRU 末尾
+    followedSessions.delete(sid);
+    followedSessions.set(sid, existing);
+    return;
+  }
+  const rec = { cancel: null, retry: 0, timer: null, closed: false };
+  followedSessions.set(sid, rec);
+  openFollow(sid, rec);
+  // 超出上限时淘汰最久未用的订阅
+  while (followedSessions.size > FOLLOW_LIMIT) {
+    const [oldest, oldRec] = followedSessions.entries().next().value;
+    if (oldest === sid) break;
+    stopFollow(oldest, oldRec);
+  }
+}
+
+function openFollow(sid, rec) {
+  dsh.openStream('session/follow', {
+    args: { request: { address: { kind: 'session', sessionId: sid }, maxMessages: 1, assistantStream: true } },
+  }, {
+    onItem: (value) => {
+      if (!value || typeof value !== 'object') return;
+      rec.retry = 0;
+      if (value.type === 'event' && value.event) emitSessionEvent(sid, value.event);
+      // assistant-stream：DSH 把「正在生成中」的增量单独走这条帧（type: start/chunk/end）。
+      // chunk.chunk 与 assistant/chunk 事件的 data.chunk 同构，故合成为同构事件复用转换。
+      else if (value.type === 'assistant-stream' && value.frame) {
+        const f = value.frame;
+        if (f.type === 'chunk' && f.chunk) {
+          emitSessionEvent(sid, { type: 'assistant/chunk', seq: f.index, time: f.time, data: { chunk: f.chunk } });
+        } else {
+          try { if (win && !win.isDestroyed()) win.webContents.send('dsh:raw-event', { sessionId: sid, assistantStream: f }); } catch {}
+        }
+      }
+      // snapshot：开启帧，含历史 records 与 projections（历史由 dsh:history 单独负责，这里不重复回放）
+    },
+    onEnd: () => { scheduleRefollow(sid, rec); },
+    onError: (e) => {
+      console.warn('[events] session/follow 结束:', sid, (e && e.message) || e);
+      scheduleRefollow(sid, rec);
+    },
+  }).then((handle) => {
+    rec.cancel = handle.cancel;
+    console.log('[events] 已订阅会话实时事件:', sid);
+  }).catch((e) => {
+    console.warn('[events] session/follow 建立失败:', sid, (e && e.message) || e);
+    scheduleRefollow(sid, rec);
+  });
+}
+
+/** 流中断后的重连（指数退避，封顶 30s）。 */
+function scheduleRefollow(sid, rec) {
+  if (rec.closed || !followedSessions.has(sid)) return;
+  rec.cancel = null;
+  if (rec.timer) return;
+  const delay = Math.min(30000, 1000 * Math.pow(2, rec.retry || 0));
+  rec.retry = (rec.retry || 0) + 1;
+  rec.timer = setTimeout(() => {
+    rec.timer = null;
+    if (rec.closed || !followedSessions.has(sid)) return;
+    openFollow(sid, rec);
+  }, delay);
+}
+
+function stopFollow(sid, rec) {
+  rec.closed = true;
+  if (rec.timer) { clearTimeout(rec.timer); rec.timer = null; }
+  if (rec.cancel) { try { rec.cancel(); } catch {} rec.cancel = null; }
+  followedSessions.delete(sid);
+}
+
+/** 启动后按最近活跃顺序订阅若干会话，并在会话列表刷新时补齐。 */
+function primeFollows(sessions) {
+  const ids = (sessions || [])
+    .slice()
+    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+    .slice(0, FOLLOW_LIMIT)
+    .map((s) => s.sessionId);
+  for (const id of ids) ensureFollow(id);
+}
+
+function startEventBridge() {
+  if (eventBridgeStarted) return;
+  eventBridgeStarted = true;
+  // $events：会话生命周期/审批等应用级事件（开启帧为 {type:'ready'}）
+  dsh.openStream('$events', { args: {} }, {
+    onItem: (value) => {
+      if (!value || typeof value !== 'object') return;
+      if (value.type === 'ready') { console.log('[events] $events 已就绪, home =', value.host && value.host.home); return; }
+      try { if (win && !win.isDestroyed()) win.webContents.send('dsh:raw-event', { sessionId: null, gatewayEvent: value }); } catch {}
+    },
+    onEnd: () => { console.warn('[events] $events 流结束'); },
+    onError: (e) => { console.warn('[events] $events 流错误:', (e && e.message) || e); },
+  }).catch((e) => console.warn('[events] $events 订阅失败:', (e && e.message) || e));
+
+  dsh.rpc('session.list', {}).then((r) => primeFollows((r && r.items) || []))
+    .catch((e) => console.warn('[events] 初始订阅会话失败:', (e && e.message) || e));
 }
 
 // ---------- 本地终端（方案 A：主进程 spawn 本机 shell，IPC 桥接） ----------
@@ -404,7 +535,10 @@ async function ensureDsh() {
 app.whenReady().then(async () => {
   try { app.setAppUserModelId('com.dsh.reasonix.ui'); } catch (e) { console.log('[APP] setAppUserModelId failed:', e && e.message); }
   await ensureDsh();
-  dsh = new DshClient(3080);
+  // DSH 0.1.5-rc.2 起 /api 走 BrowserAuth：先铸好鉴权 Cookie，再建客户端。
+  // 密钥取自 <DSH_HOME>/.credentials.yaml，因此对「已在运行的 DSH 实例」同样有效。
+  const auth = createAuth(3080);
+  dsh = new DshClient(3080, auth);
   detectDshVersion(); // 异步探测后端 DSH 版本（与前端版本分开）
   Menu.setApplicationMenu(null); // 去掉 File/Edit/View/Window/Help 菜单栏
 
@@ -422,20 +556,12 @@ app.whenReady().then(async () => {
   });
   win.loadFile(REASONIX_DIST);
 
-  // 全量订阅 events.mux 原始帧（不筛选），透传给渲染层做通用能力。
-  // 放在 win 创建之后，连接即推的 session/subscribed 等初始帧也能到达渲染层。
-  dsh.subscribeRaw((frame) => {
-    if (win && !win.isDestroyed()) {
-      win.webContents.send('dsh:raw-event', frame);
-    }
-  });
-  // 同时保留 Reasonix 需要的 WireEvent 转换通道
-  dsh.subscribe((frame) => {
-    const wire = dshEventToWire(frame);
-    if (wire && win && !win.isDestroyed()) {
-      win.webContents.send('dsh:event', wire);
-    }
-  });
+  // 实时事件：DSH 0.1.5-rc.2 已删除 events.mux 路由，改由 Remote 流提供：
+  //   · session/follow —— 单个会话的实时内容（{type:'event',event} 等）
+  //   · $events        —— 会话生命周期与审批/提问等应用级事件
+  // 这里把 follow 流的会话事件还原成 bridge 既有的 { sessionId, event } 帧形状，
+  // 下游（dsh:raw-event 全量透传 + dshEventToWire 转换）完全不用改。
+  startEventBridge();
 
   win.on('closed', () => console.log('[WIN] closed'));
   win.on('close', () => console.log('[WIN] close event'));
@@ -572,15 +698,39 @@ app.whenReady().then(async () => {
         dsh.rpc('workspace.list', {}).catch(() => null),
       ]);
       const archived = new Set((ws && ws.archivedSessionIds) || []);
-      return (res.items || [])
-        .filter((s) => !archived.has(s.sessionId))
-        .map(sessionToTabMeta);
+      const visible = (res.items || []).filter((s) => !archived.has(s.sessionId));
+      // 每次刷新会话列表时补齐实时订阅（新会话/最近活跃会话自动纳入）
+      try { primeFollows(visible); } catch {}
+      return visible.map(sessionToTabMeta);
     } catch (e) {
       console.log('[DSH] session.list failed:', e && e.message || e);
       return [];
     }
   });
-  ipcMain.handle('dsh:history', (_e, sid) => dsh.rpc('session.history', { sessionId: sid, maxMessages: 300 }));
+  ipcMain.handle('dsh:history', (_e, sid) => {
+    // 打开某会话的历史即视为「正在看它」→ 纳入实时订阅
+    try { ensureFollow(sid); } catch {}
+    return dsh.rpc('session.history', { sessionId: sid, maxMessages: 300 });
+  });
+
+  // ---- 用量统计账本（设置页「用量统计」的数据源）----
+  // 读取 @linxin666/dsh-usage 维护的本地账本（按天 / 供应商 / 模型，含 calls 与 cost）。
+  // 为什么不走 RPC：DSH 0.1.5-rc.2 起 /api RPC 通道走 BrowserAuth——启动令牌换 Cookie
+  // 才放行（见 dsh-client-connection 的 requestRejection）。桥接层拿不到该令牌
+  // （dsh web 以 stdio:'ignore' 拉起，URL 里的令牌未被捕获），故 RPC 一律 401；
+  // 插件注册的 HTTP 路由（如 /api/dsh-usage/*）不经该鉴权，账本文件则完全在本地。
+  ipcMain.handle('dsh:usage-ledger', async () => {
+    try {
+      const file = path.join(resolveDshHome(), 'dsh-usage', 'usage-ledger.json');
+      const raw = await fs.promises.readFile(file, 'utf8');
+      const doc = JSON.parse(raw);
+      const days = doc && doc.days;
+      if (!days || typeof days !== 'object') return { ok: false, error: 'usage ledger: unexpected shape' };
+      return { ok: true, path: file, days };
+    } catch (e) {
+      return { ok: false, error: String((e && e.message) || e) };
+    }
+  });
 
   // ---- 本地终端（方案 A）----
   ipcMain.handle('term:list', (_e, tabId) => terminalWorkspaceForTab(String(tabId || '')));
@@ -631,8 +781,11 @@ app.whenReady().then(async () => {
     if (typeof sid !== 'string' || !sid || typeof text !== 'string' || !text) {
       return { ok: false, error: 'invalid prompt args (sessionId and text required)' };
     }
-    // session.prompt 是长请求（模型生成可能要几分钟），用 10 分钟超时而不是默认 60s
-    return dsh.rpc('session.prompt', { sessionId: sid, mode: 'steer', content: [{ type: 'text', text }] }, (typeof timeoutMs === 'number' && timeoutMs > 0) ? timeoutMs : 10 * 60 * 1000);
+    // 发问即订阅：否则这一轮生成的事件没有 follow 流可收
+    try { ensureFollow(sid); } catch {}
+    // DSH 0.1.5 的 SessionPromptRequest 要求 client 铸一个 requestId（必填）
+    const requestId = 'req-' + (++promptSeq) + '-' + Date.now().toString(36);
+    return dsh.rpc('session.prompt', { requestId, sessionId: sid, mode: 'steer', content: [{ type: 'text', text }] }, (typeof timeoutMs === 'number' && timeoutMs > 0) ? timeoutMs : 10 * 60 * 1000);
   });
   ipcMain.handle('app:version', () => app.getVersion());
   // 版本分开返回：frontend = 本应用版本（package.json），backend = 后端 DSH（@deepseek-ai/dsh）版本
