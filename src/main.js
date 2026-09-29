@@ -458,6 +458,65 @@ async function resolveInteraction(eventId, value, kind = 'result') {
   return true;
 }
 
+// ---------- 账号余额（@linxin666/dsh-usage 的 overview 路由） ----------
+// DSH 自身没有余额能力；已安装的 @linxin666/dsh-usage 在本机注册了 loopback-only
+// 的 HTTP 路由 /api/dsh-usage/overview，返回各供应商的余额与套餐配额。
+// 该路由挂在 webserver 上（不是 /api RPC 通道），因此不受 BrowserAuth 限制——
+// 实测无 Cookie 也返回 200。
+// 前端契约（Reasonix v1.29 状态栏 balance 项）：{ available, display, err? }
+//   - display 直接作为状态栏文本；available=false 时不显示
+//   - err 非空时前端会跳过本次更新（保持旧值），故失败时用 available:false 而非 err
+const CURRENCY_SYMBOLS = { CNY: '¥', USD: '$', EUR: '€', GBP: '£', JPY: '¥' };
+
+/** 按币种格式化为展示文本（插件侧同款规则：已知币种加符号前缀，否则后缀币种码）。 */
+function formatBalanceDisplay(currency, total) {
+  const code = String(currency || '').toUpperCase();
+  const sym = CURRENCY_SYMBOLS[code];
+  return sym ? sym + total : String(total) + ' ' + code;
+}
+
+/** 读取 dsh-usage 的 overview（失败一律返回 null，不抛错）。 */
+function fetchUsageOverview(timeoutMs = 8000) {
+  return new Promise((resolve) => {
+    let httpMod;
+    try { httpMod = require('http'); } catch { return resolve(null); }
+    const headers = { Origin: 'http://127.0.0.1:3080' };
+    try {
+      const cookie = dsh && dsh.auth && dsh.auth.header();
+      if (cookie) headers.Cookie = cookie;
+    } catch {}
+    const req = httpMod.get({ host: '127.0.0.1', port: 3080, path: '/api/dsh-usage/overview', timeout: timeoutMs, headers }, (res) => {
+      let data = '';
+      res.on('data', (c) => { data += c; });
+      res.on('end', () => {
+        if (res.statusCode !== 200) return resolve(null);
+        try { resolve(JSON.parse(data)); } catch { resolve(null); }
+      });
+    });
+    req.on('timeout', () => { req.destroy(); resolve(null); });
+    req.on('error', () => resolve(null));
+  });
+}
+
+/**
+ * 余额视图：从 overview 里挑出当前路由（无则挑第一个有余额的）的账户余额。
+ * @returns {Promise<{available: boolean, display: string, currency?: string, provider?: string}>}
+ */
+async function fetchBalance() {
+  const ov = await fetchUsageOverview();
+  if (!ov || !Array.isArray(ov.providers)) return { available: false, display: '' };
+  const cur = (ov.current && ov.current.provider) || null;
+  const withBalance = ov.providers.filter((p) => p && p.balance && p.balance.totalBalance);
+  const pick = (cur && withBalance.find((p) => p.provider === cur)) || withBalance[0];
+  if (!pick) return { available: false, display: '' };
+  return {
+    available: true,
+    display: formatBalanceDisplay(pick.balance.currency, pick.balance.totalBalance),
+    currency: pick.balance.currency,
+    provider: pick.provider,
+  };
+}
+
 function startEventBridge() {
   if (eventBridgeStarted) return;
   eventBridgeStarted = true;
@@ -935,6 +994,12 @@ app.whenReady().then(async () => {
     try { ensureFollow(sid); } catch {}
     // 0.1.5 无 session.history：用 session/follow 的开启快照取尾部一页
     return fetchHistory(sid, 300);
+  });
+
+  // 账号余额（来源：dsh-usage 插件在本机注册的 overview 路由）
+  ipcMain.handle('dsh:balance', async () => {
+    try { return await fetchBalance(); }
+    catch (e) { return { available: false, display: '', error: String((e && e.message) || e) }; }
   });
 
   // 审批 / 提问回执（$events waterfall → $events/result）

@@ -1528,8 +1528,13 @@ const appImpl = {
   OpenTaskSession: async () => ({}),
   OpenTaskSessionForTab: async () => ({}),
   Jobs: async () => [],
-  Balance: async () => null,
-  BalanceForTab: async () => null,
+  // 账号余额：契约 { available, display, err? }（前端状态栏 balance 项，turn_done 时刷新）
+  Balance: async () => {
+    try { return await ipcRenderer.invoke('dsh:balance'); } catch { return { available: false, display: '' }; }
+  },
+  BalanceForTab: async () => {
+    try { return await ipcRenderer.invoke('dsh:balance'); } catch { return { available: false, display: '' }; }
+  },
   Memory: async () => memoryViewOf(null),
   MemoryForTab: async (tabID) => memoryViewOf(tabID),
   MemoryRevisions: async () => [],
@@ -1954,7 +1959,62 @@ const appImpl = {
   BackgroundRuntimes: async () => [],
   RevealBackgroundRuntime: async () => ({}),
   ContextUsage: async () => ({ used: 0, window: 1, sessionTokens: 0, compactRatio: 0.8 }),
-  ContextPanel: async () => ({}),
+  // 上下文面板（右侧 ContextPanel 卡片）。前端契约见 bridge mock 的 ContextPanel：
+  //   { usedTokens, windowTokens, promptTokens, completionTokens, totalTokens,
+  //     cacheHitTokens, cacheMissTokens, sessionCacheHitTokens, sessionCacheMissTokens,
+  //     sessionCompletionTokens, requestCount, elapsedMs, sessionCost, sessionCurrency,
+  //     sources?: {<角色>: {...}}, sessionCostQuote? }
+  // 数据全部来自 session.list 的投影（contextPressure + tokenUsage + sessionStats）。
+  //
+  // 刻意**不**填的两项（渲染端都是可选链保护，缺省即不显示，报 0 反而是错的）：
+  //   - sources：DSH 投影没有「执行器/规划器/子代理/压缩」的按角色归因，无法真实给出
+  //   - reasoningTokens：tokenUsage.outputTokens 已含 reasoning，无法再拆分
+  //   - sessionCostQuote：需要逐币种汇率/计价区间推导，宁可让前端走自己的兜底
+  // 两项近似（已在下方标注）：requestCount 取 sessionStats.steps（一步≈一次模型请求），
+  // elapsedMs 取 llmMs + toolMs（模型 + 工具墙钟，非墙钟总时长）。
+  ContextPanel: async (tabID) => {
+    try {
+      const list = await rpc('session.list', {});
+      const s = ((list && list.items) || []).find((x) => x.sessionId === tabID);
+      const v = (s && s.projections && s.projections.values) || {};
+      const cp = v.contextPressure || {};
+      const tu = v.tokenUsage || {};
+      const st = v.sessionStats || {};
+      const cacheHit = tu.cacheReadTokens || 0;
+      const cacheMiss = tu.uncachedInputTokens || 0;
+      const output = tu.outputTokens || 0;
+      const cacheWrite = tu.cacheWriteTokens || 0;
+      // 费用需要当前 provider/model（与 ContextUsageForTab 同款做法）
+      let provider = 'deepseek-official';
+      let model = 'deepseek-v4-flash';
+      try {
+        const models = await rpc('session.models', { sessionId: tabID });
+        if (models && models.current) {
+          provider = models.current.provider || provider;
+          model = models.current.model || model;
+        }
+      } catch {}
+      return {
+        usedTokens: cp.pressureTokens || 0,
+        windowTokens: cp.contextWindow || 0,
+        promptTokens: cacheMiss,
+        completionTokens: output,
+        totalTokens: cacheHit + cacheMiss + cacheWrite + output,
+        cacheHitTokens: cacheHit,
+        cacheMissTokens: cacheMiss,
+        sessionCacheHitTokens: cacheHit,
+        sessionCacheMissTokens: cacheMiss,
+        sessionCompletionTokens: output,
+        requestCount: st.steps || 0,      // 近似：一步 ≈ 一次模型请求
+        elapsedMs: (st.llmMs || 0) + (st.toolMs || 0), // 近似：模型 + 工具墙钟
+        sessionCost: calcCost(tu, provider, model),
+        sessionCurrency: preferredCurrency(),
+      };
+    } catch (e) {
+      console.warn('[dsh] ContextPanel 失败:', (e && e.message) || e);
+      return {};
+    }
+  },
   // ===== 插件市场/商店（DSH web profile 的 dshmarket + dsh-plugin-store） =====
   Plugins: async () => {
     try {
