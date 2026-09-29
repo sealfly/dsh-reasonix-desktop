@@ -1650,19 +1650,21 @@ const appImpl = {
   SteerForTab: async (tabID, input) => submitPrompt(tabID, input),
   Cancel: async (tabID) => { await cancelSession(tabID); },
   CancelForTab: async (tabID) => { await cancelSession(tabID); },
-  // 工具审批：DSH 权限是预设级（read-only/workspace-write/danger-full-access），
-  // 工具由 agent 按当前权限自动批准/拒绝，没有"逐项人工审批"概念。
-  // 这里明确返回不支持，避免前端"点了没反应"以为是 bug。
-  Approve: async () => {
-    console.warn('[dsh] DSH 权限模式不支持逐项工具审批（工具由 agent 按当前权限自动批准/拒绝）；如需放行请切换安全模式到 auto/yolo');
-    return { ok: false, reason: 'unsupported' };
+  // 工具审批 / 提问回执。
+  // DSH 0.1.5 起确实有「逐项人工审批」：agent 通过 $events 的 approval/request
+  // waterfall 发起询问，必须回执才继续（见 main.js 的 handleGatewayWaterfall）。
+  // 早前这里返回 unsupported 是因为旧 DSH 只有预设级权限；现在改为真实回执。
+  // 参数按类型认（不同前端版本位置不同）：ApproveTab(tabId, approvalId, allow, …)。
+  Approve: async (tabID, approvalId, allow, grantSession, grantSaved) => {
+    return await ipcRenderer.invoke('dsh:approve', tabID, approvalId, allow, grantSession, grantSaved);
   },
-  Reject: async () => {
-    console.warn('[dsh] DSH 权限模式不支持逐项工具审批');
-    return { ok: false, reason: 'unsupported' };
+  Reject: async (tabID, approvalId) => {
+    return await ipcRenderer.invoke('dsh:approve', tabID, approvalId, false);
   },
-  ApproveTab: async () => ({ ok: false, reason: 'unsupported' }),
-  AnswerQuestion: async () => {},
+  AnswerQuestion: async (tabID, answers) => {
+    return await ipcRenderer.invoke('dsh:answer', tabID, answers);
+  },
+  // ApproveTab 的唯一定义在文件下方（同名键后定义覆盖先定义，故这里不再重复声明）
 
   // ===== 设置（Settings / DesktopStartupSettings） =====
   // bot 结构见顶层 mockBotSettings()（安全结构，避免前端读 undefined.enabled 崩溃）
@@ -2081,8 +2083,14 @@ const appImpl = {
   RefreshInboxItem: async () => {},
   RetryInboxItem: async () => {},
   ConfirmAction: async () => {},
-  ApproveTab: async () => {},
-  AnswerQuestionForTab: async () => {},
+  // 注意：本对象字面量里 ApproveTab 出现了两次，后面的定义会覆盖前面的——
+  // 真正生效的是这里（两处已同步为真实回执实现）。
+  ApproveTab: async (tabID, approvalId, allow, grantSession, grantSaved) => {
+    return await ipcRenderer.invoke('dsh:approve', tabID, approvalId, allow, grantSession, grantSaved);
+  },
+  AnswerQuestionForTab: async (tabID, answers) => {
+    return await ipcRenderer.invoke('dsh:answer', tabID, answers);
+  },
   CancelTab: async () => {},
   CancelTabWithInboxItems: async () => {},
   ReplayPendingPromptsForTab: async () => {},

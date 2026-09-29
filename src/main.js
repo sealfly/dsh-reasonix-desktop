@@ -282,19 +282,213 @@ function primeFollows(sessions) {
   for (const id of ids) ensureFollow(id);
 }
 
+// ---------- 工作区状态（workspace/follow 流） ----------
+// DSH 0.1.5 已删除一元方法 workspace.list；归档集合改由 workspace/follow 流提供：
+//   开启帧 {type:'baseline', value:{items:[WorkspaceView], archivedSessionIds:[]}}
+//   增量   {type:'upsert'|'remove'|'order'|'archived', ...}
+// 这里维护一份本地快照，供「归档会话过滤」与「工作区列表」使用（比原来的一次性
+// 调用更强：归档/重命名/新建都能实时反映）。
+const workspaceState = { archived: new Set(), items: [] };
+let workspaceFollowRec = null;
+
+function applyWorkspaceFrame(v) {
+  if (!v || typeof v !== 'object') return;
+  if (v.type === 'baseline' && v.value) {
+    workspaceState.items = Array.isArray(v.value.items) ? v.value.items : [];
+    workspaceState.archived = new Set(v.value.archivedSessionIds || []);
+    return;
+  }
+  if (v.type === 'archived') {
+    workspaceState.archived = new Set(v.archivedSessionIds || []);
+    return;
+  }
+  if (v.type === 'upsert' && v.workspace) {
+    const id = v.workspace.workspaceId;
+    const i = workspaceState.items.findIndex((w) => w && w.workspaceId === id);
+    if (i >= 0) workspaceState.items[i] = v.workspace; else workspaceState.items.push(v.workspace);
+    return;
+  }
+  if (v.type === 'remove') {
+    workspaceState.items = workspaceState.items.filter((w) => !w || w.workspaceId !== v.workspaceId);
+    return;
+  }
+  if (v.type === 'order' && Array.isArray(v.workspaceIds)) {
+    const byId = new Map(workspaceState.items.map((w) => [w && w.workspaceId, w]));
+    workspaceState.items = v.workspaceIds.map((id) => byId.get(id)).filter(Boolean);
+  }
+}
+
+function openWorkspaceFollow() {
+  const rec = { cancel: null, retry: 0, timer: null, closed: false };
+  workspaceFollowRec = rec;
+  const connect = () => {
+    dsh.openStream('workspace/follow', { args: {} }, {
+      onItem: (v) => { rec.retry = 0; applyWorkspaceFrame(v); },
+      onEnd: () => retryWorkspaceFollow(rec),
+      onError: (e) => { console.warn('[events] workspace/follow 结束:', (e && e.message) || e); retryWorkspaceFollow(rec); },
+    }).then((h) => { rec.cancel = h.cancel; console.log('[events] 已订阅工作区状态'); })
+      .catch((e) => { console.warn('[events] workspace/follow 建立失败:', (e && e.message) || e); retryWorkspaceFollow(rec); });
+  };
+  rec.connect = connect;
+  connect();
+}
+
+function retryWorkspaceFollow(rec) {
+  if (rec.closed || workspaceFollowRec !== rec) return;
+  rec.cancel = null;
+  if (rec.timer) return;
+  const delay = Math.min(30000, 1000 * Math.pow(2, rec.retry || 0));
+  rec.retry = (rec.retry || 0) + 1;
+  rec.timer = setTimeout(() => { rec.timer = null; if (!rec.closed && workspaceFollowRec === rec) rec.connect(); }, delay);
+}
+
+// ---------- 会话历史（session/follow 快照） ----------
+// DSH 0.1.5 没有 session.history；等价能力是 session/page（需 {address, throughSeq}，
+// 而 throughSeq 只能从 follow 的开启帧取得）。而 follow 的 snapshot 本身就带
+// records（尾部一页事件）与 hasMore —— 所以直接开流取快照再取消，一次往返拿到历史，
+// 语义与旧 session.history 一致：{ events, hasMore }。
+function fetchHistory(sessionId, maxMessages = 300) {
+  return new Promise((resolve) => {
+    let settled = false;
+    let handle = null;
+    let timer = null;
+    const done = (val) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      try { if (handle) handle.cancel(); } catch {}
+      resolve(val);
+    };
+    timer = setTimeout(() => done({ events: [], hasMore: false, error: 'history timeout' }), 20000);
+    // 注意：assistantStream 的 schema 是 `?: true`（只接受 true 或缺省），传 false 会被拒
+    dsh.openStream('session/follow', {
+      args: { request: { address: { kind: 'session', sessionId }, maxMessages } },
+    }, {
+      onItem: (v) => {
+        if (v && v.type === 'snapshot') {
+          const events = (v.records || []).map((r) => r && r.event).filter(Boolean);
+          done({ events, hasMore: !!v.hasMore, cursor: v.cursor });
+        }
+      },
+      onEnd: () => done({ events: [], hasMore: false }),
+      onError: (e) => done({ events: [], hasMore: false, error: (e && e.message) || String(e) }),
+    }).then((h) => { handle = h; })
+      .catch((e) => done({ events: [], hasMore: false, error: (e && e.message) || String(e) }));
+  });
+}
+
+// ---------- 审批 / 提问（$events waterfall 回执） ----------
+// $events 的 waterfall 帧必须回执，否则 agent 一直等：
+//   {type:'waterfall', event:'approval/request', eventId, agentId, request:{toolName,callId?,reason?}}
+//   {type:'waterfall', event:'user-questions/request', eventId, agentId, request:{questions:[...]}}
+// 回执走一元 RPC `$events/result`，args = { clientId, eventId, outcome:{kind:'result', value} }：
+//   - approval → value 是 ApprovalOutcome 字符串（'allowed-once' | 'rejected'）
+//   - question → value 是 { answers:[{id, selected:[], custom?}] }
+// clientId 来自 $events 开启帧的 ready 帧。
+const pendingInteractions = new Map(); // eventId -> { kind, tabId, clientId, meta }
+let eventsClientId = null;
+
+/** 把一个 waterfall 帧转成 Reasonix WireEvent 并登记待回执项。 */
+function handleGatewayWaterfall(agentId, value) {
+  const tabId = agentId || null;
+  const req = value.request || {};
+  if (value.event === 'approval/request') {
+    pendingInteractions.set(value.eventId, { kind: 'approval', tabId, clientId: eventsClientId, meta: req });
+    const wire = {
+      kind: 'approval_request',
+      tabId,
+      approval: {
+        id: value.eventId,
+        tool: req.toolName || 'tool',
+        // Reasonix 的 subject 是展示主体的文本；DSH 给的是 reason/callId，取其一
+        subject: req.reason || req.callId || req.toolName || '',
+        reason: req.reason,
+        callId: req.callId,
+      },
+    };
+    try { if (win && !win.isDestroyed()) win.webContents.send('dsh:event', wire); } catch {}
+    console.log('[events] 审批请求:', req.toolName, 'tab=', tabId, 'eventId=', value.eventId);
+    return;
+  }
+  if (value.event === 'user-questions/request') {
+    pendingInteractions.set(value.eventId, { kind: 'question', tabId, clientId: eventsClientId, meta: req });
+    const questions = (req.questions || []).map((q) => ({
+      id: q.id,
+      question: q.question,
+      detail: q.detail,
+      header: q.header,
+      multiSelect: !!q.multiSelect,
+      options: (q.options || []).map((o) => ({ label: o.label, description: o.description })),
+    }));
+    const wire = { kind: 'ask_request', tabId, ask: { id: value.eventId, questions } };
+    try { if (win && !win.isDestroyed()) win.webContents.send('dsh:event', wire); } catch {}
+    console.log('[events] 提问请求:', questions.length, '问 tab=', tabId, 'eventId=', value.eventId);
+    return;
+  }
+  // 其它 waterfall（未知事件）：不回执会让 agent 一直等，故登记后以 next 放行
+  // （必须先登记，否则 resolveInteraction 找不到 pending 而静默丢弃回执）。
+  console.warn('[events] 未处理的 waterfall，以 next 放行:', value.event);
+  pendingInteractions.set(value.eventId, { kind: 'unknown', tabId, clientId: eventsClientId, meta: req });
+  resolveInteraction(value.eventId, undefined, 'next').catch((e) => {
+    console.warn('[events] 未知 waterfall 放行失败:', (e && e.message) || e);
+  });
+}
+
+/**
+ * 回执一个 pending 交互。
+ * @param {string} eventId
+ * @param {*} [value] - outcome 的 value（approval 为字符串，question 为 {answers}）
+ * @param {'result'|'next'} [kind]
+ */
+async function resolveInteraction(eventId, value, kind = 'result') {
+  const p = pendingInteractions.get(eventId);
+  if (!p) throw new Error('no pending interaction: ' + eventId);
+  if (!p.clientId) throw new Error('event stream clientId 未知（$events 未就绪）');
+  pendingInteractions.delete(eventId);
+  const outcome = kind === 'next' ? { kind: 'next' } : { kind: 'result', value };
+  await dsh.rpc('$events/result', { clientId: p.clientId, eventId, outcome });
+  // 前端据此清除审批/提问卡片（unknown 类不发，它没有对应卡片）
+  try {
+    if (win && !win.isDestroyed() && (p.kind === 'approval' || p.kind === 'question')) {
+      win.webContents.send('dsh:event', p.kind === 'approval'
+        ? { kind: 'clearApproval', tabId: p.tabId }
+        : { kind: 'clearAsk', tabId: p.tabId });
+    }
+  } catch {}
+  return true;
+}
+
 function startEventBridge() {
   if (eventBridgeStarted) return;
   eventBridgeStarted = true;
-  // $events：会话生命周期/审批等应用级事件（开启帧为 {type:'ready'}）
+  // $events：会话生命周期 + 审批/提问等应用级事件（开启帧为 {type:'ready'}）
   dsh.openStream('$events', { args: {} }, {
     onItem: (value) => {
       if (!value || typeof value !== 'object') return;
-      if (value.type === 'ready') { console.log('[events] $events 已就绪, home =', value.host && value.host.home); return; }
+      if (value.type === 'ready') {
+        eventsClientId = value.clientId || null;
+        console.log('[events] $events 已就绪, home =', value.host && value.host.home, 'clientId =', String(eventsClientId).slice(0, 8));
+        return;
+      }
+      // 待回执的 waterfall（审批/提问/其它）
+      if (value.type === 'waterfall') { handleGatewayWaterfall(value.agentId, value); return; }
+      // 宿主撤销了一个待回执项
+      if (value.type === 'cancel' && value.eventId) {
+        const p = pendingInteractions.get(value.eventId);
+        pendingInteractions.delete(value.eventId);
+        try {
+          if (win && !win.isDestroyed() && p) win.webContents.send('dsh:event', p.kind === 'approval'
+            ? { kind: 'clearApproval', tabId: p.tabId } : { kind: 'clearAsk', tabId: p.tabId });
+        } catch {}
+        return;
+      }
       try { if (win && !win.isDestroyed()) win.webContents.send('dsh:raw-event', { sessionId: null, gatewayEvent: value }); } catch {}
     },
     onEnd: () => { console.warn('[events] $events 流结束'); },
     onError: (e) => { console.warn('[events] $events 流错误:', (e && e.message) || e); },
   }).catch((e) => console.warn('[events] $events 订阅失败:', (e && e.message) || e));
+
+  openWorkspaceFollow();
 
   dsh.rpc('session.list', {}).then((r) => primeFollows((r && r.items) || []))
     .catch((e) => console.warn('[events] 初始订阅会话失败:', (e && e.message) || e));
@@ -385,15 +579,46 @@ let bridgeFullAccess = false;
 
 // 后端 DSH 版本（与前端版本分开显示；探测不到显示 unknown）
 let dshBackendVersion = 'unknown';
+
+/**
+ * 从磁盘读 DSH 版本。
+ * 为什么不用 RPC：DSH 0.1.5 已删除 host.describe（host.* 命名空间整体不存在），
+ * 且 pluginInventory/list、settings/describe 都不带版本字段。所以按安装位置找
+ * @deepseek-ai/dsh/package.json —— 打包内置的便携 node、npx 缓存、全局安装三处。
+ */
+function readDshVersionFromDisk() {
+  const candidates = [];
+  try { candidates.push(path.join(__dirname, '..', 'vendor', 'node', 'node_modules', '@deepseek-ai', 'dsh', 'package.json')); } catch {}
+  try {
+    const npxRoot = path.join(os.homedir(), '.npm', '_npx');
+    for (const d of fs.readdirSync(npxRoot)) {
+      candidates.push(path.join(npxRoot, d, 'node_modules', '@deepseek-ai', 'dsh', 'package.json'));
+    }
+  } catch {}
+  try { candidates.push(path.join(path.dirname(process.execPath), 'node_modules', '@deepseek-ai', 'dsh', 'package.json')); } catch {}
+  for (const f of candidates) {
+    try {
+      const v = JSON.parse(fs.readFileSync(f, 'utf8')).version;
+      if (v) return { version: String(v), file: f };
+    } catch {}
+  }
+  return null;
+}
+
 async function detectDshVersion() {
+  const disk = readDshVersionFromDisk();
+  if (disk) {
+    dshBackendVersion = disk.version;
+    console.log('[DSH] backend version:', dshBackendVersion, '(from', disk.file + ')');
+    logToFile('info', 'DSH backend version: ' + dshBackendVersion + ' (' + disk.file + ')');
+    return;
+  }
+  // 兜底：旧版/未来版若有可报版本的 RPC，仍然采信
   const probes = ['host.describe', 'system.info', 'version'];
   for (const m of probes) {
     try {
       const r = await dsh.rpc(m, {}, 5000);
-      if (r) {
-        if (r.version || r.dshVersion) { dshBackendVersion = String(r.version || r.dshVersion); break; }
-        if (m === 'host.describe' && typeof r === 'object') { dshBackendVersion = String(r.version || r.dshVersion || JSON.stringify(r).slice(0, 120)); break; }
-      }
+      if (r && (r.version || r.dshVersion)) { dshBackendVersion = String(r.version || r.dshVersion); break; }
     } catch {}
   }
   console.log('[DSH] backend version:', dshBackendVersion);
@@ -689,15 +914,13 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle('dsh:catalog', () => dsh.catalog());
   ipcMain.handle('dsh:sessions', async () => {
-    // DSH 分组机制：归档会话（workspace.list.archivedSessionIds）从列表隐藏，
-    // 只显示未归档的会话，避免历史残留把 UI 塞满。
+    // DSH 分组机制：归档会话从列表隐藏，只显示未归档的会话，避免历史残留把 UI 塞满。
+    // 归档集合来源改为 workspace/follow 流维护的本地快照（0.1.5 已无 workspace.list），
+    // 快照未就绪时退化为「不过滤」（宁可多显示，也不静默丢掉会话）。
     // 内部容错：DSH 抖动/重启时 session.list 失败不应让整个 UI 报 unhandled rejection。
     try {
-      const [res, ws] = await Promise.all([
-        dsh.rpc('session.list', {}),
-        dsh.rpc('workspace.list', {}).catch(() => null),
-      ]);
-      const archived = new Set((ws && ws.archivedSessionIds) || []);
+      const res = await dsh.rpc('session.list', {});
+      const archived = workspaceState.archived;
       const visible = (res.items || []).filter((s) => !archived.has(s.sessionId));
       // 每次刷新会话列表时补齐实时订阅（新会话/最近活跃会话自动纳入）
       try { primeFollows(visible); } catch {}
@@ -707,10 +930,65 @@ app.whenReady().then(async () => {
       return [];
     }
   });
-  ipcMain.handle('dsh:history', (_e, sid) => {
+  ipcMain.handle('dsh:history', async (_e, sid) => {
     // 打开某会话的历史即视为「正在看它」→ 纳入实时订阅
     try { ensureFollow(sid); } catch {}
-    return dsh.rpc('session.history', { sessionId: sid, maxMessages: 300 });
+    // 0.1.5 无 session.history：用 session/follow 的开启快照取尾部一页
+    return fetchHistory(sid, 300);
+  });
+
+  // 审批 / 提问回执（$events waterfall → $events/result）
+  // 前端契约（Reasonix v1.29 ApprovalModal / AskCard）：
+  //   ApproveTab(tabId, approvalId, allow, grantSession, grantSaved)
+  //   AnswerQuestionForTab(tabId, answers)
+  // 这里对参数做防御式解析：不同前端版本的位置可能不同，故「按类型认参」。
+  ipcMain.handle('dsh:approve', async (_e, tabId, approvalId, allow, _grantSession, _grantSaved) => {
+    try {
+      // 允许 (tabId, allow) 这种省略 approvalId 的调用形态
+      let id = typeof approvalId === 'string' ? approvalId : null;
+      let approve = typeof approvalId === 'boolean' ? approvalId : (typeof allow === 'boolean' ? allow : !!allow);
+      if (!id) {
+        // 没给 approvalId：按会话找最近一个审批
+        for (const [eid, p] of pendingInteractions) {
+          if (p.kind === 'approval' && (!tabId || p.tabId === tabId)) { id = eid; break; }
+        }
+      }
+      if (!id) return { ok: false, error: 'no pending approval' };
+      await resolveInteraction(id, approve ? 'allowed-once' : 'rejected');
+      console.log('[events] 审批回执:', approve ? 'allowed-once' : 'rejected', 'tab=', tabId);
+      return { ok: true };
+    } catch (e) {
+      console.warn('[events] 审批回执失败:', (e && e.message) || e);
+      return { ok: false, error: String((e && e.message) || e) };
+    }
+  });
+  ipcMain.handle('dsh:answer', async (_e, tabId, answers) => {
+    try {
+      const list = Array.isArray(answers) ? answers : [];
+      // 归一化为 DSH 的 AskUserQuestionAnswerItem：{id, selected:[], custom?}
+      const norm = [];
+      for (const a of list) {
+        if (!a || typeof a !== 'object') continue;
+        const id = a.questionId || a.id;
+        if (!id) continue;
+        const selected = Array.isArray(a.selected) ? a.selected : (a.selected ? [a.selected] : []);
+        const item = { id, selected };
+        if (a.custom) item.custom = String(a.custom);
+        norm.push(item);
+      }
+      if (norm.length === 0) return { ok: false, error: 'no valid answers' };
+      let id = null;
+      for (const [eid, p] of pendingInteractions) {
+        if (p.kind === 'question' && (!tabId || p.tabId === tabId)) { id = eid; break; }
+      }
+      if (!id) return { ok: false, error: 'no pending question' };
+      await resolveInteraction(id, { answers: norm });
+      console.log('[events] 提问回执:', norm.length, '答 tab=', tabId);
+      return { ok: true };
+    } catch (e) {
+      console.warn('[events] 提问回执失败:', (e && e.message) || e);
+      return { ok: false, error: String((e && e.message) || e) };
+    }
   });
 
   // ---- 用量统计账本（设置页「用量统计」的数据源）----

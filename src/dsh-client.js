@@ -76,6 +76,10 @@ const ENDPOINT_ALIASES = {
 const ARG_KEY_CACHE = new Map();
 // 首选键名（覆盖绝大多数 endpoint，命中可省一次往返）
 const ARG_KEY_PREFERRED = ['_request', 'request'];
+// 「裸 args」哨兵：args 本身就是业务对象，不再套参数名。
+// 网关内部端点 $events/result 即此形状（它直接读 payload.args 作为事件回执文档）。
+const ARG_KEY_BARE = '__bare__';
+const BARE_ARGS_ENDPOINTS = new Set(['$events/result']);
 // 方法名 → endpoint 的翻译：先查显式改名表，否则把点号换成斜杠（session.list → session/list）
 function endpointOf(method) {
   if (ENDPOINT_ALIASES[method] !== undefined) return ENDPOINT_ALIASES[method];
@@ -172,14 +176,14 @@ class DshClient {
   async _call(endpoint, payload, timeoutMs) {
     const business = (payload === undefined || payload === null) ? {} : payload;
     const cached = ARG_KEY_CACHE.get(endpoint);
-    // null 代表「该 endpoint 不需要 args」
-    const candidates = cached !== undefined
-      ? [cached]
-      : ARG_KEY_PREFERRED.concat([null]);
+    // null 代表「该 endpoint 不需要 args」；ARG_KEY_BARE 代表「args 即业务对象」
+    const candidates = BARE_ARGS_ENDPOINTS.has(endpoint)
+      ? [ARG_KEY_BARE]
+      : (cached !== undefined ? [cached] : ARG_KEY_PREFERRED.concat([null]));
     let last;
     for (let i = 0; i < candidates.length; i++) {
       const key = candidates[i];
-      const args = key === null ? {} : { [key]: business };
+      const args = key === ARG_KEY_BARE ? business : (key === null ? {} : { [key]: business });
       let res = await this._post(endpoint, args, timeoutMs);
       // 401：Cookie 缺失/过期 —— 重铸一次并重试（只重试一次）
       if (res.status === 401 && this.auth && this.auth.refresh()) {
