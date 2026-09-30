@@ -17,6 +17,7 @@
   "build": {
     "appId": "com.dsh.reasonix.ui",
     "productName": "dsh-(reasonix)UI-desktop",
+    "electronDist": "node_modules/electron/dist",
     "extraResources": [
       {
         "from": "vendor/node",
@@ -39,7 +40,7 @@
       "output": "release"
     },
     "win": {
-      "icon": "renderer/app-icon.ico",
+      "icon": "renderer/app-icon-captioned.ico",
       "target": [
         {
           "target": "nsis",
@@ -65,6 +66,8 @@
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
+      "installerIcon": "renderer/app-icon-captioned.ico",
+      "uninstallerIcon": "renderer/app-icon-captioned.ico",
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "dsh-(reasonix)UI",
