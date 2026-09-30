@@ -2818,6 +2818,42 @@ const applyBranding = () => {
       parent.appendChild(badge);
     }
   });
+
+  // ---- 以下两段曾在 97257f0「UI 内部图标恢复原样」时被移除，现按作者要求恢复 ----
+  // 说明：当时移除的理由是"用户原意是 Windows 桌面/任务栏图标"，故把 UI 内部图标
+  // 还原成 lucide 原样。现在明确要求两处都保留 D 字鲸鱼图，故恢复。
+  // 把设置中心导航里"快捷键"项的键盘图标（lucide-keyboard）换成 D 字鲸鱼图
+  document.querySelectorAll('.settings-center__navitem svg.lucide-keyboard').forEach((svg) => {
+    if (svg.dataset.branded) return;
+    svg.dataset.branded = '1';
+    const wrap = document.createElement('span');
+    wrap.className = 'dsr-nav-icon';
+    wrap.style.cssText = 'display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;flex:none;';
+    const img = document.createElement('img');
+    img.className = 'dsr-d-img';
+    img.src = D_LOGO;
+    img.alt = 'D';
+    // 内联尺寸覆盖样式表里的 .dsr-d-img{width:22px}（该规则没有 !important，内联优先）
+    img.style.cssText = 'width:17px;height:17px;object-fit:contain;filter:none;';
+    wrap.appendChild(img);
+    svg.replaceWith(wrap);
+  });
+
+  // 把侧边栏底部快捷栏（回收站/自动化/设置）的图标也换成 D 字鲸鱼图
+  document.querySelectorAll('.sidebar__utility-button svg.lucide').forEach((svg) => {
+    if (svg.dataset.branded) return;
+    svg.dataset.branded = '1';
+    const wrap = document.createElement('span');
+    wrap.className = 'dsr-utility-icon';
+    wrap.style.cssText = 'display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;flex:none;';
+    const img = document.createElement('img');
+    img.className = 'dsr-d-img';
+    img.src = D_LOGO;
+    img.alt = 'D';
+    img.style.cssText = 'width:16px;height:16px;object-fit:contain;filter:none;';
+    wrap.appendChild(img);
+    svg.replaceWith(wrap);
+  });
 };
 
 // 启动品牌覆盖（MutationObserver 回调做节流：高频 DOM 变更不触发全树扫描）

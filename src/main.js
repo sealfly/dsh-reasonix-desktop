@@ -930,6 +930,10 @@ app.whenReady().then(async () => {
     title: 'DSH-ReasonixUI',
     frame: false, // Reasonix 原版是无边框窗口，自带标题栏
     backgroundColor: '#111214',
+    // 窗口图标：开发模式（start.bat → electron.exe）任务栏取的是窗口图标，
+    // 不设它就会显示 Electron 默认 logo；打包后任务栏通常取 exe 内嵌图标
+    // （build.win.icon 已指向同一文件），这里设上让两种模式一致。
+    icon: path.join(__dirname, '..', 'renderer', 'app-icon.ico'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: false, // Reasonix bridge 需要 window.go 直接可用
