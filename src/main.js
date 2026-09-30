@@ -46,7 +46,7 @@
  *   - 主题/诊断/bot 崩溃：都是 preload.js 桥的占位（{}）导致，本文件不涉及。
  * ============================================================================
  */
-const { app, BrowserWindow, ipcMain, Menu, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, dialog, shell } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const net = require('net');
@@ -1220,6 +1220,26 @@ app.whenReady().then(async () => {
     const res = botConfig.readBotSettings();
     if (!res.ok) return res;
     return await botRuntimeProbe(res.raw);
+  });
+
+  // ---- 项目「...」菜单：在资源管理器中显示 ----
+  // 目录用 shell.openPath（打开该文件夹），文件用 shell.showItemInFolder（选中该文件）。
+  // 路径不存在时如实返回错误，不静默。
+  ipcMain.handle('dsh:reveal-path', async (_e, target) => {
+    try {
+      const p = String(target || '');
+      if (!p) return { ok: false, error: '缺少路径' };
+      if (!fs.existsSync(p)) return { ok: false, error: '路径不存在：' + p };
+      if (fs.statSync(p).isDirectory()) {
+        const err = await shell.openPath(p);
+        return err ? { ok: false, error: err } : { ok: true, opened: 'folder', path: p };
+      }
+      shell.showItemInFolder(p);
+      return { ok: true, opened: 'item', path: p };
+    } catch (e) {
+      console.error('[dsh] reveal-path 失败:', (e && e.message) || e);
+      return { ok: false, error: String((e && e.message) || e) };
+    }
   });
 
   // ---- 本地终端（方案 A）----

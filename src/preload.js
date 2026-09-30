@@ -123,6 +123,26 @@ else applySavedZoom();
 // 会话/项目"钉住"集合（localStorage 持久化；前端右键菜单"钉住"调用 SetTopicPinned/SetProjectPinned）
 const PINNED_TOPICS_KEY = 'dsh:pinned-topics';
 const PINNED_PROJECTS_KEY = 'dsh:pinned-projects';
+// 项目「...」菜单的持久化（同样是展示适配：DSH 没有"项目"这个实体，项目列表由
+// session.list 的 cwd 归并而来，所以"移出侧边栏/重命名/颜色/排序"只能落在桥本地）：
+const REMOVED_PROJECTS_KEY = 'dsh:removed-projects';   // 已"移出侧边栏"的项目根目录列表
+const PROJECT_NAMES_KEY = 'dsh:project-names';         // 项目显示名：root -> name
+const PROJECT_COLORS_KEY = 'dsh:project-colors';       // 项目颜色：root -> colorKey
+const PROJECT_ORDER_KEY = 'dsh:project-order';         // 项目顺序：root[]
+// 前端把项目节点写成 key='p:<root>'、根目录写成 root；两个入口都可能传进来，统一归一化。
+function projectRootOf(v) {
+  const s = String(v == null ? '' : v).trim();
+  return s.startsWith('p:') ? s.slice(2) : s;
+}
+function readRootMap(key) {
+  try {
+    const o = JSON.parse(localStorage.getItem(key) || '{}');
+    return (o && typeof o === 'object' && !Array.isArray(o)) ? o : {};
+  } catch { return {}; }
+}
+function saveRootMap(key, m) {
+  try { localStorage.setItem(key, JSON.stringify(m)); } catch {}
+}
 // 通用设置持久化 key（参考 Reasonix 设置面板：思考/回合/系统行为/审批/信息栏）
 const DEFAULT_APPROVAL_KEY = 'dsh:default-approval';   // 新会话默认审批 ask/auto/yolo
 const STATUS_STYLE_KEY = 'dsh:status-bar-style';       // 底部信息栏样式 icon/text
@@ -1196,18 +1216,33 @@ const appImpl = {
         children: [],
       });
     }
+    const removed = new Set(readPinnedList(REMOVED_PROJECTS_KEY));
+    const customNames = readRootMap(PROJECT_NAMES_KEY);
+    const customColors = readRootMap(PROJECT_COLORS_KEY);
     const projects = [];
     for (const [root, sessionsArr] of byRoot) {
-      const name = root.split(/[\\/]/).filter(Boolean).pop() || 'workspace';
+      // 「移出侧边栏」（RemoveWorkspace）过的项目不再出现在树里；配置（名称/颜色/顺序）保留，
+      // 以便再次在这个目录里新建会话时原样恢复。
+      if (removed.has(root)) continue;
+      const name = customNames[root] || root.split(/[\\/]/).filter(Boolean).pop() || 'workspace';
       projects.push({
         key: 'p:' + root, kind: 'project', label: name, root,
-        projectColor: undefined, pinned: readPinnedList(PINNED_PROJECTS_KEY).includes(root), open: true,
+        projectColor: customColors[root] || undefined,
+        pinned: readPinnedList(PINNED_PROJECTS_KEY).includes(root), open: true,
         children: sessionsArr,
       });
     }
+    // 顺序：与前端 applyProjectOrder 完全一致（不在顺序表里的在前，其余按表内顺序），
+    // 这样 ReorderProjects 之后刷新出来的树与前端本地算出的顺序不会打架。
+    const order = readPinnedList(PROJECT_ORDER_KEY);
+    const orderSet = new Set(order);
+    const finalProjects = [
+      ...projects.filter((p) => !orderSet.has(p.root)),
+      ...order.map((r) => projects.find((p) => p.root === r)).filter(Boolean),
+    ];
     return {
       revision: 1,
-      projects,
+      projects: finalProjects,
       catalog: { state: 'ready', mode: 'memory', revision: 1, indexed: items.length, total: items.length, repairPending: 0 },
       indexed: items.length,
       total: items.length,
@@ -1386,7 +1421,28 @@ const appImpl = {
   EnsureBlankSurface: async () => ({}),
   CloseTab: async (tabID) => {},
   ReorderTabs: async () => {},
-  CreateTopic: async () => ({}),
+  // 项目/会话树的「新建会话」（前端 handleCreateTopic → CreateTopic(a, b, "")，用返回值 .id）
+  // DSH 侧就是 session.create（createSession）。参数顺序在不同前端版本里不同，因此取
+  // "第一个像绝对路径的参数"作为项目根目录，避免把项目 key 当路径。
+  // 在这里新建会话意味着用户又要在这个项目里工作：顺便把它从"已移出侧边栏"里恢复。
+  CreateTopic: async (a, b, c) => {
+    const cands = [a, b, c].map((v) => String(v == null ? '' : v));
+    const root = cands.find((v) => /^[A-Za-z]:[\\/]/.test(v) || /^\\\\/.test(v))
+      || projectRootOf(cands[0]) || '';
+    console.log('[dsh] CreateTopic 收到 ' + JSON.stringify(cands) + ' → root=' + JSON.stringify(root));
+    try {
+      if (root) {
+        const left = readPinnedList(REMOVED_PROJECTS_KEY).filter((r) => r !== root);
+        savePinnedList(REMOVED_PROJECTS_KEY, left);
+      }
+      const res = await createSession(root || undefined, DEFAULT_PRESET);
+      return { id: (res && res.sessionId) || '' };
+    } catch (e) {
+      // 留痕（原则 3）：前端在 try/catch 里，拿得到空 id 也不会崩
+      console.error('[dsh] CreateTopic 创建会话失败：', (e && e.message) || e);
+      return { id: '', error: String((e && e.message) || e) };
+    }
+  },
   // 重命名对话 → DSH session.rename
   RenameTopic: async (topicID, title) => {
     try { await rpc('session.rename', { sessionId: topicID, title: String(title || '') }); }
@@ -1571,14 +1627,42 @@ const appImpl = {
       return r;
     } catch (e) { console.error('[dsh] TrashTopic failed:', e && e.message || e); return { ok: false, error: String(e && e.message || e) }; }
   },
-  RenameProject: async () => {},
-  RemoveWorkspace: async () => {},
+  // 项目「...」菜单：重命名项目（前端 projectTree.renameProject）
+  // DSH 没有"项目名"这个概念（名字来自目录名），所以这里存显示名覆盖，只在树里生效。
+  RenameProject: async (rootOrKey, name) => {
+    const root = projectRootOf(rootOrKey);
+    const n = String(name == null ? '' : name).trim();
+    console.log('[dsh] RenameProject 收到 ' + JSON.stringify(rootOrKey) + ' → root=' + JSON.stringify(root) + ' name=' + JSON.stringify(n));
+    if (!root) return { ok: false, error: '缺少项目根目录' };
+    if (!n) return { ok: false, error: '名称为空，已忽略' };
+    const m = readRootMap(PROJECT_NAMES_KEY);
+    m[root] = n;
+    saveRootMap(PROJECT_NAMES_KEY, m);
+    return { ok: true };
+  },
+  // 项目「...」菜单：移出侧边栏（前端 projectTree.removeProject / confirmRemoveProject）
+  // 只从侧边栏移除，**不动磁盘、不删会话**（菜单文案就是"移出侧边栏"）；配置残留保留，
+  // 之后在该目录新建会话会自动恢复。
+  RemoveWorkspace: async (rootOrKey) => {
+    const root = projectRootOf(rootOrKey);
+    console.log('[dsh] RemoveWorkspace 收到 ' + JSON.stringify(rootOrKey) + ' → root=' + JSON.stringify(root));
+    if (!root) return { ok: false, error: '缺少项目根目录' };
+    const list = readPinnedList(REMOVED_PROJECTS_KEY);
+    if (!list.includes(root)) list.push(root);
+    savePinnedList(REMOVED_PROJECTS_KEY, list);
+    return { ok: true, removed: root };
+  },
   PickWorkspace: async () => {
     const picked = await ipcRenderer.invoke('dsh:pickFolder');
     return picked || '';
   },
   SwitchWorkspace: async (path) => {
     if (!path) return '';
+    // 显式切回某个工作区 = 用户又要用它：从"已移出侧边栏"里恢复（对称于 RemoveWorkspace）
+    try {
+      const left = readPinnedList(REMOVED_PROJECTS_KEY).filter((r) => r !== path);
+      savePinnedList(REMOVED_PROJECTS_KEY, left);
+    } catch {}
     // 打开该目录的会话：找已有 or 新建
     const tabs = await sessions();
     const existing = tabs.find((s) => s.cwd === path);
@@ -2390,7 +2474,16 @@ const appImpl = {
       return { ok: true };
     } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
   },
-  SetProjectColor: async () => {},
+  // 项目「...」菜单：颜色（前端 projectTree 颜色子菜单）
+  SetProjectColor: async (rootOrKey, color) => {
+    const root = projectRootOf(rootOrKey);
+    if (!root) return { ok: false, error: '缺少项目根目录' };
+    const m = readRootMap(PROJECT_COLORS_KEY);
+    const c = String(color == null ? '' : color).trim();
+    if (c) m[root] = c; else delete m[root];
+    saveRootMap(PROJECT_COLORS_KEY, m);
+    return { ok: true };
+  },
   SetProjectPinned: async (root, pinned) => {
     try {
       let list = readPinnedList(PINNED_PROJECTS_KEY);
@@ -2409,7 +2502,13 @@ const appImpl = {
       return { ok: true };
     } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
   },
-  ReorderProjects: async () => {},
+  // 项目拖拽排序：保存根目录顺序（buildProjectTree 按同一规则回放）
+  ReorderProjects: async (roots) => {
+    const arr = (Array.isArray(roots) ? roots : []).map(projectRootOf).filter(Boolean);
+    console.log('[dsh] ReorderProjects 保存 ' + arr.length + ' 个项目顺序');
+    savePinnedList(PROJECT_ORDER_KEY, arr);
+    return { ok: true, count: arr.length };
+  },
   CloseTerminalForTab: async () => {},
   RenameTerminalForTab: async () => {},
   SetDefaultAutoRecoveryCheckpoint: async () => {},
@@ -2855,7 +2954,20 @@ const appImpl = {
     publishedGeneration: 0, allowResume: true, cleanRollback: true, hasIrreversible: false,
     noOpRebuilds: 0, fullRebuilds: 0, subgraphRebuilds: 0, staleDrops: 0, admissionRejected: 0, runtimeOwnerFallbacks: 0,
   }),
-  RevealPath: async () => {},
+  // 项目「...」菜单：在资源管理器中显示 / 打开所在位置（前端 projectTree.reveal*）
+  // 真正的系统操作放主进程（shell），这里只转发。
+  RevealPath: async (target) => {
+    const p = projectRootOf(target);
+    if (!p) return { ok: false, error: '缺少路径' };
+    try {
+      const res = await ipcRenderer.invoke('dsh:reveal-path', p);
+      if (!res || !res.ok) console.error('[dsh] RevealPath 失败：', (res && res.error) || res, p);
+      return res || { ok: false, error: '无返回' };
+    } catch (e) {
+      console.error('[dsh] RevealPath 异常：', (e && e.message) || e);
+      return { ok: false, error: String((e && e.message) || e) };
+    }
+  },
   OpenLocalPath: async () => {},
   SetZoomFactor: async () => {},
   ZoomFactor: async () => 1,
