@@ -38,6 +38,24 @@
 - 默认需要新功能时，在桥里补齐 Reasonix 前端期待的方法/事件，而不是改前端。
 - **例外**：作者（项目所有者）明确要求时，可以直接修改前端。
 
+### 2.1 品牌图标改动只限操作系统层，一律不碰项目内部 UI 图标
+
+- 本项目语境里的"图标 / logo"**默认指操作系统层面**：窗口图标、任务栏图标、
+  桌面与开始菜单快捷方式（`.lnk`）图标、安装包与卸载器图标。
+  改动位置只有三处：`package.json` 的 `build.win.icon`、`build.nsis.installerIcon/uninstallerIcon`，
+  以及 `src/main.js` 里 `BrowserWindow` 的 `icon`。
+- **禁止**在桥接层注入或替换项目内部 UI 的图标（侧栏、设置导航、快捷栏等任何前端组件）。
+  `src/preload.js` 的 `applyBranding()` 历史上出现过两次越界注入，均已移除：
+  - `.sidebar__utility-button svg.lucide`（e8bd31a）——通配选择器，一次把侧栏快捷栏的
+    回收站 / 定时任务 / 设置三个按钮的图标全部换掉；
+  - `.settings-center__navitem svg.lucide-keyboard`（1f4a7d9、e5ddbf0）——把「设置-快捷键」
+    项的键盘图标换掉。
+- **术语对齐**：作者说"快捷键"指的是 **Windows 快捷方式（`.lnk`）**，不是应用内的
+  「设置-快捷键」页；说"桌面 / 任务栏"指的是 OS 图标。有歧义时**先问**，
+  不要按 UI 组件去猜，更不要扩大改动范围。
+- 唯一保留的 UI 内品牌化是 `applyBranding()` 的文字标识（`.dsr-wordmark`：`D_LOGO` + `DSH-ReasonixUI`）
+  与品牌位替换，属"品牌更新为 DSH-Reasonix"（c17d206）的既有需求，与"图标"无关，不受本条约束。
+
 ## 原则 3：失败留痕、兜底不崩溃
 
 - 未实现的方法返回安全兜底，前端不崩溃；需要时逐个映射。
