@@ -713,7 +713,10 @@ function historyEventsToSlice(events, tabId) {
         continue;
       }
       currentEntry = {
-        entryId: 's:' + tabId + ':m:' + order,
+        // entryId 必须**跨页稳定且全局唯一**：早前用页内自增 order（m:0、m:1…），
+        // 翻到第二页时又会从 m:0 开始，与首页撞 ID（React key 冲突 / 前端去重错乱）。
+        // 事件 seq 在单会话日志里全局唯一且单调，正好做稳定标识。
+        entryId: 's:' + tabId + ':e:' + (Number.isFinite(event.seq) ? event.seq : order),
         turn: d.turn || (d.message && d.message.turn) || 0,
         order: order++,
         message: {
@@ -784,7 +787,7 @@ let activeTabId = null;   // 前端记忆的当前 tab（主进程的 active 只
 // ---------- DSH 工具函数 ----------
 const rpc = (method, payload, timeoutMs) => ipcRenderer.invoke('dsh:rpc', method, payload, timeoutMs);
 const sessions = () => ipcRenderer.invoke('dsh:sessions');
-const history = (sid) => ipcRenderer.invoke('dsh:history', sid);
+const history = (sid, req) => ipcRenderer.invoke('dsh:history', sid, req);
 const prompt = (sid, text, timeoutMs) => ipcRenderer.invoke('dsh:prompt', sid, text, timeoutMs);
 // 提交消息的统一错误处理：失败不静默，console 有痕迹、调用方拿得到结果
 const submitPrompt = async (sid, input) => {
@@ -1025,22 +1028,26 @@ const appImpl = {
 
   HistorySliceForTab: async (tabID, req) => {
     try {
-      const h = await history(tabID);
+      const r = req || {};
+      // cursor 来自上一次返回的 nextCursor：带上它即向前翻到更早一页
+      const h = await history(tabID, { cursor: r.cursor, maxMessages: r.limit || 300 });
+      // 主进程翻页失败时会带回 error（原则 3：失败留痕，不静默返回空页）
+      if (h && h.error) console.warn('[dsh] HistorySliceForTab 失败:', h.error);
       const entries = historyEventsToSlice(h.events, tabID);
       return {
         entries,
-        nextCursor: '',
-        // 主进程 dsh:history 已改为 { maxMessages: 300 }：hasMore 表示还有更早的历史。
-        // 本次不做真正翻页，只正确反映是否还有更早历史
-        hasOlder: h && h.hasMore === true,
+        // 真翻页：nextCursor 非空表示还能继续向前取更早的历史
+        nextCursor: h && h.cursor ? h.cursor : '',
+        hasOlder: !!(h && h.cursor) || !!(h && h.hasMore),
         totalTurns: entries.length,
         startTurn: entries.length ? 1 : 0,
         endTurn: entries.length,
         stale: false,
         revision: 1,
         revisionKnown: true,
-        digest: 'dsh-' + tabID,
+        digest: 'dsh-' + tabID + ':' + (r.cursor || 'head'),
         source: 'dsh',
+        ...(h && h.error ? { error: String(h.error) } : {}),
       };
     } catch (e) {
       return { entries: [], nextCursor: '', hasOlder: false, totalTurns: 0, startTurn: 0, endTurn: 0, stale: false, revision: 0, error: String(e && e.message || e) };

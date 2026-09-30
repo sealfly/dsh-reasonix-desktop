@@ -342,13 +342,74 @@ function retryWorkspaceFollow(rec) {
   rec.timer = setTimeout(() => { rec.timer = null; if (!rec.closed && workspaceFollowRec === rec) rec.connect(); }, delay);
 }
 
-// ---------- 会话历史（session/follow 快照） ----------
-// DSH 0.1.5 没有 session.history；等价能力是 session/page（需 {address, throughSeq}，
-// 而 throughSeq 只能从 follow 的开启帧取得）。而 follow 的 snapshot 本身就带
-// records（尾部一页事件）与 hasMore —— 所以直接开流取快照再取消，一次往返拿到历史，
-// 语义与旧 session.history 一致：{ events, hasMore }。
-function fetchHistory(sessionId, maxMessages = 300) {
-  return new Promise((resolve) => {
+// ---------- 会话历史（session/follow 快照 + session/page 翻页） ----------
+// DSH 0.1.5 没有 session.history；等价能力由两段拼成：
+//   · 首页：session/follow 的开启快照（records = 尾部一页，cursor = 该 revision 的日志切割点）
+//   · 更早页：session/page 需要 { address, throughSeq, beforeSeq }，
+//     其中 throughSeq 正是首次 follow 快照给出的 cursor（DSH 文档明确这个配套关系）
+// 返回契约与旧 session.history 一致：{ events, hasMore }，且 events 必须是
+// **原始 records 条目**（{type:'event', event}）——preload 的 historyEventsToSlice
+// 是按 `for (const { event } of events)` 解构的，早前把 events 拍平成 {type,seq,data}
+// 会直接抛 "Cannot read properties of undefined (reading 'data')"。
+// 另返回 cursor（base64 的 {t,b}）供前端继续向前翻页。
+/** 把「日志切割点 + 本页最旧 seq」编码成前端可回传的游标。 */
+function encodeHistoryCursor(throughSeq, beforeSeq) {
+  if (!Number.isFinite(throughSeq) || !Number.isFinite(beforeSeq)) return '';
+  try { return Buffer.from(JSON.stringify({ t: throughSeq, b: beforeSeq }), 'utf8').toString('base64'); } catch { return ''; }
+}
+function decodeHistoryCursor(cursor) {
+  if (!cursor || typeof cursor !== 'string') return null;
+  try {
+    const o = JSON.parse(Buffer.from(cursor, 'base64').toString('utf8'));
+    if (!o || !Number.isFinite(o.t) || !Number.isFinite(o.b)) return null;
+    return { throughSeq: o.t, beforeSeq: o.b };
+  } catch { return null; }
+}
+/** 一页里最旧的事件序号（翻页时作为下一页的 beforeSeq）。 */
+function oldestSeqOf(records) {
+  for (const r of records || []) {
+    const s = r && r.event && r.event.seq;
+    if (Number.isFinite(s)) return s;
+  }
+  return undefined;
+}
+
+/**
+ * 读取会话历史（尾部一页；带 cursor 时向前翻页）。
+ * @param {string} sessionId
+ * @param {number|{maxMessages?: number, cursor?: string}} [opts]
+ * @returns {Promise<{events: Array, hasMore: boolean, cursor: string, error?: string}>}
+ */
+async function fetchHistory(sessionId, opts) {
+  const options = typeof opts === 'number' ? { maxMessages: opts } : (opts || {});
+  const maxMessages = Number.isFinite(options.maxMessages) && options.maxMessages > 0 ? options.maxMessages : 300;
+  const address = { kind: 'session', sessionId };
+
+  // 更早一页：直接走一元 session/page，无需再开流
+  // 注意：rpc() 会自己按描述符把业务对象包成具名参数（本端点名为 `request`），
+  // 所以这里传的必须是**裸的请求对象**，不能再套一层 { request: ... }
+  // （套了会被包成 { request: { request: ... } }，网关报 boundary validation 失败）。
+  const paged = decodeHistoryCursor(options.cursor);
+  if (paged) {
+    try {
+      const page = await dsh.rpc('session.page', {
+        address, throughSeq: paged.throughSeq, beforeSeq: paged.beforeSeq, maxMessages,
+      });
+      const records = (page && page.records) || [];
+      const hasMore = !!(page && page.hasMore);
+      return {
+        events: records,
+        hasMore,
+        cursor: hasMore ? encodeHistoryCursor(paged.throughSeq, oldestSeqOf(records)) : '',
+      };
+    } catch (e) {
+      console.warn('[history] session/page 失败:', (e && e.message) || e);
+      return { events: [], hasMore: false, cursor: '', error: (e && e.message) || String(e) };
+    }
+  }
+
+  // 首页：follow 的开启快照（开流取快照后立即取消）
+  return await new Promise((resolve) => {
     let settled = false;
     let handle = null;
     let timer = null;
@@ -359,21 +420,27 @@ function fetchHistory(sessionId, maxMessages = 300) {
       try { if (handle) handle.cancel(); } catch {}
       resolve(val);
     };
-    timer = setTimeout(() => done({ events: [], hasMore: false, error: 'history timeout' }), 20000);
+    timer = setTimeout(() => done({ events: [], hasMore: false, cursor: '', error: 'history timeout' }), 20000);
     // 注意：assistantStream 的 schema 是 `?: true`（只接受 true 或缺省），传 false 会被拒
     dsh.openStream('session/follow', {
-      args: { request: { address: { kind: 'session', sessionId }, maxMessages } },
+      args: { request: { address, maxMessages } },
     }, {
       onItem: (v) => {
         if (v && v.type === 'snapshot') {
-          const events = (v.records || []).map((r) => r && r.event).filter(Boolean);
-          done({ events, hasMore: !!v.hasMore, cursor: v.cursor });
+          const records = v.records || [];
+          const hasMore = !!v.hasMore;
+          done({
+            events: records,
+            hasMore,
+            // 没有更早历史时不给 cursor，避免前端白跑一次空翻页
+            cursor: hasMore ? encodeHistoryCursor(v.cursor, oldestSeqOf(records)) : '',
+          });
         }
       },
-      onEnd: () => done({ events: [], hasMore: false }),
-      onError: (e) => done({ events: [], hasMore: false, error: (e && e.message) || String(e) }),
+      onEnd: () => done({ events: [], hasMore: false, cursor: '' }),
+      onError: (e) => done({ events: [], hasMore: false, cursor: '', error: (e && e.message) || String(e) }),
     }).then((h) => { handle = h; })
-      .catch((e) => done({ events: [], hasMore: false, error: (e && e.message) || String(e) }));
+      .catch((e) => done({ events: [], hasMore: false, cursor: '', error: (e && e.message) || String(e) }));
   });
 }
 
@@ -647,14 +714,46 @@ let dshBackendVersion = 'unknown';
  */
 function readDshVersionFromDisk() {
   const candidates = [];
+  // ① 打包自带的便携 node（随 app 分发）
+  try { candidates.push(path.join(process.resourcesPath, 'node', 'node_modules', '@deepseek-ai', 'dsh', 'package.json')); } catch {}
   try { candidates.push(path.join(__dirname, '..', 'vendor', 'node', 'node_modules', '@deepseek-ai', 'dsh', 'package.json')); } catch {}
+  // ② 启动 DSH 用的那个 node 的前缀下（实测最常见：DSH 就装在同一个 node 安装里，
+  //    例如 C:\...\node-v24\ 下同时有 node.exe 与 node_modules\@deepseek-ai\dsh）。
+  //    注意 findNode() 可能返回裸命令 'node'，此时 dirname 是 '.'，必须解析成绝对路径。
+  try {
+    const node = findNode();
+    if (node) {
+      let abs = node;
+      if (!path.isAbsolute(abs)) {
+        try {
+          abs = String(execSync('"' + node + '" -e "process.stdout.write(process.execPath)"', { encoding: 'utf8', windowsHide: true })).trim();
+        } catch {}
+      }
+      if (abs && path.isAbsolute(abs)) {
+        const dir = path.dirname(abs);
+        candidates.push(path.join(dir, 'node_modules', '@deepseek-ai', 'dsh', 'package.json'));
+        candidates.push(path.join(dir, '..', 'lib', 'node_modules', '@deepseek-ai', 'dsh', 'package.json'));
+      }
+    }
+  } catch {}
+  // ③ npx 缓存
   try {
     const npxRoot = path.join(os.homedir(), '.npm', '_npx');
     for (const d of fs.readdirSync(npxRoot)) {
       candidates.push(path.join(npxRoot, d, 'node_modules', '@deepseek-ai', 'dsh', 'package.json'));
     }
   } catch {}
+  // ④ 当前进程可执行文件同级（开发模式下用系统 node 跑时命中）
   try { candidates.push(path.join(path.dirname(process.execPath), 'node_modules', '@deepseek-ai', 'dsh', 'package.json')); } catch {}
+  // ⑤ 用户手动指定的 DSH 路径（配置项 dshPath）
+  try {
+    const cfg = loadDshConfig();
+    if (cfg && cfg.dshPath) {
+      const p = String(cfg.dshPath);
+      candidates.push(path.join(path.dirname(p), '..', 'package.json'));
+      candidates.push(path.join(path.dirname(p), 'node_modules', '@deepseek-ai', 'dsh', 'package.json'));
+    }
+  } catch {}
   for (const f of candidates) {
     try {
       const v = JSON.parse(fs.readFileSync(f, 'utf8')).version;
@@ -989,11 +1088,11 @@ app.whenReady().then(async () => {
       return [];
     }
   });
-  ipcMain.handle('dsh:history', async (_e, sid) => {
+  ipcMain.handle('dsh:history', async (_e, sid, req) => {
     // 打开某会话的历史即视为「正在看它」→ 纳入实时订阅
     try { ensureFollow(sid); } catch {}
-    // 0.1.5 无 session.history：用 session/follow 的开启快照取尾部一页
-    return fetchHistory(sid, 300);
+    // req 可带 { cursor, maxMessages }：cursor 存在时向前翻页（见 fetchHistory）
+    return fetchHistory(sid, req || { maxMessages: 300 });
   });
 
   // 账号余额（来源：dsh-usage 插件在本机注册的 overview 路由）
