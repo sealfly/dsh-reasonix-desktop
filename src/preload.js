@@ -137,6 +137,36 @@ function savePinnedList(key, list) {
 function startupSetting(key, fallback) {
   try { const v = (typeof localStorage !== 'undefined') ? localStorage.getItem(key) : null; return v || fallback; } catch { return fallback; }
 }
+
+// ---------- 项目树自定义分组的持久化 ----------
+// 命名空间键与前端 projectTreeOrganizationKey 保持一致："global|" 或 "project|<root>"。
+// 每个命名空间独立存 { groups, revision }：revision 供乐观并发使用（见 appImpl 里
+// SaveSessionGroupsVersioned 的说明）。
+const PROJECT_GROUPS_PREFIX = 'dsh:project-groups:';
+function projectGroupsKey(scope, root) {
+  return PROJECT_GROUPS_PREFIX + (scope === 'global' ? 'global|' : 'project|' + (root || ''));
+}
+function readProjectGroups(scope, root) {
+  try {
+    const raw = localStorage.getItem(projectGroupsKey(scope, root));
+    if (!raw) return { groups: [], revision: 0 };
+    const o = JSON.parse(raw);
+    if (!o || typeof o !== 'object' || !Array.isArray(o.groups)) return { groups: [], revision: 0 };
+    return { groups: o.groups, revision: Number.isFinite(o.revision) ? o.revision : 0 };
+  } catch { return { groups: [], revision: 0 }; }
+}
+function writeProjectGroups(scope, root, groups, revision) {
+  try {
+    localStorage.setItem(projectGroupsKey(scope, root), JSON.stringify({
+      groups: Array.isArray(groups) ? groups : [], revision,
+    }));
+    return true;
+  } catch (e) {
+    // 失败留痕（原则 3）：调用方会拿到 applied:false
+    console.warn('[dsh] 项目分组写入失败:', (e && e.message) || e);
+    return false;
+  }
+}
 // 费用展示币种：优先用户设置（dsh:currency）；未设置时按界面语言（zh→CNY，en→USD）
 function preferredCurrency() {
   const c = startupSetting('dsh:currency', '');
@@ -1096,6 +1126,42 @@ const appImpl = {
       indexingDone: true,
     };
   },
+  // ===== 项目树自定义分组（GetProjectGroups / SaveSessionGroups*）=====
+  // Reasonix 项目树支持把会话拖进自定义「分组」，按 global / project(<root>) 两套
+  // 命名空间分别保存，并用 revision 做乐观并发：保存时回传读到的 revision，
+  // 不匹配就 applied:false，前端最多重试 5 次。
+  // 契约（据 renderer 的 ProjectTree 逆出）：
+  //   GetProjectGroups(scope, root)                        -> { groups, revision, applied }
+  //   SaveSessionGroupsVersioned(scope, root, rev, groups) -> { applied, revision }
+  //   SaveSessionGroups(scope, root, groups)               -> { applied, revision }（后写胜出）
+  //   ListProjectGroups(scope, root)                       -> groups[]（旧式回退分支）
+  // 分组的内部数据形状由前端自持，桥只做**忠实往返**（不改字段、不解释结构），
+  // 这样前端升级分组模型时桥不需要跟着改。
+  GetProjectGroups: async (scope, root) => {
+    const cur = readProjectGroups(scope, root);
+    return { groups: cur.groups, revision: cur.revision, applied: true };
+  },
+  ListProjectGroups: async (scope, root) => readProjectGroups(scope, root).groups,
+  SaveSessionGroupsVersioned: async (scope, root, revision, groups) => {
+    const cur = readProjectGroups(scope, root);
+    // revision 用 Number() 归一化再比较：前端正常传数字（取自 GetProjectGroups），
+    // 但若某版本把它字符串化（localStorage/JSON 往返很常见），严格 !== 会把
+    // 0 !== "0" 误判成版本冲突、永远保存不上——这里做一次收敛。
+    const rev = Number(revision);
+    if (!Number.isFinite(rev) || cur.revision !== rev) return { applied: false, revision: cur.revision };
+    const next = cur.revision + 1;
+    return writeProjectGroups(scope, root, groups, next)
+      ? { applied: true, revision: next }
+      : { applied: false, revision: cur.revision };
+  },
+  SaveSessionGroups: async (scope, root, groups) => {
+    const cur = readProjectGroups(scope, root);
+    const next = cur.revision + 1;
+    return writeProjectGroups(scope, root, groups, next)
+      ? { applied: true, revision: next }
+      : { applied: false, revision: cur.revision };
+  },
+
   GetProjectTreeSnapshot: async () => {
     const tree = await appImpl.buildProjectTree();
     return {
