@@ -54,6 +54,7 @@ const os = require('os');
 const { spawn, execSync } = require('child_process');
 const { DshClient } = require('./dsh-client');
 const { createAuth, resolveDshHome } = require('./dsh-auth');
+const botConfig = require('./bot-config');
 
 // 禁用 GPU 加速（disable hardware acceleration）：CPU 软渲染。
 // 当初为清理布局热切换的侧栏 logo 叠影而加（以为是 GPU 合成层残留），
@@ -1176,6 +1177,49 @@ app.whenReady().then(async () => {
     } catch (e) {
       return { ok: false, error: String((e && e.message) || e) };
     }
+  });
+
+  // ---- 机器人（IM Bot 网关）配置 ----
+  // 真实数据源（实测）：官方 Reasonix 桌面应用的 %APPDATA%\reasonix\config.toml 的 [bot] 段
+  // （含 [[bot.connections]] / [[bot.routes]]），密钥按 *_env 名字放在同目录 .env。
+  // 写入策略：只改 [bot] 段、写前备份 .bak-dsh-reasonix-<时间戳>、临时文件 + rename 原子替换。
+  // 运行时不归本应用：真正的网关由官方 CLI 承载（reasonix bot start），
+  // 因此这里只通过官方控制 API（[bot.control].addr 的 GET /status）**读**运行状态，
+  // 不启动/不停止任何进程。读不到就如实报告原因，不伪造"已连接"。
+  const botRuntimeProbe = async (raw) => {
+    const control = (raw && raw.control) || {};
+    if (!control.addr) return { available: false, error: 'config.toml 里没有 [bot.control].addr' };
+    return await botConfig.fetchControlStatus(control.addr, control.token_env);
+  };
+  const botReadFull = async () => {
+    const res = botConfig.readBotSettings();
+    if (!res.ok) return res;
+    let runtime;
+    try { runtime = await botRuntimeProbe(res.raw); }
+    catch (e) { runtime = { available: false, error: String((e && e.message) || e) }; }
+    const statuses = {};
+    if (runtime && runtime.available && runtime.status && typeof runtime.status === 'object') {
+      const conns = runtime.status.connections;
+      if (conns && typeof conns === 'object') {
+        for (const [id, v] of Object.entries(conns)) statuses[id] = v;
+      }
+    }
+    const bot = botConfig.toFrontendBot(res.raw, { env: botConfig.readEnvFile(), statuses });
+    return { ok: true, path: res.path, bot, runtime };
+  };
+  ipcMain.handle('dsh:bot-read', async () => botReadFull());
+  ipcMain.handle('dsh:bot-write', async (_e, draft) => {
+    const w = botConfig.writeBotSettings(draft);
+    if (!w.ok) return w;
+    const after = await botReadFull();
+    return { ok: true, changed: Boolean(w.changed), backup: w.backup, bot: after.ok ? after.bot : null, runtime: after.runtime };
+  });
+  ipcMain.handle('dsh:bot-secret-set', async (_e, name, value) => botConfig.setSecret(name, value));
+  ipcMain.handle('dsh:bot-secret-clear', async (_e, name) => botConfig.clearSecret(name));
+  ipcMain.handle('dsh:bot-status', async () => {
+    const res = botConfig.readBotSettings();
+    if (!res.ok) return res;
+    return await botRuntimeProbe(res.raw);
   });
 
   // ---- 本地终端（方案 A）----

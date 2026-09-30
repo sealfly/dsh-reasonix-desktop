@@ -36,7 +36,8 @@
  *   3. 设置面板关不掉：CapabilityDiagnostics 曾返回 {} → 诊断页读 report.summary.errors
  *      崩溃 → React 崩 → modal 卡死。已补完整结构。
  *   4. desktop preferences sync 崩：bot 曾为 {} → sidebarImQQAdded 读 qq.enabled 崩溃。
- *      已用 mockBotSettings() 补安全结构。
+ *      现在 bot 来自官方 Reasonix 的 config.toml [bot] 段（真读写，见 readBotReal）；
+ *      只有读不到时才退回 mockBotSettings() 安全结构并留痕。
  *   5. 侧栏 logo 叠影：React 条件渲染中间态（新旧两个 logo 短暂共存）→ 注入 CSS
  *      互斥规则（.sidebar--workbench 标记当前布局，隐藏非当前布局的 logo）。
  *   6. X 关闭按钮热区：官方 30px 太小 → CSS 放大到 40px。
@@ -189,6 +190,93 @@ function mockBotSettings() {
     weixin: { enabled: false, accountId: 'default', tokenEnv: 'WEIXIN_BOT_TOKEN', tokenSet: false, apiBase: 'https://ilinkai.weixin.qq.com' },
     connections: [],
   };
+}
+
+// ===== 机器人（IM Bot 网关）真实配置桥接 =====
+// 数据源：官方 Reasonix 应用的 %APPDATA%\reasonix\config.toml 的 [bot] 段（含
+// [[bot.connections]] / [[bot.routes]]）+ 同目录 .env 里的 *_env 密钥。
+// 真正的读写由 main 进程的 src/bot-config.js 完成（只改 [bot] 段、写前备份、原子替换），
+// 这里只做 IPC 转发与短缓存，避免设置页反复读盘。
+// 注意：本应用不承载 IM 网关运行时——真正的网关是官方 CLI（reasonix bot start）。
+// 因此运行状态只通过官方控制 API（[bot.control].addr 的 GET /status）**真读**；
+// 读不到就如实报告原因，绝不伪造"已连接"（原则 3）。
+let botCache = { at: 0, bot: null, runtime: null, path: '', failed: '' };
+const BOT_CACHE_MS = 1500;
+async function readBotReal(force) {
+  if (!force && botCache.bot && Date.now() - botCache.at < BOT_CACHE_MS) return botCache;
+  try {
+    const res = await ipcRenderer.invoke('dsh:bot-read');
+    if (res && res.ok && res.bot) {
+      botCache = { at: Date.now(), bot: res.bot, runtime: res.runtime || null, path: res.path || '', failed: '' };
+    } else {
+      console.warn('[dsh] 读取机器人配置失败，退回安全结构：', (res && res.error) || res);
+      botCache = { at: Date.now(), bot: mockBotSettings(), runtime: res || null, path: '', failed: (res && res.error) || 'unknown' };
+    }
+  } catch (e) {
+    console.warn('[dsh] 读取机器人配置异常，退回安全结构：', (e && e.message) || e);
+    botCache = { at: Date.now(), bot: mockBotSettings(), runtime: { available: false, error: String((e && e.message) || e) }, path: '', failed: String((e && e.message) || e) };
+  }
+  return botCache;
+}
+function botNow() { return botCache.bot || mockBotSettings(); }
+async function writeBotReal(draft) {
+  try {
+    const res = await ipcRenderer.invoke('dsh:bot-write', draft);
+    if (res && res.ok) {
+      if (res.bot) botCache = { at: Date.now(), bot: res.bot, runtime: res.runtime || botCache.runtime, path: botCache.path, failed: '' };
+      else await readBotReal(true);
+      if (res.changed) console.log('[dsh] 机器人配置已写入 config.toml（备份：' + (res.backup || '无') + '）');
+      return res;
+    }
+    console.error('[dsh] 机器人配置写入失败：', (res && res.error) || res);
+    return res || { ok: false, error: '写入失败（未知原因）' };
+  } catch (e) {
+    console.error('[dsh] 机器人配置写入异常：', (e && e.message) || e);
+    return { ok: false, error: String((e && e.message) || e) };
+  }
+}
+// 诊断对象形状：对齐前端 bot-detail 面板读取的字段
+// {id,label,status,message,messageId,phase,code,reportKind,reportDetail,occurredAt}
+function botDiagnostic(id, over) {
+  const c = (botNow().connections || []).find((x) => x.id === id);
+  const runtime = botCache.runtime || {};
+  const now = new Date().toISOString();
+  const base = {
+    id: String(id || ''), label: String(id || ''), status: 'missing', message: '',
+    messageId: '', phase: 'config', code: 'connection_missing', reportKind: 'bot',
+    reportDetail: '', occurredAt: now,
+  };
+  if (!c) {
+    base.message = '本机 config.toml 的 [[bot.connections]] 里没有这个连接。';
+    base.reportDetail = JSON.stringify({
+      schemaVersion: 2, kind: 'bot', source: 'bot.config', errorType: 'BotConnectionNotConfigured',
+      errorMessage: 'connection not found in config.toml [bot.connections]', occurredAt: now,
+    });
+    return Object.assign(base, over || {});
+  }
+  base.label = c.label || c.id;
+  if (!c.enabled) {
+    base.status = 'disabled';
+    base.message = '连接已保存在 config.toml，但 enabled = false（未启用）。';
+    base.code = 'connection_disabled';
+  } else if (runtime.available) {
+    base.status = 'ok';
+    base.phase = 'runtime';
+    base.code = 'config_ok';
+    base.message = '配置已启用；运行状态取自官方控制 API。';
+  } else {
+    base.status = 'disabled';
+    base.phase = 'runtime';
+    base.code = 'runtime_unavailable';
+    base.message = '配置已启用，但读不到官方网关运行时：' + (runtime.error || '控制 API 不可用')
+      + '。网关由官方 `reasonix bot start` 承载，本应用不启动它。';
+  }
+  base.reportDetail = JSON.stringify({
+    schemaVersion: 2, kind: 'bot', source: 'bot.config', label: base.label, message: base.message, occurredAt: now,
+    config: { enabled: c.enabled, provider: c.provider, domain: c.domain, secretSet: !!(c.credential && c.credential.secretSet) },
+    runtime: runtime.available ? { available: true } : { available: false, error: runtime.error || '' },
+  });
+  return Object.assign(base, over || {});
 }
 
 // ---------- 事件通道（window.runtime.EventsOn） ----------
@@ -1745,18 +1833,22 @@ const appImpl = {
   // ApproveTab 的唯一定义在文件下方（同名键后定义覆盖先定义，故这里不再重复声明）
 
   // ===== 设置（Settings / DesktopStartupSettings） =====
-  // bot 结构见顶层 mockBotSettings()（安全结构，避免前端读 undefined.enabled 崩溃）
-  Settings: async () => ({
-    providers: [], defaultModel: 'deepseek-v4-flash', plannerModel: 'deepseek-v4-flash',
-    subagentModel: 'deepseek-v4-flash', subagentEffort: 'auto', maxSubagentDepth: 3,
-    maxSubagentConcurrency: 2, maxParallelWriters: 1, autoPlan: 'none',
-    defaultToolApprovalMode: 'ask', compactRatio: 1,
-    desktopLayoutStyle: startupSetting('dsh:layout-style', 'workbench'),
-    desktopCurrency: startupSetting('dsh:currency', ''),
-    reasoningDisplayMode: startupSetting('dsh:reasoning-mode', 'auto'),
-    reasoningDisplayModeExplicit: !!startupSetting('dsh:reasoning-mode', ''),
-    bot: mockBotSettings(),
-  }),
+  // bot 不再是 mock：读官方 Reasonix 的 config.toml [bot] 段（见 readBotReal）。
+  // 读失败时 readBotReal 会退回 mockBotSettings() 安全结构并留痕。
+  Settings: async () => {
+    const botRead = await readBotReal();
+    return {
+      providers: [], defaultModel: 'deepseek-v4-flash', plannerModel: 'deepseek-v4-flash',
+      subagentModel: 'deepseek-v4-flash', subagentEffort: 'auto', maxSubagentDepth: 3,
+      maxSubagentConcurrency: 2, maxParallelWriters: 1, autoPlan: 'none',
+      defaultToolApprovalMode: 'ask', compactRatio: 1,
+      desktopLayoutStyle: startupSetting('dsh:layout-style', 'workbench'),
+      desktopCurrency: startupSetting('dsh:currency', ''),
+      reasoningDisplayMode: startupSetting('dsh:reasoning-mode', 'auto'),
+      reasoningDisplayModeExplicit: !!startupSetting('dsh:reasoning-mode', ''),
+      bot: botRead.bot,
+    };
+  },
   HooksSettings: async () => ({ hooks: [] }),
   SaveHooksSettings: async () => {},
   SaveHooksSettingsForRoot: async () => {},
@@ -2189,13 +2281,62 @@ const appImpl = {
   SetProviderWebSearch: async () => {},
   SaveProviderModelCatalogs: async () => {},
   SaveProviderWithKey: async () => {},
-  ClearBotSecret: async () => {},
-  SetBotSecret: async () => {},
-  SetBotConnectionToolApprovalMode: async () => {},
-  DiagnoseBotConnection: async () => null,
-  TestBotConnection: async () => ({}),
-  PollBotConnectionInstall: async () => ({}),
-  StartBotConnectionInstall: async () => ({}),
+  // ---- 机器人（IM Bot 网关）：以下均为真实现（配置落 config.toml，密钥落 .env）----
+  // 范围（作者选定）：只读写真实配置 + 真读运行状态；不启动任何 bot 进程、不代发消息。
+  ClearBotSecret: async (envName) => {
+    const name = String(envName || '').trim();
+    if (!name) { console.warn('[dsh] ClearBotSecret 缺少环境变量名'); return { ok: false, error: '缺少环境变量名' }; }
+    const res = await ipcRenderer.invoke('dsh:bot-secret-clear', name);
+    if (!res || !res.ok) console.error('[dsh] 清空机器人密钥失败：', (res && res.error) || res);
+    else console.log('[dsh] 机器人密钥已清空（.env）：' + name);
+    await readBotReal(true);
+    return res;
+  },
+  SetBotSecret: async (envName, value) => {
+    const name = String(envName || '').trim();
+    if (!name) { console.warn('[dsh] SetBotSecret 缺少环境变量名'); return { ok: false, error: '缺少环境变量名' }; }
+    const res = await ipcRenderer.invoke('dsh:bot-secret-set', name, String(value == null ? '' : value));
+    if (!res || !res.ok) console.error('[dsh] 保存机器人密钥失败：', (res && res.error) || res);
+    else console.log('[dsh] 机器人密钥已写入 .env：' + name);
+    await readBotReal(true);
+    return res;
+  },
+  SetBotConnectionToolApprovalMode: async (connectionId, mode) => {
+    const draft = JSON.parse(JSON.stringify(botNow()));
+    const c = (draft.connections || []).find((x) => x.id === connectionId);
+    if (!c) {
+      console.warn('[dsh] SetBotConnectionToolApprovalMode 找不到连接：' + connectionId);
+      return { ok: false, error: '找不到连接 ' + connectionId };
+    }
+    c.toolApprovalMode = String(mode || 'ask');
+    return await writeBotReal(draft);
+  },
+  DiagnoseBotConnection: async (connectionId) => botDiagnostic(connectionId),
+  BotConnectionDiagnostic: async (connectionId) => botDiagnostic(connectionId),
+  // 测试发送会真的往聊天里发消息：本桥不代发（避免用户不知情时对外产生副作用），
+  // 返回如实诊断；messageId 留空以免前端据此建会话映射。
+  TestBotConnection: async (connectionId, target) => {
+    const d = botDiagnostic(connectionId);
+    d.message = '本应用不代为发送测试消息（避免在你不知情时向真实聊天发消息）。'
+      + (target ? '（请求目标：' + target + '）' : '')
+      + ' 请在官方桌面应用里测试，或运行 `reasonix bot doctor` 检查发送链路。';
+    d.code = 'test_send_unsupported';
+    d.messageId = '';
+    console.warn('[dsh] TestBotConnection 未发送消息（bridge 不代发）：' + connectionId + ' target=' + (target || ''));
+    return d;
+  },
+  // 扫码安装 IM 客户端是官方 CLI/runtime 的能力，本应用不启动进程。
+  // 前端对 !ok 会走 error 分支并把 message 显示出来，因此这里如实说明原因。
+  StartBotConnectionInstall: async (target) => {
+    const msg = '本应用不承载 IM Bot 网关运行时，无法发起安装或扫码。'
+      + '请用官方 Reasonix 桌面应用，或运行 `reasonix bot doctor` 检查客户端安装。';
+    console.warn('[dsh] StartBotConnectionInstall 未执行（bridge 不承载网关）：' + (target || ''));
+    return { ok: false, installId: '', url: '', target: String(target || ''), message: msg, code: 'install_unsupported' };
+  },
+  PollBotConnectionInstall: async (installId) => {
+    console.warn('[dsh] PollBotConnectionInstall 没有对应的安装任务：' + (installId || ''));
+    return { done: true, connection: null, message: '本应用没有正在进行的安装任务。' };
+  },
   ExtensionActions: async () => [],
   ExtensionStatus: async () => [],
   ExtensionCatalog: async () => [],
@@ -2332,9 +2473,11 @@ const appImpl = {
   SubmitInvocationsToTabWithID: async (tabID, _display, input) => { await prompt(tabID, input); },
 
   // ===== 设置/杂项（回退 mock 用） =====
-  DesktopStartupSettings: async () => ({
-    bot: mockBotSettings(),
-    desktopLanguage: startupSetting('dsh:language', 'zh'),
+  DesktopStartupSettings: async () => {
+    const botRead = await readBotReal();
+    return {
+      bot: botRead.bot,
+      desktopLanguage: startupSetting('dsh:language', 'zh'),
     desktopLayoutStyle: startupSetting('dsh:layout-style', 'workbench'),
     desktopTheme: startupSetting('dsh:theme', 'dark'),
     desktopThemeStyle: startupSetting('dsh:theme-style', startupSetting('dsh:theme', 'dark')),
@@ -2357,7 +2500,8 @@ const appImpl = {
     configWarnings: [],
     configWarningsRevision: 0,
     configPath: '',
-  }),
+    };
+  },
   SetDesktopAppearance: async (mode, style) => {
     // 外观（明/暗/自动 + 风格）持久化到 dsh:theme（v1.29.0 前端会清除 legacy reasonix-theme 键）
     try {
@@ -2605,17 +2749,62 @@ const appImpl = {
   InstallExtension: async () => {},
   UninstallExtension: async () => {},
   SubmitExtensionForm: async () => {},
-  BotRuntimeStatus: async () => ({
-    available: false, running: false, enabled: false,
-    supported: false, configured: false, state: 'unavailable',
-  }),
-  BotSettings: async () => ({}),
-  SetBotSettings: async () => {},
-  BotConnectionDiagnostic: async () => null,
-  ConnectBot: async () => {},
-  DisconnectBot: async () => {},
-  BotInstallStart: async () => ({}),
-  BotInstallPoll: async () => ({}),
+  // 运行状态：真读官方控制 API（GET /status），**不启动任何进程**。
+  // 本应用不承载 IM 网关运行时（那是官方 `reasonix bot start`），读不到就如实报 unavailable。
+  BotRuntimeStatus: async () => {
+    const botRead = await readBotReal(true);
+    const bot = botRead.bot || mockBotSettings();
+    const runtime = botRead.runtime || {};
+    const configured = Boolean(bot.enabled)
+      || (bot.connections || []).length > 0
+      || Boolean(bot.qq && (bot.qq.appId || bot.qq.secretSet));
+    return {
+      available: Boolean(runtime.available),
+      running: Boolean(runtime.available && runtime.status && runtime.status.running !== false),
+      enabled: Boolean(bot.enabled),
+      supported: true,
+      configured,
+      state: runtime.available ? 'running' : (botRead.failed ? 'unavailable' : 'stopped'),
+      error: runtime.error || botRead.failed || '',
+      configPath: botRead.path || '',
+      runtime: runtime.status || null,
+    };
+  },
+  BotSettings: async () => {
+    const botRead = await readBotReal();
+    return Object.assign({}, botRead.bot, { runtime: botRead.runtime || null, configPath: botRead.path || '' });
+  },
+  SetBotSettings: async (draft) => {
+    if (!draft || typeof draft !== 'object') {
+      console.error('[dsh] SetBotSettings 收到非对象 draft');
+      return { ok: false, error: 'draft 不是对象' };
+    }
+    return await writeBotReal(draft);
+  },
+  // Connect/Disconnect：本应用不启动/停止网关进程，只改配置里的 enabled 开关
+  // （网关下次启动或热加载时生效），并把这件事如实告诉调用方。
+  ConnectBot: async (connectionId) => {
+    const draft = JSON.parse(JSON.stringify(botNow()));
+    const c = (draft.connections || []).find((x) => x.id === connectionId);
+    if (c) c.enabled = true; else draft.enabled = true;
+    const res = await writeBotReal(draft);
+    return Object.assign({}, res, { note: '已把配置里的 enabled 置为 true；网关进程由官方 CLI（reasonix bot start）承载，本应用不启动它。' });
+  },
+  DisconnectBot: async (connectionId) => {
+    const draft = JSON.parse(JSON.stringify(botNow()));
+    const c = (draft.connections || []).find((x) => x.id === connectionId);
+    if (c) c.enabled = false; else draft.enabled = false;
+    const res = await writeBotReal(draft);
+    return Object.assign({}, res, { note: '已把配置里的 enabled 置为 false。' });
+  },
+  BotInstallStart: async (target) => {
+    console.warn('[dsh] BotInstallStart 未执行（bridge 不承载网关）：' + (target || ''));
+    return { ok: false, installId: '', url: '', target: String(target || ''), code: 'install_unsupported', message: '本应用不承载 IM Bot 网关运行时，无法发起安装或扫码。' };
+  },
+  BotInstallPoll: async (installId) => {
+    console.warn('[dsh] BotInstallPoll 没有对应的安装任务：' + (installId || ''));
+    return { done: true, connection: null, message: '本应用没有正在进行的安装任务。' };
+  },
   // 能力诊断（设置面板"诊断"页）：返回完整结构避免前端崩溃
   // （此前返回 {} 导致 DiagnosticsSettingsPage 读 report.summary.errors 崩溃，
   //   React 崩溃后设置面板关闭按钮失效 → "像钉子一样关不掉"）
