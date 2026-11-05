@@ -1,4 +1,4 @@
-// Command dsh-reasonix-wails is the Wails shell hosting the Reasonix v1.29.0
+// Command dsh-reasonix-wails is the Wails shell hosting the Reasonix v1.38.2
 // frontend, bridged to the DSH backend (127.0.0.1:3080).
 //
 // 为什么用 Wails 而不是 Electron（Why Wails instead of Electron）：
@@ -58,8 +58,8 @@ func requestShow() {
 	}
 }
 
-// assets embeds the built frontend (Reasonix v1.29.0 dist, copied from the
-// Electron project's renderer/dist). 前端构建产物零改动地嵌入。
+// assets embeds the built frontend (Reasonix v1.38.2 dist, synced from the
+// upstream desktop-v1.38.2 build). 前端构建产物零改动地嵌入。
 //
 //go:embed all:frontend/dist
 var assets embed.FS

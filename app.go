@@ -2,7 +2,7 @@ package main
 
 // App — Wails 绑定的应用结构体。
 // 它的导出方法会被 Wails 绑定到前端 window.go.main.App（前端 bridge.ts 直接调用）。
-// 方法签名必须与 Reasonix v1.29.0 前端 bridge.ts 的接口契约一致（方法名/参数/返回）。
+// 方法签名必须与 Reasonix v1.38.2 前端 bridge.ts 的接口契约一致（方法名/参数/返回）。
 
 import (
 	"context"
@@ -102,7 +102,7 @@ func (a *App) shutdown(ctx context.Context) {
 func (a *App) Platform() string { return runtime.GOOS }
 
 // Version 返回应用版本（前端"关于"用）。
-func (a *App) Version() string { return "0.1.0" }
+func (a *App) Version() string { return "0.2.0" }
 
 // ===== 窗口控制（前端 WindowsWindowControls 调用）=====
 
